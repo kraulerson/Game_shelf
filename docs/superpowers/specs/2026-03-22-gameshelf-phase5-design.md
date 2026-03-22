@@ -29,11 +29,16 @@ Returns deduplicated game list with filtering and pagination.
 | `page` | int | Page number (default: 1) |
 | `limit` | int | Results per page (default: 50) |
 | `duplicates` | string | If `'show'`, return all editions including lower-priority duplicates |
+| `release_year_min` | int | Minimum release year |
+| `release_year_max` | int | Maximum release year |
+| `playtime_min` | int | Minimum playtime in minutes |
+| `playtime_max` | int | Maximum playtime in minutes |
+| `owned` | string | `'true'` (default) or `'all'` — if `'all'`, include `owned=0` editions (games removed from library after re-sync) |
 
 **Deduplication logic (default):**
-1. Join `game_editions` (where `owned=1`) → `launchers` (for priority) → `games` (for metadata)
-2. For each game (grouped by `games.id`, or by `launcher_game_id` for unlinked editions with null `game_id`), return only the edition from the launcher with the lowest `priority` number
-3. Include `also_on` array per game: all launchers the game is owned on, with `{launcher_id, launcher_name, playtime_minutes, launcher_game_id}`
+1. Join `game_editions` (where `owned=1` by default) → `launchers` (for priority) → `games` (for metadata)
+2. For each game grouped by `games.id`: return only the edition from the launcher with the lowest `priority` number (highest preference). Unlinked editions (null `game_id`) are each treated as distinct entries — no grouping across launchers.
+3. Include `also_on` array per game: all launchers the game is owned on
 
 **Response shape:**
 ```json
@@ -43,6 +48,7 @@ Returns deduplicated game list with filtering and pagination.
     "title": "Half-Life 2",
     "slug": "half-life-2",
     "cover_url": "/data/images/1/cover.jpg",
+    "icon_url": "/data/images/1/icon.jpg",
     "description": "...",
     "release_year": 2004,
     "developer": "Valve",
@@ -52,9 +58,10 @@ Returns deduplicated game list with filtering and pagination.
     "playtime_minutes": 1200,
     "launcher_name": "steam",
     "launcher_display_name": "Steam",
+    "launcher_game_id": "220",
     "also_on": [
-      {"launcher_name": "steam", "launcher_display_name": "Steam", "playtime_minutes": 1200},
-      {"launcher_name": "gog", "launcher_display_name": "GOG", "playtime_minutes": 0}
+      {"launcher_name": "steam", "launcher_display_name": "Steam", "playtime_minutes": 1200, "launcher_game_id": "220"},
+      {"launcher_name": "gog", "launcher_display_name": "GOG", "playtime_minutes": 0, "launcher_game_id": "1207658691"}
     ]
   }],
   "total": 142,
@@ -65,11 +72,66 @@ Returns deduplicated game list with filtering and pagination.
 
 #### `GET /api/games/:id`
 
-Full game detail: game row + all editions (with launcher info) + genres + tags.
+Full game detail including all editions, genres, tags, and image URLs.
+
+**Response shape:**
+```json
+{
+  "id": 1,
+  "title": "Half-Life 2",
+  "slug": "half-life-2",
+  "cover_url": "/data/images/1/cover.jpg",
+  "hero_url": "/data/images/1/hero.jpg",
+  "icon_url": "/data/images/1/icon.jpg",
+  "description": "Full description text...",
+  "release_year": 2004,
+  "developer": "Valve",
+  "publisher": "Valve",
+  "genres": ["Action", "FPS"],
+  "tags": ["Action", "FPS"],
+  "editions": [
+    {
+      "id": 42,
+      "launcher_name": "steam",
+      "launcher_display_name": "Steam",
+      "launcher_game_id": "220",
+      "launcher_url": "https://store.steampowered.com/app/220",
+      "playtime_minutes": 1200,
+      "owned": 1,
+      "is_primary": true
+    },
+    {
+      "id": 87,
+      "launcher_name": "gog",
+      "launcher_display_name": "GOG",
+      "launcher_game_id": "1207658691",
+      "launcher_url": null,
+      "playtime_minutes": 0,
+      "owned": 1,
+      "is_primary": false
+    }
+  ]
+}
+```
+
+The `is_primary` field is computed by comparing each edition's launcher priority — the edition with the lowest launcher `priority` number is primary.
 
 #### `GET /api/games/filters`
 
-Returns `{genres: [{name, count}], tags: [{name, count}], launchers: [{name, display_name, count}]}` for populating the filter UI. Counts reflect currently owned games.
+Returns filter options with counts and range bounds for populating the filter UI.
+
+```json
+{
+  "genres": [{"name": "Action", "count": 42}, ...],
+  "tags": [{"name": "Action", "count": 42}, ...],
+  "launchers": [{"name": "steam", "display_name": "Steam", "count": 120}, ...],
+  "release_year_min": 1993,
+  "release_year_max": 2026,
+  "playtime_max_minutes": 48000
+}
+```
+
+Counts reflect currently owned games.
 
 ## Library Page
 
@@ -82,7 +144,7 @@ Full-width layout with filter chips + dropdown panel (no persistent sidebar).
 - Search input (debounced 300ms via `useCallback`)
 - View toggle: grid/list icons
 - Sort dropdown: title A-Z, title Z-A, release newest, release oldest, playtime
-- "Sync Now" button (calls `POST /api/sync/all`, shows spinner while running)
+- "Sync Now" button: calls `POST /api/sync/all`, then polls `GET /api/sync/status` every 3 seconds until all launchers show `status !== 'running'`. Shows spinner while any launcher is running. Stops polling on completion.
 
 **Filter chips row** (below header):
 - "Filters (N)" button opens the `FilterPanel` dropdown
@@ -110,7 +172,7 @@ Dropdown panel triggered by "Filters (N)" button. Closes on outside click or "Ap
 - **Tags** — same pattern as genres
 - **Release Year** — min/max number inputs (range from dataset)
 - **Playtime** — min/max inputs in hours
-- **Ownership** — toggle: "Owned only" (default) / "Show all"
+- **Ownership** — toggle: "Owned only" (default) / "Show all" — passes `owned=all` query param to include `owned=0` editions (games removed from library after a re-sync marked them as no longer owned)
 - **Duplicates** — toggle: "Hide duplicates" (default) / "Show all copies"
 
 **Filter state:** All stored in URL query string via `useSearchParams` from react-router-dom. Filters persist on page reload and are bookmarkable.
@@ -180,11 +242,11 @@ Data fetched via `GET /api/games/:id` with `@tanstack/react-query`.
 /setup           → RequireAuth → Setup
 /library         → RequireAuth → RequireSetup → Library
 /library/game/:id → RequireAuth → RequireSetup → GameDetail
-/settings        → RequireAuth → RequireSetup → Settings
+/settings        → RequireAuth → Settings (NOT behind RequireSetup — user may need Settings to configure launchers before setup is marked complete)
 /                → redirect to /library
 ```
 
-Wrap entire app in `QueryClientProvider` from `@tanstack/react-query`.
+`QueryClientProvider` from `@tanstack/react-query` wraps the app in `main.jsx` (above `BrowserRouter` in `App.jsx`). Only `main.jsx` is modified for this — `App.jsx` does not create the provider.
 
 ## Settings Page
 
@@ -200,8 +262,17 @@ Wrap entire app in `QueryClientProvider` from `@tanstack/react-query`.
 - Instructions for obtaining IGDB API keys
 
 **Account tab:**
-- Change password form (username + current password + new password)
-- Note: password change endpoint needs to be added to auth routes: `POST /api/auth/change-password`
+- Change password form (current password + new password + confirm new password)
+
+### `POST /api/auth/change-password` (added to `/backend/src/routes/auth.js`)
+
+Auth-protected. Request body: `{ currentPassword, newPassword }`.
+1. Verify `currentPassword` against the user's stored `password_hash` via bcrypt
+2. Validate `newPassword` is at least 8 characters
+3. Hash `newPassword` with bcrypt (same rounds as admin seed: 12)
+4. Update `users.password_hash` for `req.user.id`
+5. Clear the `gameshelf_session` cookie (force re-login with new password)
+6. Return `{ ok: true }` on success, `401 { error: "Current password is incorrect" }` on mismatch, `400 { error: "New password must be at least 8 characters" }` on validation failure
 
 ## New Frontend Dependencies
 
@@ -252,8 +323,8 @@ Wrap entire app in `QueryClientProvider` from `@tanstack/react-query`.
 - `backend/src/routes/auth.js` — add POST /api/auth/change-password
 - `frontend/src/pages/Library.jsx` — replace placeholder with full library
 - `frontend/src/pages/Settings.jsx` — replace placeholder with tabbed settings
-- `frontend/src/App.jsx` — add GameDetail route, QueryClientProvider
-- `frontend/src/main.jsx` — wrap with QueryClientProvider
+- `frontend/src/App.jsx` — add GameDetail route, Nav component, restructure route guards
+- `frontend/src/main.jsx` — wrap with QueryClientProvider from @tanstack/react-query
 - `frontend/nginx.conf` — update for production SPA + caching
 - `Dockerfile.frontend` — ensure prod build works
 - `docker-compose.yml` — add restart policy
