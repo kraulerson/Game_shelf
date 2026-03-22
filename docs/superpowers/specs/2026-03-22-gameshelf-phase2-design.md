@@ -25,9 +25,16 @@ Phase 2 adds authentication (JWT via httpOnly cookies), a multi-step setup wizar
 | POST | `/api/auth/logout` | No | Clear `gameshelf_session` cookie (same flags). Return `{ ok: true }`. |
 | GET | `/api/auth/me` | Yes | Return `{ username: req.user.username }`. |
 
-### Database Access Pattern
+### Prerequisites
 
-`server.js` sets `app.locals.db = db` after `runMigrations()`. Routes access via `req.app.locals.db`.
+Add `app.locals.db = db` to `server.js` immediately after `const db = runMigrations(dbPath)`. All routes access the database via `req.app.locals.db`.
+
+### Security Notes
+
+- If user not found during login, perform bcrypt compare against a dummy hash to prevent timing-based user enumeration.
+- Set `Secure` cookie flag only when `NODE_ENV === 'production'`. In development over HTTP, omit `Secure` to allow cookie setting.
+- Uses existing `bcrypt` dependency (already in `backend/package.json`).
+- The login response sets the session cookie synchronously; the subsequent `GET /api/setup/status` call from the Login page will include it automatically.
 
 ## Task 2 — Frontend Login Page
 
@@ -51,19 +58,36 @@ Phase 2 adds authentication (JWT via httpOnly cookies), a multi-step setup wizar
 
 ## Task 3 — Setup Wizard Backend
 
-### Routes: `/backend/src/routes/setup.js`
+### Route File Assignment
 
-All routes protected by auth middleware.
+Setup-specific routes go in `/backend/src/routes/setup.js`. Launcher CRUD routes go in `/backend/src/routes/launchers.js`. All routes protected by auth middleware.
+
+**Note on launcher identifiers:** All route parameters (`:id`) refer to the launcher `name` string slug (e.g., `steam`, `gog`), NOT the integer primary key. The `launchers` table uses `id INTEGER PRIMARY KEY AUTOINCREMENT` internally, but the API surface uses the `name` column for identification.
+
+#### Setup routes: `/backend/src/routes/setup.js`
 
 | Method | Path | Behavior |
 |--------|------|----------|
 | GET | `/api/setup/status` | Query `launchers` for any row with `enabled=1` AND `credentials_json IS NOT NULL`. If found, return `{ complete: true }`. Else check `settings` table for `setup_complete` key. Return `{ complete: bool }`. |
 | POST | `/api/setup/complete` | Upsert `settings` with `key='setup_complete', value='true'`. Return `{ ok: true }`. |
+| GET | `/api/setup/qr/:launcher_id` | Retrieves TOTP secret from the launcher's stored `credentials_json`, passes it to `generateQRSetupData(launcherId, username, secret)`. Returns `{ uri: "otpauth://..." }`. Purpose: lets user verify their entered TOTP secret matches their authenticator by scanning the QR code. |
+
+#### Launcher routes: `/backend/src/routes/launchers.js`
+
+| Method | Path | Behavior |
+|--------|------|----------|
 | GET | `/api/launchers/available` | Return hardcoded static array of 9 launchers (see below). |
-| POST | `/api/launchers/:id/credentials` | Validate `:id` is in supported list. Accept `{ username, password, api_key, totp_secret }`. Encrypt full payload with `encrypt(JSON.stringify(payload))`. Upsert `launchers` row: set `credentials_json`, `enabled=1`. Return `{ ok: true }`. |
-| GET | `/api/launchers/:id/test` | Decrypt `credentials_json`. Stub: return `{ success: true, message: "Connection test not yet implemented for [launcher]" }` with TODO comment. |
-| POST | `/api/launchers/priority` | Accept `[{ id, priority }]` array. Update `priority` column per launcher in a transaction. Return `{ ok: true }`. |
-| GET | `/api/setup/qr/:launcher_id` | Call `generateQRSetupData(launcherId, username)` from TOTP util. Return `{ uri: "otpauth://..." }`. |
+| POST | `/api/launchers/:id/credentials` | Validate `:id` is in supported launcher names. Accept `{ username, password, api_key, totp_secret }`. Validate required fields by auth_type (see validation table below). Encrypt full payload with `encrypt(JSON.stringify(payload))`. Upsert `launchers` row by `name`: set `credentials_json`, `enabled=1`. Return `{ ok: true }`. |
+| GET | `/api/launchers/:id/test` | Decrypt `credentials_json` for launcher matching `name=:id`. Stub: return `{ success: true, message: "Connection test not yet implemented for [launcher]" }` with TODO comment. |
+| POST | `/api/launchers/priority` | Accept `[{ name, priority }]` array. Update `priority` column for each launcher matched by `name` in a transaction. Return `{ ok: true }`. |
+
+#### Credentials Validation by Auth Type
+
+| `auth_type` | Required Fields | Optional Fields |
+|-------------|----------------|-----------------|
+| `credentials` | `username`, `password` | — |
+| `credentials+totp` | `username`, `password` | `totp_secret` |
+| `api_key` | `api_key` | — |
 
 ### Stub: `/backend/src/routes/sync.js`
 
@@ -94,7 +118,7 @@ All routes protected by auth middleware.
 | Function | Behavior |
 |----------|----------|
 | `generateTOTPCode(secret)` | Uses `otpauth` package. Creates TOTP instance (SHA-1, 6 digits, 30s period). Returns current 6-digit code as string. |
-| `generateQRSetupData(launcherId, username)` | Builds `otpauth://totp/Gameshelf:{launcherId}:{username}` URI via `otpauth` package's URI generation. Returns URI string. |
+| `generateQRSetupData(launcherId, username, secret)` | Builds `otpauth://totp/Gameshelf:{launcherId}:{username}?secret={secret}` URI via `otpauth` package's URI generation. The secret is the user's previously-entered TOTP secret, retrieved from stored credentials. Returns URI string. |
 | `generateSteamCode(sharedSecret)` | Uses `steam-totp` package. Calls `SteamTotp.generateAuthCode(sharedSecret)`. Documented: Steam uses non-standard TOTP — base64 shared secret, custom 5-char alphabet (`23456789BCDFGHJKMNPQRTVWXY`), Steam Guard Mobile Authenticator protocol. |
 
 ### New dependencies
@@ -170,7 +194,7 @@ Single component with `step` state variable (1–5). Shared state: `selectedLaun
 | DB access pattern | `app.locals.db` | Simple, no extra modules, idiomatic Express |
 | Auth state management | Fetch-on-mount (no global state) | httpOnly cookies handled by browser; guards already call `/api/auth/me`; no extra deps |
 | Wizard structure | Single component with step state | Shared state between steps is simpler in one file; extract later if needed |
-| Cookie security | httpOnly + Secure + SameSite=Strict | Prevents XSS token theft and CSRF |
+| Cookie security | httpOnly + Secure (prod only) + SameSite=Strict | Prevents XSS token theft and CSRF; Secure omitted in dev for HTTP compatibility |
 | TOTP library | `otpauth` + `steam-totp` | Standard TOTP via `otpauth`; Steam's non-standard protocol requires dedicated package |
 
 ## Files Created/Modified
@@ -191,8 +215,13 @@ Single component with `step` state variable (1–5). Shared state: `selectedLaun
 ### Modified files
 - `backend/src/server.js` — add `app.locals.db = db`
 - `backend/src/routes/auth.js` — implement login/logout/me
-- `backend/src/routes/setup.js` — implement setup + launcher routes
-- `backend/src/routes/launchers.js` — may merge into setup.js or keep separate
+- `backend/src/routes/setup.js` — implement setup status/complete/qr routes
+- `backend/src/routes/launchers.js` — implement available/credentials/test/priority routes
 - `backend/src/routes/sync.js` — stub POST /api/sync/all
 - `frontend/src/main.jsx` — import index.css
 - `frontend/src/App.jsx` — React Router setup with route guards
+
+### Notes
+- The `tailwind.config.js` must use ESM syntax (`export default`) since `frontend/package.json` has `"type": "module"`, or use `.cjs` extension.
+- No changes needed to `vite.config.js` — existing `/api` proxy covers all new routes.
+- EA App replaces the previously listed `origin` launcher from Phase 1 schema defaults.
