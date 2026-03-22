@@ -151,6 +151,7 @@ function normalize(title) {
   // Lowercase, strip non-alphanumeric (keep spaces and hyphens), collapse whitespace
   result = result.toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s*-\s*$/, '')      // Strip trailing hyphens/separators after suffix removal
     .replace(/\s+/g, ' ')
     .trim();
   return result;
@@ -840,13 +841,19 @@ After line 95 (`db.prepare('UPDATE launchers SET last_sync_at = ? WHERE id = ?')
     enrichAll(db).catch(err => console.error('[Metadata] enrichAll error:', err.message));
 ```
 
-- [ ] **Step 2: Run full backend test suite**
+- [ ] **Step 2: Update syncEngine test to handle enrichAll side effect**
+
+The existing `backend/tests/services/syncEngine.test.js` asserts `game_id === null` after sync. After this change, `enrichAll()` fires in the background and may set `game_id` before the assertion runs. Update the test that checks `edition.game_id === null` to instead verify the sync job succeeded (which is the sync engine's actual responsibility). The enrichment behavior is tested separately in the enrichGame tests.
+
+If the test still asserts `game_id === null`, it's acceptable because IGDB credentials are not set in tests, so `enrichAll` will create minimal games rows via the no-match path — but the timing is non-deterministic. The safest fix: change the assertion to simply verify the `game_edition` row exists with the correct `title` and `playtime_minutes`, without asserting `game_id`.
+
+- [ ] **Step 3: Run full backend test suite**
 
 Run: `cd /development/Claude\ Projects/gamelist_manager/.worktrees/phase4/backend && npm test`
 
 Expected: All tests pass
 
-- [ ] **Step 3: Verify frontend builds**
+- [ ] **Step 4: Verify frontend builds**
 
 Run: `cd /development/Claude\ Projects/gamelist_manager/.worktrees/phase4/frontend && npx vite build`
 
@@ -886,9 +893,9 @@ Expected: All 5 files OK
 
 - [ ] **Step 3: Confirm task completion**
 
-- Task 1: IGDB client ✓
-- Task 2: Title normalization and matching ✓
-- Task 3: Image cache service ✓
-- Task 4: Enrichment orchestrator ✓
-- Task 5: Metadata routes ✓
-- Task 6: Sync engine update ✓
+- Spec Task 1 (IGDB client) → Plan Task 2 ✓
+- Spec Task 2 (Title matching) → Plan Task 1 ✓
+- Spec Task 3 (Image cache) → Plan Task 3 ✓
+- Spec Task 4 (Enrichment orchestrator) → Plan Task 4 ✓
+- Spec Task 5 (Metadata routes) → Plan Tasks 5-6 ✓
+- Spec Task 6 (Sync engine update) → Plan Task 7 ✓
