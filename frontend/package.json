@@ -1,0 +1,22 @@
+{
+  "name": "gameshelf-frontend",
+  "version": "1.0.0",
+  "description": "Gameshelf frontend",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --host",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "vite": "^6.0.0"
+  }
+}
