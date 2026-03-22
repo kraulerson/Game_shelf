@@ -66,4 +66,35 @@ router.get('/me', authMiddleware, (req, res) => {
   res.json({ username: req.user.username });
 });
 
+router.post('/change-password', authMiddleware, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new password are required' });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+
+    const db = req.app.locals.db;
+    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+    const valid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user.id);
+
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.clearCookie('gameshelf_session', {
+      httpOnly: true, secure: isProduction, sameSite: 'Strict', path: '/',
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
