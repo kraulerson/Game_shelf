@@ -33,12 +33,12 @@ describe('Express server', () => {
     assert.equal(body.app, 'Gameshelf');
   });
 
-  it('GET /api/auth should return 501', async () => {
+  it('GET /api/auth/me should return 401 without auth', async () => {
     delete require.cache[require.resolve('../src/server')];
     const { app } = require('../src/server');
 
-    const res = await makeFetch(app, '/api/auth');
-    assert.equal(res.status, 501);
+    const res = await makeFetch(app, '/api/auth/me');
+    assert.equal(res.status, 401);
   });
 
   it('GET /api/games should return 501', async () => {
