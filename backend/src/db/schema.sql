@@ -35,19 +35,22 @@ CREATE TABLE IF NOT EXISTS games (
 
 CREATE TABLE IF NOT EXISTS game_editions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  game_id INTEGER NOT NULL,
+  game_id INTEGER,
   launcher_id INTEGER NOT NULL,
   launcher_game_id TEXT,
+  title TEXT,
   launcher_url TEXT,
   owned INTEGER NOT NULL DEFAULT 1,
   install_state TEXT,
   playtime_minutes INTEGER DEFAULT 0,
   last_played_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(game_id, launcher_id),
   FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
   FOREIGN KEY (launcher_id) REFERENCES launchers(id) ON DELETE CASCADE
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_game_editions_launcher_game
+  ON game_editions(launcher_id, launcher_game_id);
 
 CREATE TABLE IF NOT EXISTS genres (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +84,8 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
   status TEXT NOT NULL DEFAULT 'pending',
   started_at TEXT,
   completed_at TEXT,
+  games_found INTEGER DEFAULT 0,
+  games_updated INTEGER DEFAULT 0,
   error_message TEXT,
   FOREIGN KEY (launcher_id) REFERENCES launchers(id) ON DELETE CASCADE
 );
