@@ -21,6 +21,7 @@ for (const { name, minLength } of requiredEnv) {
 }
 
 const express = require('express');
+const path = require('node:path');
 const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
 const { runMigrations } = require('./db/migrate');
@@ -33,6 +34,7 @@ const setupRouter = require('./routes/setup');
 const launchersRouter = require('./routes/launchers');
 const gamesRouter = require('./routes/games');
 const syncRouter = require('./routes/sync');
+const metadataRouter = require('./routes/metadata');
 
 // Run migrations
 const dbPath = process.env.GAMESHELF_DB_PATH || './data/gameshelf.db';
@@ -53,12 +55,17 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', version: '1.0.0', app: 'Gameshelf' });
 });
 
+// Static image serving for cached game artwork
+const dataDir = path.resolve(path.dirname(dbPath));
+app.use('/data/images', express.static(path.join(dataDir, 'images')));
+
 // API routes
 app.use('/api/auth', authRouter);
 app.use('/api/setup', setupRouter);
 app.use('/api/launchers', launchersRouter);
 app.use('/api/games', gamesRouter);
 app.use('/api/sync', syncRouter);
+app.use('/api/metadata', metadataRouter);
 
 // Global error handler
 app.use(errorHandler);

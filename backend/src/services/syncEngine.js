@@ -1,5 +1,6 @@
 const { decrypt } = require('../utils/encrypt');
 const { LAUNCHER_CLASSES } = require('./launchers');
+const { enrichAll } = require('./metadata/enrichGame');
 
 async function syncLauncher(launcherName, db) {
   const launcher = db.prepare('SELECT * FROM launchers WHERE name = ?').get(launcherName);
@@ -93,6 +94,10 @@ async function syncLauncher(launcherName, db) {
 
     // Update launcher last_sync_at
     db.prepare('UPDATE launchers SET last_sync_at = ? WHERE id = ?').run(completedAt, launcher.id);
+
+    // Fire-and-forget enrichment pass
+    console.log(`[Gameshelf Metadata] Starting enrichment pass after sync for ${launcherName}`);
+    enrichAll(db).catch(err => console.error('[Metadata] enrichAll error:', err.message));
 
     return jobId;
   } catch (err) {
