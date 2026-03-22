@@ -21,7 +21,7 @@ Phase 4 adds metadata enrichment using IGDB (via Twitch OAuth) as the primary so
 **`async search(title)`**
 - POST `https://api.igdb.com/v4/games`
 - Headers: `Client-ID: {client_id}`, `Authorization: Bearer {token}`
-- Body: `search "{title}"; fields id,name,summary,cover.url,artworks.url,genres.name,involved_companies.company.name,first_release_date,rating; limit 5;`
+- Body: `search "{title}"; fields id,name,summary,cover.url,artworks.url,genres.name,involved_companies.company.name,involved_companies.developer,involved_companies.publisher,first_release_date; limit 5;`
 - Returns array of up to 5 results
 
 **`async getById(igdbId)`**
@@ -69,12 +69,19 @@ Phase 4 adds metadata enrichment using IGDB (via Twitch OAuth) as the primary so
 
 ### Static serving
 
-Add `express.static` in `server.js` before API routes:
+Add `express.static` in `server.js` after the health check, before API routes:
 ```javascript
+const dataDir = path.resolve(path.dirname(process.env.GAMESHELF_DB_PATH || './data/gameshelf.db'));
 app.use('/data/images', express.static(path.join(dataDir, 'images')));
 ```
 
-`dataDir` derived from `GAMESHELF_DB_PATH` parent directory (e.g., `/app/data/`). Images accessible at `http://host:3001/data/images/{gameId}/cover.jpg`.
+Uses `path.resolve()` to normalize relative paths. Images accessible at `http://host:3001/data/images/{gameId}/cover.jpg`.
+
+Mount metadata routes:
+```javascript
+const metadataRouter = require('./routes/metadata');
+app.use('/api/metadata', metadataRouter);
+```
 
 ## Enrichment Orchestrator
 
@@ -87,11 +94,11 @@ app.use('/data/images', express.static(path.join(dataDir, 'images')));
 3. Call `findBestMatch()`:
    - If null: log `[Gameshelf Metadata] No IGDB match for: {title}`, create minimal `games` row (title + slugified title only), link `game_edition.game_id`. Return.
    - TODO placeholder: note where RAWG.io fallback would slot in
-4. If match found: extract title, summary, release year, developer (from `involved_companies`), cover URL, artwork URL, genres
-5. Upsert into `games` table using `ON CONFLICT(slug) DO UPDATE` — update all metadata fields + `updated_at`
-6. Download cover and hero images via `cacheImage()`, update `cover_url` and `hero_url` with local paths. Use cover as icon (IGDB has no distinct icon field).
-7. Upsert genres into `genres` table (`INSERT OR IGNORE`), insert into `game_genres` junction. Mirror genres as tags into `tags`/`game_tags`.
-8. Link `game_edition.game_id` to the `games` row
+4. If match found: extract title, summary, release year from `first_release_date` (Unix timestamp → year). Extract developer from `involved_companies` where `.developer === true`, publisher where `.publisher === true`. Extract cover URL from `cover.url`, hero URL from first `artworks.url`. Extract genre names from `genres`.
+5. Upsert into `games` table using `ON CONFLICT(slug) DO UPDATE` — update all metadata fields (`description`, `release_year`, `developer`, `publisher`) + `updated_at`
+6. Download cover and hero images via `cacheImage()` — only call when URL exists (cover/artwork can be null in IGDB). Update `cover_url` and `hero_url` with local paths. Use cover as icon (IGDB has no distinct icon field). Copy cover file as icon.
+7. Clear stale genre/tag associations: `DELETE FROM game_genres WHERE game_id = ?` and `DELETE FROM game_tags WHERE game_id = ?` before re-inserting. Then upsert genres into `genres` table (`INSERT OR IGNORE`), insert into `game_genres` junction. Mirror genres as tags into `tags`/`game_tags`. This ensures re-enrichment produces clean results.
+8. Link `game_edition.game_id` to the `games` row. Note: each edition is enriched independently via its own `gameEditionId`. Multiple editions of the same game will converge to the same `games` row via the slug-based upsert.
 
 **`async enrichAll(db)`**
 
