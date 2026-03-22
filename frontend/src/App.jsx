@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import RequireAuth from './components/RequireAuth';
 import RequireSetup from './components/RequireSetup';
 import Login from './pages/Login';
+import Setup from './pages/Setup';
 import Library from './pages/Library';
 import Settings from './pages/Settings';
 
@@ -13,7 +14,7 @@ export default function App() {
 
         {/* Authenticated routes */}
         <Route element={<RequireAuth />}>
-          <Route path="/setup" element={<div>Setup placeholder</div>} />
+          <Route path="/setup" element={<Setup />} />
           <Route path="/settings" element={<Settings />} />
 
           {/* Authenticated + setup complete */}
