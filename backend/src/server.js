@@ -22,8 +22,10 @@ for (const { name, minLength } of requiredEnv) {
 
 const express = require('express');
 const cookieParser = require('cookie-parser');
+const cron = require('node-cron');
 const { runMigrations } = require('./db/migrate');
 const errorHandler = require('./middleware/errorHandler');
+const { syncAll } = require('./services/syncEngine');
 
 // Routes
 const authRouter = require('./routes/auth');
@@ -65,6 +67,11 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 3001;
 
 if (require.main === module) {
+  cron.schedule('0 */6 * * *', () => {
+    console.log('[Gameshelf Scheduler] Starting 6-hour library sync');
+    syncAll(db).catch(err => console.error('[Scheduler] syncAll error:', err.message));
+  });
+
   app.listen(PORT, () => {
     console.log(`Gameshelf server running on port ${PORT}`);
   });
