@@ -1,0 +1,23 @@
+FROM node:20-alpine AS backend
+
+WORKDIR /app
+
+# Install build dependencies for native modules (better-sqlite3, bcrypt)
+RUN apk add --no-cache python3 make g++
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY src/ ./src/
+
+# Create non-root user data directory
+RUN mkdir -p /app/data && chown -R node:node /app
+
+USER node
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/health || exit 1
+
+CMD ["node", "src/server.js"]
