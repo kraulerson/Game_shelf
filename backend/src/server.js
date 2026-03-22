@@ -39,6 +39,9 @@ const db = runMigrations(dbPath);
 // Create app
 const app = express();
 
+// Make db available to route handlers
+app.locals.db = db;
+
 // Middleware
 app.use(express.json());
 app.use(cookieParser());
