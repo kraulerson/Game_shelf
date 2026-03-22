@@ -111,9 +111,9 @@ No versioned migration system yet — single `schema.sql` with `IF NOT EXISTS`. 
 File: `/backend/src/utils/encrypt.js`
 
 - AES-256-GCM with random 12-byte IV per call
-- `encrypt(plaintext, key)` → base64 JSON string: `{"iv":"...","tag":"...","data":"..."}`
-- `decrypt(ciphertext, key)` → plaintext string
-- Key from `process.env.GAMESHELF_ENCRYPTION_KEY` (must be 32+ characters)
+- `encrypt(plaintext)` → base64 JSON string: `{"iv":"...","tag":"...","data":"..."}`
+- `decrypt(ciphertext)` → plaintext string
+- Key derived from `process.env.GAMESHELF_ENCRYPTION_KEY` via SHA-256 at module load (must be 32+ characters)
 - Throws hard error at module load if key is missing or too short
 - Uses Node.js built-in `crypto` — no external dependencies
 
