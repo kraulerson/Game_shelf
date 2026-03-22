@@ -1,10 +1,21 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import RequireAuth from './components/RequireAuth';
 import RequireSetup from './components/RequireSetup';
+import Nav from './components/Nav';
 import Login from './pages/Login';
 import Setup from './pages/Setup';
 import Library from './pages/Library';
+import GameDetail from './pages/GameDetail';
 import Settings from './pages/Settings';
+
+function AuthenticatedLayout() {
+  return (
+    <>
+      <Nav />
+      <Outlet />
+    </>
+  );
+}
 
 export default function App() {
   return (
@@ -12,18 +23,19 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
 
-        {/* Authenticated routes */}
         <Route element={<RequireAuth />}>
           <Route path="/setup" element={<Setup />} />
-          <Route path="/settings" element={<Settings />} />
 
-          {/* Authenticated + setup complete */}
-          <Route element={<RequireSetup />}>
-            <Route path="/library" element={<Library />} />
+          <Route element={<AuthenticatedLayout />}>
+            <Route path="/settings" element={<Settings />} />
+
+            <Route element={<RequireSetup />}>
+              <Route path="/library" element={<Library />} />
+              <Route path="/library/game/:id" element={<GameDetail />} />
+            </Route>
           </Route>
         </Route>
 
-        {/* Default redirect */}
         <Route path="*" element={<Navigate to="/library" replace />} />
       </Routes>
     </BrowserRouter>
