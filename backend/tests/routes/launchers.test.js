@@ -52,7 +52,7 @@ describe('Launcher routes', () => {
     const res = await makeFetch(app, '/api/launchers/steam/credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
-      body: JSON.stringify({ username: 'mysteam', password: 'pass123' }),
+      body: JSON.stringify({ api_key: 'test-steam-key', steamid64: '76561198012345678' }),
     });
     assert.equal(res.status, 200);
     const body = await res.json();

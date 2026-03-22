@@ -63,7 +63,7 @@ describe('Setup routes', () => {
     await makeFetch(app, '/api/launchers/steam/credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
-      body: JSON.stringify({ username: 'steamuser', password: 'pass', totp_secret: 'JBSWY3DPEHPK3PXP' }),
+      body: JSON.stringify({ api_key: 'test-key', steamid64: '12345', totp_secret: 'JBSWY3DPEHPK3PXP' }),
     });
 
     const res = await makeFetch(app, '/api/setup/qr/steam', {

@@ -9,7 +9,7 @@ router.use(authMiddleware);
 
 // Static list of supported launchers
 const AVAILABLE_LAUNCHERS = [
-  { id: 'steam', display_name: 'Steam', auth_type: 'credentials+totp', otp_supported: true, qr_supported: true },
+  { id: 'steam', display_name: 'Steam', auth_type: 'api_key', otp_supported: false, qr_supported: false },
   { id: 'ea', display_name: 'EA App', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false },
   { id: 'ubisoft', display_name: 'Ubisoft Connect', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false },
   { id: 'epic', display_name: 'Epic Games', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false },
@@ -36,7 +36,7 @@ router.post('/:id/credentials', (req, res) => {
     return res.status(400).json({ error: `Unknown launcher: ${id}` });
   }
 
-  const { username, password, api_key, totp_secret } = req.body || {};
+  const { username, password, api_key, steamid64, totp_secret } = req.body || {};
 
   // Validate required fields by auth_type
   if (launcher.auth_type === 'api_key') {
@@ -50,10 +50,16 @@ router.post('/:id/credentials', (req, res) => {
     }
   }
 
+  // Steam requires steamid64 alongside api_key
+  if (id === 'steam' && !steamid64) {
+    return res.status(400).json({ error: 'steamid64 is required for Steam' });
+  }
+
   const payload = {};
   if (username) payload.username = username;
   if (password) payload.password = password;
   if (api_key) payload.api_key = api_key;
+  if (steamid64) payload.steamid64 = steamid64;
   if (totp_secret) payload.totp_secret = totp_secret;
 
   const encryptedCredentials = encrypt(JSON.stringify(payload));
