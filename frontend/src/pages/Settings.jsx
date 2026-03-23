@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, RefreshCw } from 'lucide-react';
@@ -148,6 +148,164 @@ function MetadataTab() {
   );
 }
 
+function TagsTab() {
+  const queryClient = useQueryClient();
+  const [editingTag, setEditingTag] = useState(null);
+  const [newTagName, setNewTagName] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const { data: tags } = useQuery({
+    queryKey: ['tags'],
+    queryFn: () => fetch('/api/tags', { credentials: 'same-origin' }).then(r => r.json()),
+  });
+
+  const { data: tagGames } = useQuery({
+    queryKey: ['tagGames', editingTag?.id, page, debouncedSearch],
+    queryFn: () => fetch(`/api/tags/${editingTag.id}/games?page=${page}&limit=200&search=${encodeURIComponent(debouncedSearch)}`, { credentials: 'same-origin' }).then(r => r.json()),
+    enabled: !!editingTag,
+  });
+
+  async function createTag() {
+    const trimmed = newTagName.trim();
+    if (!trimmed) return;
+    const res = await fetch('/api/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ name: trimmed }),
+    });
+    if (res.ok) {
+      setNewTagName('');
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+      queryClient.invalidateQueries({ queryKey: ['gameFilters'] });
+    }
+  }
+
+  async function deleteTag(id) {
+    await fetch(`/api/tags/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+    setConfirmDelete(null);
+    queryClient.invalidateQueries({ queryKey: ['tags'] });
+    queryClient.invalidateQueries({ queryKey: ['gameFilters'] });
+  }
+
+  async function toggleGame(gameId, tagged) {
+    const body = tagged ? { remove: [gameId] } : { add: [gameId] };
+    await fetch(`/api/tags/${editingTag.id}/games`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    });
+    queryClient.invalidateQueries({ queryKey: ['tagGames'] });
+    queryClient.invalidateQueries({ queryKey: ['tags'] });
+    queryClient.invalidateQueries({ queryKey: ['gameFilters'] });
+  }
+
+  // Bulk editor view
+  if (editingTag) {
+    const totalPages = tagGames ? Math.ceil(tagGames.total / tagGames.limit) : 1;
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={() => { setEditingTag(null); setSearch(''); setDebouncedSearch(''); setPage(1); }} className="text-blue-400 hover:text-blue-300 text-sm">&larr; Back to tags</button>
+            <h3 className="text-white font-medium">{editingTag.name}</h3>
+            {tagGames && <span className="text-xs text-gray-500">{tagGames.taggedCount} of {tagGames.total} games tagged</span>}
+          </div>
+        </div>
+        <input
+          type="text"
+          placeholder="Search games..."
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(1); }}
+          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <div className="space-y-1 max-h-[600px] overflow-y-auto">
+          {(tagGames?.games || []).map(g => (
+            <label key={g.edition_id} className="flex items-center gap-3 px-3 py-2 bg-gray-800 rounded cursor-pointer hover:bg-gray-750">
+              <input
+                type="checkbox"
+                checked={!!g.tagged}
+                onChange={() => toggleGame(g.game_id, g.tagged)}
+                className="rounded"
+              />
+              {g.icon_url ? (
+                <img src={g.icon_url} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" />
+              ) : (
+                <div className="w-8 h-8 rounded bg-gray-700 flex-shrink-0" />
+              )}
+              <span className="text-sm text-white flex-1 truncate">{g.title}</span>
+              <LauncherBadge launcherName={g.launcher_name} displayName={g.launcher_display_name} />
+            </label>
+          ))}
+        </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-sm rounded">Previous</button>
+            <span className="text-sm text-gray-400">Page {page} of {totalPages}</span>
+            <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} className="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-sm rounded">Next</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Tag list view
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          placeholder="New tag name..."
+          value={newTagName}
+          onChange={e => setNewTagName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && createTag()}
+          maxLength={50}
+          className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button onClick={createTag} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors">Create Tag</button>
+      </div>
+
+      {(tags || []).map(t => (
+        <div key={t.id} className="bg-gray-800 rounded-lg p-3 flex items-center justify-between">
+          <div>
+            <span className="text-sm text-white">{t.name}</span>
+            <span className="text-xs text-gray-500 ml-2">({t.gameCount} games)</span>
+            {t.isGenre && <span className="text-xs text-yellow-600 ml-2">genre</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => { setEditingTag(t); setPage(1); setSearch(''); setDebouncedSearch(''); }} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-sm rounded">Edit</button>
+            {!t.isGenre && (
+              <button onClick={() => setConfirmDelete(t)} className="px-2 py-1 bg-red-900/50 hover:bg-red-800/50 text-red-400 text-sm rounded">Delete</button>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-sm mx-4">
+            <h3 className="text-white font-medium mb-2">Delete Tag</h3>
+            <p className="text-gray-400 text-sm mb-4">Delete tag &quot;{confirmDelete.name}&quot;? It will be removed from all games.</p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmDelete(null)} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded">Cancel</button>
+              <button onClick={() => deleteTag(confirmDelete.id)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AccountTab() {
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
@@ -249,11 +407,13 @@ export default function Settings() {
       <div className="flex gap-1 mb-4 border-b border-gray-800">
         <button onClick={() => setTab('launchers')} className={tabClass('launchers')}>Launchers</button>
         <button onClick={() => setTab('metadata')} className={tabClass('metadata')}>Metadata</button>
+        <button onClick={() => setTab('tags')} className={tabClass('tags')}>Tags</button>
         <button onClick={() => setTab('account')} className={tabClass('account')}>Account</button>
       </div>
 
       {tab === 'launchers' && <LaunchersTab />}
       {tab === 'metadata' && <MetadataTab />}
+      {tab === 'tags' && <TagsTab />}
       {tab === 'account' && <AccountTab />}
     </div>
   );
