@@ -18,6 +18,7 @@
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.3",
     "otpauth": "^9.5.0",
-    "steam-totp": "^2.1.2"
+    "steam-totp": "^2.1.2",
+    "steamgriddb": "^2.2.1"
   }
 }
