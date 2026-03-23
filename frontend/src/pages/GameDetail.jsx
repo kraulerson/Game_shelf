@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Loader2, X, Plus } from 'lucide-react';
 import LauncherBadge from '../components/LauncherBadge';
 
 function formatPlaytime(minutes) {
@@ -13,7 +13,11 @@ function formatPlaytime(minutes) {
 export default function GameDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [showFullDesc, setShowFullDesc] = useState(false);
+  const [showTagInput, setShowTagInput] = useState(false);
+  const [tagSearch, setTagSearch] = useState('');
+  const [confirmRemoveTag, setConfirmRemoveTag] = useState(null);
 
   const { data: game, isLoading, error } = useQuery({
     queryKey: ['game', id],
@@ -22,6 +26,54 @@ export default function GameDetail() {
       return r.json();
     }),
   });
+
+  const { data: allTags } = useQuery({
+    queryKey: ['tags'],
+    queryFn: () => fetch('/api/tags', { credentials: 'same-origin' }).then(r => r.json()),
+    enabled: !!game,
+  });
+
+  const userTags = game?.tags?.filter(t => !game.genres?.includes(t.name)) || [];
+
+  async function updateGameTags(newTagIds) {
+    await fetch(`/api/games/${id}/tags`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ tagIds: newTagIds }),
+    });
+    queryClient.invalidateQueries({ queryKey: ['game', id] });
+    queryClient.invalidateQueries({ queryKey: ['gameFilters'] });
+    queryClient.invalidateQueries({ queryKey: ['tags'] });
+  }
+
+  async function removeTag(tagId) {
+    const remaining = userTags.filter(t => t.id !== tagId).map(t => t.id);
+    await updateGameTags(remaining);
+    setConfirmRemoveTag(null);
+  }
+
+  async function addTag(tagId) {
+    const current = userTags.map(t => t.id);
+    if (!current.includes(tagId)) {
+      await updateGameTags([...current, tagId]);
+    }
+    setShowTagInput(false);
+    setTagSearch('');
+  }
+
+  async function createAndAddTag(name) {
+    const res = await fetch('/api/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ name }),
+    });
+    if (res.ok) {
+      const newTag = await res.json();
+      await addTag(newTag.id);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -90,15 +142,60 @@ export default function GameDetail() {
 
       {/* Content */}
       <div className="px-6 pt-12 pb-8 max-w-4xl">
-        {/* Genre + tag chips */}
-        {(game.genres?.length > 0 || game.tags?.length > 0) && (
-          <div className="flex flex-wrap gap-2 mb-4">
-            {game.genres?.map(g => (
-              <span key={g} className="bg-blue-600/20 text-blue-400 px-2.5 py-1 rounded-full text-xs">{g}</span>
-            ))}
-            {game.tags?.filter(t => !game.genres?.includes(t)).map(t => (
-              <span key={t} className="bg-gray-700 text-gray-300 px-2.5 py-1 rounded-full text-xs">{t}</span>
-            ))}
+        {/* Genre chips (read-only) + editable tag chips */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          {game.genres?.map(g => (
+            <span key={g} className="bg-blue-600/20 text-blue-400 px-2.5 py-1 rounded-full text-xs">{g}</span>
+          ))}
+
+          {userTags.map(t => (
+            <span key={t.id} className="bg-gray-700 text-gray-300 px-2.5 py-1 rounded-full text-xs inline-flex items-center gap-1">
+              {t.name}
+              <button onClick={() => setConfirmRemoveTag(t)} className="hover:text-red-400"><X size={12} /></button>
+            </span>
+          ))}
+
+          <div className="relative">
+            <button onClick={() => setShowTagInput(!showTagInput)} className="bg-gray-700 hover:bg-gray-600 text-gray-400 px-2.5 py-1 rounded-full text-xs inline-flex items-center gap-1">
+              <Plus size={12} /> Add tag
+            </button>
+            {showTagInput && (
+              <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-lg z-20 w-48">
+                <input
+                  type="text"
+                  placeholder="Search or create..."
+                  value={tagSearch}
+                  onChange={e => setTagSearch(e.target.value)}
+                  autoFocus
+                  className="w-full px-3 py-2 bg-transparent border-b border-gray-700 text-white text-xs focus:outline-none"
+                />
+                <div className="max-h-32 overflow-y-auto">
+                  {(allTags || [])
+                    .filter(t => !userTags.some(ut => ut.id === t.id) && !game.genres?.includes(t.name))
+                    .filter(t => !tagSearch || t.name.toLowerCase().includes(tagSearch.toLowerCase()))
+                    .map(t => (
+                      <button key={t.id} onClick={() => addTag(t.id)} className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700">{t.name}</button>
+                    ))}
+                  {tagSearch.trim() && !(allTags || []).some(t => t.name.toLowerCase() === tagSearch.trim().toLowerCase()) && (
+                    <button onClick={() => createAndAddTag(tagSearch.trim())} className="w-full text-left px-3 py-1.5 text-xs text-blue-400 hover:bg-gray-700">Create &quot;{tagSearch.trim()}&quot;</button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Confirm tag removal dialog */}
+        {confirmRemoveTag && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-lg p-6 max-w-sm mx-4">
+              <h3 className="text-white font-medium mb-2">Remove Tag</h3>
+              <p className="text-gray-400 text-sm mb-4">Remove tag &quot;{confirmRemoveTag.name}&quot; from this game?</p>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setConfirmRemoveTag(null)} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded">Cancel</button>
+                <button onClick={() => removeTag(confirmRemoveTag.id)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded">Remove</button>
+              </div>
+            </div>
           </div>
         )}
 
