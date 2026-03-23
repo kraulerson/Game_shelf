@@ -140,7 +140,7 @@ router.get('/', (req, res) => {
   const db = req.app.locals.db;
   const {
     search, genre, tag, launcher, sort = 'title_asc',
-    page = '1', limit = '50', duplicates,
+    page = '1', limit = '50', duplicates, starts_with,
     release_year_min, release_year_max, playtime_min, playtime_max,
     owned = 'true',
   } = req.query;
@@ -207,6 +207,21 @@ router.get('/', (req, res) => {
   const searchWhereDedup = searchTerm ? 'AND (g.title LIKE ? OR r.edition_title LIKE ?)' : '';
   const searchParams = searchTerm ? [searchTerm, searchTerm] : [];
 
+  // starts_with clause — dual expressions like search (column refs differ per mode)
+  let startsWithDup = '';
+  let startsWithDedup = '';
+  const startsWithParams = [];
+  if (starts_with) {
+    if (starts_with === '#') {
+      startsWithDup = "AND COALESCE(g.title, ge.title) NOT GLOB '[A-Za-z]*'";
+      startsWithDedup = "AND COALESCE(g.title, r.edition_title) NOT GLOB '[A-Za-z]*'";
+    } else {
+      startsWithDup = 'AND COALESCE(g.title, ge.title) LIKE ? COLLATE NOCASE';
+      startsWithDedup = 'AND COALESCE(g.title, r.edition_title) LIKE ? COLLATE NOCASE';
+      startsWithParams.push(`${starts_with}%`);
+    }
+  }
+
   // Sort uses column aliases from SELECT (r_playtime, r_title)
   const sortMap = {
     title_asc: 'COALESCE(g.title, r_title) COLLATE NOCASE ASC',
@@ -232,7 +247,7 @@ router.get('/', (req, res) => {
       FROM game_editions ge
       JOIN launchers l ON l.id = ge.launcher_id
       LEFT JOIN games g ON g.id = ge.game_id
-      WHERE 1=1 ${innerWhere} ${outerWhere} ${searchWhereDup}
+      WHERE 1=1 ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `;
@@ -241,10 +256,10 @@ router.get('/', (req, res) => {
       FROM game_editions ge
       JOIN launchers l ON l.id = ge.launcher_id
       LEFT JOIN games g ON g.id = ge.game_id
-      WHERE 1=1 ${innerWhere} ${outerWhere} ${searchWhereDup}
+      WHERE 1=1 ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
     `;
-    countParams = [...innerParams, ...outerParams, ...searchParams];
-    allParams = [...innerParams, ...outerParams, ...searchParams, limitNum, offset];
+    countParams = [...innerParams, ...outerParams, ...searchParams, ...startsWithParams];
+    allParams = [...innerParams, ...outerParams, ...searchParams, ...startsWithParams, limitNum, offset];
   } else {
     query = `
       WITH ranked AS (
@@ -266,7 +281,7 @@ router.get('/', (req, res) => {
              g.release_year, g.developer, g.publisher
       FROM ranked r
       LEFT JOIN games g ON g.id = r.game_id
-      WHERE r.rn = 1 ${outerWhere} ${searchWhereDedup}
+      WHERE r.rn = 1 ${outerWhere} ${searchWhereDedup} ${startsWithDedup}
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `;
@@ -286,10 +301,10 @@ router.get('/', (req, res) => {
       SELECT COUNT(*) as total
       FROM ranked r
       LEFT JOIN games g ON g.id = r.game_id
-      WHERE r.rn = 1 ${outerWhere} ${searchWhereDedup}
+      WHERE r.rn = 1 ${outerWhere} ${searchWhereDedup} ${startsWithDedup}
     `;
-    countParams = [...innerParams, ...outerParams, ...searchParams];
-    allParams = [...innerParams, ...outerParams, ...searchParams, limitNum, offset];
+    countParams = [...innerParams, ...outerParams, ...searchParams, ...startsWithParams];
+    allParams = [...innerParams, ...outerParams, ...searchParams, ...startsWithParams, limitNum, offset];
   }
 
   const total = db.prepare(countQuery).get(...countParams)?.total || 0;
