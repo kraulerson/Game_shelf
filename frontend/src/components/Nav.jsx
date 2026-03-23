@@ -15,6 +15,12 @@ export default function Nav() {
     refetchInterval: 30000,
   });
 
+  const { data: health } = useQuery({
+    queryKey: ['health'],
+    queryFn: () => fetch('/api/health').then(r => r.json()),
+    staleTime: Infinity,
+  });
+
   const isRunning = syncStatus?.some?.(j => j.status === 'running');
   const lastSync = syncStatus?.[0]?.completed_at;
   const hoursSinceSync = lastSync ? (Date.now() - new Date(lastSync).getTime()) / 3600000 : Infinity;
@@ -38,7 +44,10 @@ export default function Nav() {
   return (
     <nav className="bg-gray-900 border-b border-gray-800 px-4 py-2">
       <div className="flex items-center justify-between">
-        <Link to="/library" className="text-xl font-bold text-white">Gameshelf</Link>
+        <Link to="/library" className="text-xl font-bold text-white">
+          Gameshelf
+          {health?.version && <span className="text-xs font-normal text-gray-500 ml-2">v{health.version}</span>}
+        </Link>
 
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-2">

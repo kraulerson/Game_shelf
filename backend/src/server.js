@@ -53,8 +53,9 @@ app.use(express.json());
 app.use(cookieParser());
 
 // Health check
+const { version } = require('../package.json');
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '1.0.0', app: 'Gameshelf' });
+  res.json({ status: 'ok', version, app: 'Gameshelf' });
 });
 
 // Static image serving for cached game artwork
