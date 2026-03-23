@@ -608,7 +608,97 @@ git commit -m "feat: add daily 3 AM cron job for metadata enrichment"
 
 ---
 
-### Task 6: Frontend — Remove button in LaunchersTab
+### Task 6: Frontend — Launcher badge redesign (text-only, larger, always show name)
+
+**Files:**
+- Modify: `frontend/src/components/LauncherBadge.jsx` (remove icon, always show name, larger text)
+- Modify: `frontend/src/components/GameCard.jsx` (remove `compact` prop usage)
+- Modify: `frontend/src/components/GameRow.jsx` (remove `compact` prop usage)
+
+- [ ] **Step 1: Rewrite LauncherBadge to text-only**
+
+Replace the contents of `frontend/src/components/LauncherBadge.jsx`:
+
+```jsx
+export default function LauncherBadge({ launcherName, displayName, primary = false }) {
+  const colorClasses = primary
+    ? 'bg-blue-600 text-white'
+    : 'bg-gray-700 text-gray-300 opacity-70';
+
+  return (
+    <span className={`inline-flex items-center rounded-full text-sm font-medium px-2.5 py-0.5 ${colorClasses}`}>
+      {displayName || launcherName}
+    </span>
+  );
+}
+```
+
+- [ ] **Step 2: Update GameCard — remove `compact` prop, always show launcher name**
+
+In `frontend/src/components/GameCard.jsx`, change the LauncherBadge usages:
+
+Replace:
+```jsx
+          <LauncherBadge
+            launcherName={game.launcher_name}
+            displayName={game.launcher_display_name}
+            compact
+            primary
+          />
+```
+With:
+```jsx
+          <LauncherBadge
+            launcherName={game.launcher_name}
+            displayName={game.launcher_display_name}
+            primary
+          />
+```
+
+And in the also-on popover, replace:
+```jsx
+                      <LauncherBadge launcherName={l.launcher_name} displayName={l.launcher_display_name} compact />
+```
+With:
+```jsx
+                      <LauncherBadge launcherName={l.launcher_name} displayName={l.launcher_display_name} />
+```
+
+- [ ] **Step 3: Update GameRow — remove `compact` prop**
+
+In `frontend/src/components/GameRow.jsx`, replace:
+```jsx
+        <LauncherBadge launcherName={game.launcher_name} displayName={game.launcher_display_name} compact primary />
+```
+With:
+```jsx
+        <LauncherBadge launcherName={game.launcher_name} displayName={game.launcher_display_name} primary />
+```
+
+And in the also-on popover, replace:
+```jsx
+                    <LauncherBadge launcherName={l.launcher_name} displayName={l.launcher_display_name} compact />
+```
+With:
+```jsx
+                    <LauncherBadge launcherName={l.launcher_name} displayName={l.launcher_display_name} />
+```
+
+- [ ] **Step 4: Verify the frontend builds**
+
+Run: `cd frontend && npx vite build`
+Expected: Build succeeds with no errors
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/components/LauncherBadge.jsx frontend/src/components/GameCard.jsx frontend/src/components/GameRow.jsx
+git commit -m "feat: redesign launcher badges as text-only labels with larger font"
+```
+
+---
+
+### Task 7: Frontend — Remove button in LaunchersTab
 
 **Files:**
 - Modify: `frontend/src/pages/Settings.jsx:7-57` (the LaunchersTab component)
@@ -734,7 +824,7 @@ git commit -m "feat: add remove launcher button with confirmation dialog"
 
 ---
 
-### Task 7: Docker rebuild and manual verification
+### Task 8: Docker rebuild and manual verification
 
 **Files:** None (verification only)
 
@@ -755,15 +845,17 @@ Expected: Both containers start healthy
 
 - [ ] **Step 4: Manual verification checklist**
 
-1. Navigate to Settings → Launchers tab
-2. Verify configured launchers show "Sync" and "Remove" buttons
-3. Verify unconfigured launchers show "Not configured" with no buttons
-4. Click "Remove" on a configured launcher → confirm dialog appears
-5. Confirm removal → launcher shows "Not configured", games hidden from library
-6. Re-add credentials and sync → games reappear
-7. Navigate to Settings → Metadata tab
-8. Click "Re-enrich All" → status updates
-9. Check backend logs for enrichment output
+1. Navigate to Library — verify launcher badges show text names (e.g. "Steam") with no icons, larger and readable
+2. Click a game — verify GameDetail page badges also show text-only launcher names
+3. Navigate to Settings → Launchers tab
+4. Verify configured launchers show "Sync" and "Remove" buttons
+5. Verify unconfigured launchers show "Not configured" with no buttons
+6. Click "Remove" on a configured launcher → confirm dialog appears
+7. Confirm removal → launcher shows "Not configured", games hidden from library
+8. Re-add credentials and sync → games reappear
+9. Navigate to Settings → Metadata tab
+10. Click "Re-enrich All" → status updates
+11. Check backend logs for enrichment output
 
 - [ ] **Step 5: Final commit with version bump**
 
