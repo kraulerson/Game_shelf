@@ -40,16 +40,18 @@ function LaunchersTab() {
       {(launchers || []).map(l => {
         const status = statusMap[l.id];
         return (
-          <div key={l.id} className="bg-gray-800 rounded-lg p-4 flex items-center justify-between">
+          <div key={l.id} className={`bg-gray-800 rounded-lg p-4 flex items-center justify-between ${!l.implemented ? 'opacity-50' : ''}`}>
             <div className="flex items-center gap-3">
               <LauncherBadge launcherName={l.id} displayName={l.display_name} primary />
               <div>
                 <div className="text-sm text-white">{l.display_name}</div>
                 <div className="text-xs text-gray-500">
-                  {l.configured
-                    ? (status?.completed_at ? `Last synced: ${new Date(status.completed_at).toLocaleString()}` : 'Configured — never synced')
-                    : 'Not configured'}
-                  {status?.status && l.configured && (
+                  {!l.implemented
+                    ? 'Coming Soon'
+                    : l.configured
+                      ? (status?.completed_at ? `Last synced: ${new Date(status.completed_at).toLocaleString()}` : 'Configured — never synced')
+                      : 'Not configured'}
+                  {status?.status && l.configured && l.implemented && (
                     <span className={`ml-2 ${status.status === 'success' ? 'text-green-400' : status.status === 'failed' ? 'text-red-400' : 'text-yellow-400'}`}>
                       ({status.status})
                     </span>
@@ -57,7 +59,9 @@ function LaunchersTab() {
                 </div>
               </div>
             </div>
-            {l.configured ? (
+            {!l.implemented ? (
+              <span className="text-xs text-gray-500 bg-gray-700 px-2.5 py-1 rounded-full">Coming Soon</span>
+            ) : l.configured ? (
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => syncLauncher(l.id)}

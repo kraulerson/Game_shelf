@@ -9,15 +9,15 @@ router.use(authMiddleware);
 
 // Static list of supported launchers
 const AVAILABLE_LAUNCHERS = [
-  { id: 'steam', display_name: 'Steam', auth_type: 'api_key', otp_supported: false, qr_supported: false },
-  { id: 'ea', display_name: 'EA App', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false },
-  { id: 'ubisoft', display_name: 'Ubisoft Connect', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false },
-  { id: 'epic', display_name: 'Epic Games', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false },
-  { id: 'humble', display_name: 'Humble Bundle', auth_type: 'credentials', otp_supported: false, qr_supported: false },
-  { id: 'itchio', display_name: 'itch.io', auth_type: 'api_key', otp_supported: false, qr_supported: false },
-  { id: 'gog', display_name: 'GOG', auth_type: 'credentials', otp_supported: false, qr_supported: false },
-  { id: 'battlenet', display_name: 'Battle.net', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false },
-  { id: 'xbox', display_name: 'Xbox / Microsoft', auth_type: 'credentials', otp_supported: false, qr_supported: false },
+  { id: 'steam', display_name: 'Steam', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
+  { id: 'ea', display_name: 'EA App', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
+  { id: 'ubisoft', display_name: 'Ubisoft Connect', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
+  { id: 'epic', display_name: 'Epic Games', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
+  { id: 'humble', display_name: 'Humble Bundle', auth_type: 'credentials', otp_supported: false, qr_supported: false, implemented: true },
+  { id: 'itchio', display_name: 'itch.io', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
+  { id: 'gog', display_name: 'GOG', auth_type: 'credentials', otp_supported: false, qr_supported: false, implemented: true },
+  { id: 'battlenet', display_name: 'Battle.net', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
+  { id: 'xbox', display_name: 'Xbox / Microsoft', auth_type: 'credentials', otp_supported: false, qr_supported: false, implemented: false },
 ];
 
 const LAUNCHER_MAP = Object.fromEntries(AVAILABLE_LAUNCHERS.map(l => [l.id, l]));
@@ -45,6 +45,10 @@ router.post('/:id/credentials', (req, res) => {
 
   if (!launcher) {
     return res.status(400).json({ error: `Unknown launcher: ${id}` });
+  }
+
+  if (!launcher.implemented) {
+    return res.status(400).json({ error: 'This launcher is not yet implemented' });
   }
 
   const { username, password, api_key, steamid64, totp_secret } = req.body || {};
