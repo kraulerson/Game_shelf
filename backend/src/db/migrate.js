@@ -84,6 +84,12 @@ function runMigrations(dbPath) {
     db.exec('ALTER TABLE sync_jobs ADD COLUMN games_updated INTEGER DEFAULT 0');
   }
 
+  // Phase 6 migration: add last_enrichment_at to games
+  const gamesCols = db.pragma('table_info(games)');
+  if (!gamesCols.some(c => c.name === 'last_enrichment_at')) {
+    db.exec('ALTER TABLE games ADD COLUMN last_enrichment_at TEXT');
+  }
+
   return db;
 }
 
