@@ -8,7 +8,12 @@ function sleep(ms) {
 }
 
 async function enrichGame(gameEditionId, db) {
-  const edition = db.prepare('SELECT * FROM game_editions WHERE id = ?').get(gameEditionId);
+  const edition = db.prepare(`
+    SELECT ge.*, l.name as launcher_name
+    FROM game_editions ge
+    JOIN launchers l ON l.id = ge.launcher_id
+    WHERE ge.id = ?
+  `).get(gameEditionId);
   if (!edition) {
     throw new Error(`game_edition not found: ${gameEditionId}`);
   }
@@ -22,12 +27,14 @@ async function enrichGame(gameEditionId, db) {
   const normalizedTitle = normalize(title);
   const slug = slugify(title);
 
-  // Search IGDB
-  const igdbResults = await igdbClient.search(normalizedTitle);
-  const match = igdbResults ? findBestMatch(title, igdbResults) : null;
-
-  // TODO: RAWG.io fallback would slot in here if match is null
-  // e.g., if (!match) match = await rawgClient.search(normalizedTitle);
+  // Search IGDB: try external ID first (exact), then title search (fuzzy)
+  let match = await igdbClient.getByExternalId(edition.launcher_name, edition.launcher_game_id);
+  if (match) {
+    console.log(`[Gameshelf Metadata] IGDB matched by external ID: ${title}`);
+  } else {
+    const igdbResults = await igdbClient.search(normalizedTitle);
+    match = igdbResults ? findBestMatch(title, igdbResults) : null;
+  }
 
   if (!match) {
     console.log(`[Gameshelf Metadata] No IGDB match for: ${title}`);
@@ -39,6 +46,33 @@ async function enrichGame(gameEditionId, db) {
 
     const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(slug);
     db.prepare('UPDATE game_editions SET game_id = ? WHERE id = ?').run(game.id, gameEditionId);
+
+    // Try SteamGridDB for images even without IGDB metadata
+    try {
+      const sgdbResults = await steamgriddbClient.searchGame(title);
+      const sgdbMatch = sgdbResults ? findBestMatch(title, sgdbResults) : null;
+      if (sgdbMatch) {
+        const sgdbImages = await steamgriddbClient.getImages(sgdbMatch.id);
+        try {
+          if (sgdbImages?.coverUrl) {
+            const coverPath = await cacheImage(sgdbImages.coverUrl, game.id, 'cover');
+            if (coverPath) {
+              db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
+              const iconPath = await cacheImage(sgdbImages.coverUrl, game.id, 'icon');
+              if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
+            }
+          }
+        } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB cover failed for ${title}: ${err.message}`); }
+        try {
+          if (sgdbImages?.heroUrl) {
+            const heroPath = await cacheImage(sgdbImages.heroUrl, game.id, 'hero');
+            if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
+          }
+        } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB hero failed for ${title}: ${err.message}`); }
+      }
+    } catch (err) {
+      console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${title}: ${err.message}`);
+    }
 
     return { status: 'minimal', gameId: game.id };
   }
@@ -155,9 +189,11 @@ async function enrichGame(gameEditionId, db) {
 
 async function enrichUnderEnriched(db) {
   const underEnriched = db.prepare(`
-    SELECT DISTINCT g.id, g.title, g.slug
+    SELECT DISTINCT g.id, g.title, g.slug,
+           ge.launcher_game_id, l.name as launcher_name
     FROM games g
     JOIN game_editions ge ON ge.game_id = g.id AND ge.owned = 1
+    JOIN launchers l ON l.id = ge.launcher_id
     WHERE (g.cover_url IS NULL OR g.description IS NULL)
       AND (g.last_enrichment_at IS NULL
            OR g.last_enrichment_at < datetime('now', '-7 days'))
@@ -169,12 +205,46 @@ async function enrichUnderEnriched(db) {
 
   for (const game of underEnriched) {
     try {
-      const normalizedTitle = normalize(game.title);
-      const igdbResults = await igdbClient.search(normalizedTitle);
-      const match = igdbResults ? findBestMatch(game.title, igdbResults) : null;
+      // Try IGDB: external ID first (exact), then title search (fuzzy)
+      let match = await igdbClient.getByExternalId(game.launcher_name, game.launcher_game_id);
+      if (match) {
+        console.log(`[Gameshelf Metadata] Re-enrich: IGDB matched by external ID: ${game.title}`);
+      } else {
+        const normalizedTitle = normalize(game.title);
+        const igdbResults = await igdbClient.search(normalizedTitle);
+        match = igdbResults ? findBestMatch(game.title, igdbResults) : null;
+      }
 
       if (!match) {
         console.log(`[Gameshelf Metadata] Re-enrich: no IGDB match for: ${game.title}`);
+
+        // Try SteamGridDB for images even without IGDB metadata
+        try {
+          const sgdbResults = await steamgriddbClient.searchGame(game.title);
+          const sgdbMatch = sgdbResults ? findBestMatch(game.title, sgdbResults) : null;
+          if (sgdbMatch) {
+            const sgdbImages = await steamgriddbClient.getImages(sgdbMatch.id);
+            try {
+              if (sgdbImages?.coverUrl) {
+                const coverPath = await cacheImage(sgdbImages.coverUrl, game.id, 'cover');
+                if (coverPath) {
+                  db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
+                  const iconPath = await cacheImage(sgdbImages.coverUrl, game.id, 'icon');
+                  if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
+                }
+              }
+            } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB cover failed for ${game.title}: ${err.message}`); }
+            try {
+              if (sgdbImages?.heroUrl) {
+                const heroPath = await cacheImage(sgdbImages.heroUrl, game.id, 'hero');
+                if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
+              }
+            } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB hero failed for ${game.title}: ${err.message}`); }
+          }
+        } catch (err) {
+          console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${game.title}: ${err.message}`);
+        }
+
         db.prepare("UPDATE games SET last_enrichment_at = datetime('now') WHERE id = ?").run(game.id);
         skipped++;
         await sleep(500);

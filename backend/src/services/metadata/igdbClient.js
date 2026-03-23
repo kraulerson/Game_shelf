@@ -107,10 +107,27 @@ async function igdbRequest(body) {
   return null;
 }
 
+// IGDB external_games category IDs per platform
+const PLATFORM_CATEGORIES = {
+  steam: 1,
+  gog: 5,
+  itchio: 15,
+  epic: 26,
+};
+
 async function search(title) {
   const escapedTitle = title.replace(/"/g, '\\"');
   const body = `search "${escapedTitle}"; fields ${IGDB_FIELDS}; limit 5;`;
   return igdbRequest(body);
+}
+
+async function getByExternalId(launcherName, launcherGameId) {
+  const category = PLATFORM_CATEGORIES[launcherName];
+  if (!category || !launcherGameId) return null;
+
+  const body = `where external_games.uid = "${launcherGameId}" & external_games.category = ${category}; fields ${IGDB_FIELDS}; limit 1;`;
+  const results = await igdbRequest(body);
+  return results && results.length > 0 ? results[0] : null;
 }
 
 async function getById(igdbId) {
@@ -119,4 +136,4 @@ async function getById(igdbId) {
   return results && results.length > 0 ? results[0] : null;
 }
 
-module.exports = { search, getById };
+module.exports = { search, getByExternalId, getById };
