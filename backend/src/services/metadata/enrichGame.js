@@ -98,9 +98,9 @@ async function enrichGame(gameEditionId, db) {
     console.warn(`[Gameshelf Metadata] Image download failed for ${gameTitle}: ${err.message}`);
   }
 
-  // Clear stale genre/tag associations before re-inserting
+  // Clear stale genre/tag associations before re-inserting (preserve user-created tags)
   db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(gameId);
-  db.prepare('DELETE FROM game_tags WHERE game_id = ?').run(gameId);
+  db.prepare('DELETE FROM game_tags WHERE game_id = ? AND tag_id IN (SELECT t.id FROM tags t JOIN genres g ON g.name = t.name)').run(gameId);
 
   // Upsert genres and mirror as tags
   const genres = match.genres || [];
@@ -206,9 +206,9 @@ async function enrichUnderEnriched(db) {
         console.warn(`[Gameshelf Metadata] Re-enrich image download failed for ${game.title}: ${err.message}`);
       }
 
-      // Update genres and tags
+      // Update genres and tags (preserve user-created tags)
       db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(game.id);
-      db.prepare('DELETE FROM game_tags WHERE game_id = ?').run(game.id);
+      db.prepare('DELETE FROM game_tags WHERE game_id = ? AND tag_id IN (SELECT t.id FROM tags t JOIN genres g ON g.name = t.name)').run(game.id);
 
       const genres = match.genres || [];
       const insertGenre = db.prepare('INSERT OR IGNORE INTO genres (name) VALUES (?)');

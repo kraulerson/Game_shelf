@@ -119,4 +119,36 @@ describe('Enrichment orchestrator', () => {
     const updated = db.prepare('SELECT last_enrichment_at FROM games WHERE id = ?').get(game.id);
     assert.equal(updated.last_enrichment_at, null, 'Should not have been touched');
   });
+
+  it('genre-scoped tag DELETE should preserve user-created tags', () => {
+    const game = db.prepare("SELECT id FROM games WHERE slug = 'team-fortress-2'").get();
+
+    // Create a genre + mirrored tag
+    db.prepare("INSERT OR IGNORE INTO genres (name) VALUES ('Action')").run();
+    db.prepare("INSERT OR IGNORE INTO tags (name) VALUES ('Action')").run();
+    const actionTag = db.prepare("SELECT id FROM tags WHERE name = 'Action'").get();
+    db.prepare('INSERT OR IGNORE INTO game_tags (game_id, tag_id) VALUES (?, ?)').run(game.id, actionTag.id);
+
+    // Create a user-created tag (not in genres table)
+    db.prepare("INSERT OR IGNORE INTO tags (name) VALUES ('Favorites')").run();
+    const favTag = db.prepare("SELECT id FROM tags WHERE name = 'Favorites'").get();
+    db.prepare('INSERT OR IGNORE INTO game_tags (game_id, tag_id) VALUES (?, ?)').run(game.id, favTag.id);
+
+    // Verify both tags exist before
+    assert.ok(db.prepare('SELECT * FROM game_tags WHERE game_id = ? AND tag_id = ?').get(game.id, actionTag.id));
+    assert.ok(db.prepare('SELECT * FROM game_tags WHERE game_id = ? AND tag_id = ?').get(game.id, favTag.id));
+
+    // Run the genre-scoped DELETE (same SQL used in enrichGame/enrichUnderEnriched)
+    db.prepare(
+      'DELETE FROM game_tags WHERE game_id = ? AND tag_id IN (SELECT t.id FROM tags t JOIN genres g ON g.name = t.name)'
+    ).run(game.id);
+
+    // Genre-mirrored tag should be deleted
+    const actionAfter = db.prepare('SELECT * FROM game_tags WHERE game_id = ? AND tag_id = ?').get(game.id, actionTag.id);
+    assert.equal(actionAfter, undefined, 'Genre-mirrored Action tag should be deleted');
+
+    // User-created tag should survive
+    const favAfter = db.prepare('SELECT * FROM game_tags WHERE game_id = ? AND tag_id = ?').get(game.id, favTag.id);
+    assert.ok(favAfter, 'User-created Favorites tag should survive');
+  });
 });
