@@ -27,6 +27,7 @@ const cron = require('node-cron');
 const { runMigrations } = require('./db/migrate');
 const errorHandler = require('./middleware/errorHandler');
 const { syncAll } = require('./services/syncEngine');
+const { enrichAll } = require('./services/metadata/enrichGame');
 
 // Routes
 const authRouter = require('./routes/auth');
@@ -77,6 +78,14 @@ if (require.main === module) {
   cron.schedule('0 */6 * * *', () => {
     console.log('[Gameshelf Scheduler] Starting 6-hour library sync');
     syncAll(db).catch(err => console.error('[Scheduler] syncAll error:', err.message));
+  });
+
+  // Daily enrichment pass at 3 AM — retries under-enriched games
+  cron.schedule('0 3 * * *', () => {
+    console.log('[Gameshelf Metadata] Starting scheduled daily enrichment');
+    enrichAll(db)
+      .then(result => console.log('[Gameshelf Metadata] Daily enrichment complete:', result))
+      .catch(err => console.error('[Gameshelf Metadata] Daily enrichment error:', err.message));
   });
 
   app.listen(PORT, () => {
