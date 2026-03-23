@@ -101,6 +101,33 @@ router.get('/:id/test', (req, res) => {
   res.json({ success: true, message: `Connection test not yet implemented for ${launcher.display_name}` });
 });
 
+// DELETE /api/launchers/:id/credentials
+router.delete('/:id/credentials', (req, res) => {
+  const { id } = req.params;
+  const launcher = LAUNCHER_MAP[id];
+
+  if (!launcher) {
+    return res.status(400).json({ error: `Unknown launcher: ${id}` });
+  }
+
+  const db = req.app.locals.db;
+  const row = db.prepare('SELECT id FROM launchers WHERE name = ?').get(id);
+
+  if (!row) {
+    return res.json({ removed: false, launcher: launcher.display_name, gamesAffected: 0 });
+  }
+
+  db.prepare(
+    'UPDATE launchers SET credentials_json = NULL, enabled = 0, last_sync_at = NULL WHERE name = ?'
+  ).run(id);
+
+  const result = db.prepare(
+    'UPDATE game_editions SET owned = 0 WHERE launcher_id = ?'
+  ).run(row.id);
+
+  res.json({ removed: true, launcher: launcher.display_name, gamesAffected: result.changes });
+});
+
 // POST /api/launchers/priority
 router.post('/priority', (req, res) => {
   const priorities = req.body;
