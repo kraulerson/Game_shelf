@@ -4,7 +4,7 @@
 
 Three changes to improve metadata reliability and user experience:
 
-1. **Harden IGDB client** — exponential backoff, OAuth error handling, 401 re-auth, safer inter-request delay
+1. **Harden IGDB client** — exponential backoff, OAuth error handling, 401 re-auth
 2. **SteamGridDB image fallback** — when IGDB returns no cover/hero art, try SteamGridDB
 3. **Mark unimplemented launchers** — show "Coming Soon" for stub launchers instead of a Configure button
 
@@ -17,8 +17,9 @@ Three changes to improve metadata reliability and user experience:
 **Exponential backoff on 429 (rate limit):**
 - Retry up to 3 times on 429 status
 - Delays: 1s, 2s, 4s (exponential)
-- If `Retry-After` header is present, use that value instead
+- If `Retry-After` header is present in the response, use that value instead
 - If all retries fail, return `null` (same as current behavior, but with better recovery)
+- Log each retry attempt with attempt number and delay for observability
 
 **Catch OAuth token refresh errors:**
 - Wrap the `axios.post` to `https://id.twitch.tv/oauth2/token` in try/catch
@@ -30,9 +31,7 @@ Three changes to improve metadata reliability and user experience:
 - Re-authenticate once and retry the request
 - If retry also fails, return `null`
 
-**Increase inter-request delay:**
-- Change enrichment delay from 500ms to 1250ms in both `enrichAll` Phase 1 loop and `enrichUnderEnriched` loop
-- This gives ~0.8 requests/second, well within IGDB's 4 req/sec limit and avoids burst sensitivity
+**Keep existing 500ms inter-request delay.** The stalling at 102 games is caused by the unhandled OAuth exception, not rate limiting. IGDB allows 4 req/sec; 500ms = 2 req/sec is within limits. The error handling fixes are the real solution.
 
 ## Feature 2: SteamGridDB Image Fallback
 
@@ -44,26 +43,32 @@ Three changes to improve metadata reliability and user experience:
 
 - Reads `STEAMGRIDDB_API_KEY` from `process.env`
 - If not set, all functions return `null` (disabled, same pattern as IGDB credentials check)
-- `searchGame(title)` — uses the client's `searchGame()` method, returns array of results
-- `getImages(sgdbGameId)` — calls `getGridsById()` for cover art and `getHeroesById()` for hero art. Returns `{ coverUrl, heroUrl }` with the top-scored result URL from each, or `null` if none found.
+- `searchGame(title)` — uses the client's `searchGame()` method, returns array of result objects (each has `.id` and `.name`)
+- `getImages(sgdbGameId)` — calls `getGridsById()` for cover art and `getHeroesById()` for hero art separately (individual try/catch for each so one failure doesn't block the other). Returns `{ coverUrl, heroUrl }` with the top-scored result URL from each, or `null` per field if not found.
 
-**Modify `enrichGame.js` and `enrichUnderEnriched()`:**
+**Modify `enrichGame.js` — both `enrichGame()` and `enrichUnderEnriched()`:**
 
 In the image download section of both functions, after checking IGDB cover/artwork URLs:
 
 ```
-if (!coverUrl && !artworkUrl) {
-  // IGDB had no images — try SteamGridDB fallback
-  search SteamGridDB by title → find best match → get images
-  if found, use those URLs for cacheImage() calls
+if (!coverUrl || !artworkUrl) {
+  // Try SteamGridDB fallback for missing images
+  const sgdbResults = await steamgriddbClient.searchGame(title);
+  const sgdbMatch = sgdbResults ? findBestMatch(title, sgdbResults) : null;
+  // findBestMatch returns the matched result object; use sgdbMatch.id for image lookup
+  if (sgdbMatch) {
+    const sgdbImages = await steamgriddbClient.getImages(sgdbMatch.id);
+    if (!coverUrl && sgdbImages?.coverUrl) coverUrl = sgdbImages.coverUrl;
+    if (!artworkUrl && sgdbImages?.heroUrl) artworkUrl = sgdbImages.heroUrl;
+  }
 }
 ```
 
-The SteamGridDB search uses `titleMatcher.findBestMatch()` for name matching, same as IGDB. Images are cached through the existing `cacheImage()` function (the URLs are direct image links, not IGDB-format URLs, so `transformIgdbUrl` is skipped — `cacheImage` needs a small change to handle non-IGDB URLs that don't need transformation).
+Cover and hero image downloads should be in **separate try/catch blocks** so a failure on one doesn't prevent the other from being cached. This applies to both `enrichGame()` and `enrichUnderEnriched()`.
 
-**Modify `backend/src/services/metadata/imageCache.js`:**
+SteamGridDB URLs are direct image links (not IGDB-format). The existing `transformIgdbUrl()` in `cacheImage()` is a no-op for these URLs (no `/t_thumb/` to replace), so `cacheImage()` works as-is.
 
-`cacheImage()` currently always calls `transformIgdbUrl()` which replaces `/t_thumb/` with `/t_cover_big/`. For SteamGridDB URLs (which are already full-size direct links), this transformation is a no-op (no `/t_thumb/` to replace), so it should work as-is. No change needed.
+**SteamGridDB rate limits:** Free tier allows ~50 requests/15 seconds. Each game without IGDB images triggers up to 3 SteamGridDB calls (search + grids + heroes). Add a 500ms delay between SteamGridDB fallback calls to stay well within limits.
 
 **Add to `.env.example`:**
 ```
@@ -83,21 +88,23 @@ Add `implemented: true` or `implemented: false` to each entry in `AVAILABLE_LAUN
 
 This field is returned in the `GET /api/launchers/available` response.
 
+**Guard credentials endpoint:** `POST /:id/credentials` should reject credentials for unimplemented launchers with a 400 error: "This launcher is not yet implemented." Prevents users from storing credentials for non-functional launchers via direct API calls.
+
 ### Frontend
 
 **Modify `frontend/src/pages/Settings.jsx` LaunchersTab:**
 
-- For launchers where `!l.implemented`: show "Coming Soon" text label instead of Configure/Sync/Remove buttons
-- Apply reduced opacity (`opacity-50`) to the launcher row
-- The credential save endpoint still works if someone calls it directly, but the UI won't offer it
+- For launchers where `!l.implemented`: show a "Coming Soon" badge instead of Configure/Sync/Remove buttons
+- Apply reduced opacity (`opacity-50`) to the entire launcher row
+- The subtitle text shows "Coming Soon" instead of "Not configured"
 
 ## Files Changed
 
 ### Backend
 - Modify: `backend/src/services/metadata/igdbClient.js` — exponential backoff, OAuth error handling, 401 re-auth
 - Create: `backend/src/services/metadata/steamgriddbClient.js` — SteamGridDB search and image fetching
-- Modify: `backend/src/services/metadata/enrichGame.js` — SteamGridDB fallback in image section, increase delay to 1250ms
-- Modify: `backend/src/routes/launchers.js` — add `implemented` field to AVAILABLE_LAUNCHERS
+- Modify: `backend/src/services/metadata/enrichGame.js` — SteamGridDB fallback in image section, separate cover/hero try/catch
+- Modify: `backend/src/routes/launchers.js` — add `implemented` field, guard credentials endpoint
 - Modify: `.env.example` — add STEAMGRIDDB_API_KEY
 
 ### Frontend
@@ -108,11 +115,14 @@ This field is returned in the `GET /api/launchers/available` response.
 
 ## Testing Considerations
 
-- IGDB 429 retry: mock axios to return 429, verify exponential backoff and eventual null return
+- IGDB 429 retry: mock axios to return 429, verify exponential backoff with logged retry attempts and eventual null return
 - IGDB OAuth error: mock axios.post to throw, verify null return (not crash)
 - IGDB 401 re-auth: mock 401 response, verify token is cleared and request retried
 - SteamGridDB disabled: no API key set, verify functions return null without errors
 - SteamGridDB fallback: when IGDB returns no images, verify SteamGridDB is called
 - SteamGridDB image caching: verify downloaded images are cached through existing cacheImage()
+- SteamGridDB rate handling: verify 500ms delay between SteamGridDB API calls
 - Launcher `implemented` field: verify GET /api/launchers/available returns the field
-- Frontend: verify Coming Soon label appears for unimplemented launchers, Configure button hidden
+- Launcher credentials guard: POST credentials for unimplemented launcher returns 400
+- Frontend: verify Coming Soon badge appears for unimplemented launchers, Configure button hidden
+- Separate image try/catch: cover download failure does not prevent hero download
