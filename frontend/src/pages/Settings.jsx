@@ -6,6 +6,8 @@ import LauncherBadge from '../components/LauncherBadge';
 
 function LaunchersTab() {
   const queryClient = useQueryClient();
+  const [confirmRemove, setConfirmRemove] = useState(null);
+
   const { data: launchers } = useQuery({
     queryKey: ['launchersAvailable'],
     queryFn: () => fetch('/api/launchers/available', { credentials: 'same-origin' }).then(r => r.json()),
@@ -24,6 +26,14 @@ function LaunchersTab() {
     queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
   }
 
+  async function removeLauncher(name) {
+    await fetch(`/api/launchers/${name}/credentials`, { method: 'DELETE', credentials: 'same-origin' });
+    setConfirmRemove(null);
+    queryClient.invalidateQueries({ queryKey: ['launchersAvailable'] });
+    queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
+    queryClient.invalidateQueries({ queryKey: ['games'] });
+  }
+
   return (
     <div className="space-y-3">
       {(launchers || []).map(l => {
@@ -35,8 +45,10 @@ function LaunchersTab() {
               <div>
                 <div className="text-sm text-white">{l.display_name}</div>
                 <div className="text-xs text-gray-500">
-                  {status?.completed_at ? `Last synced: ${new Date(status.completed_at).toLocaleString()}` : 'Never synced'}
-                  {status?.status && (
+                  {l.configured
+                    ? (status?.completed_at ? `Last synced: ${new Date(status.completed_at).toLocaleString()}` : 'Configured — never synced')
+                    : 'Not configured'}
+                  {status?.status && l.configured && (
                     <span className={`ml-2 ${status.status === 'success' ? 'text-green-400' : status.status === 'failed' ? 'text-red-400' : 'text-yellow-400'}`}>
                       ({status.status})
                     </span>
@@ -44,15 +56,51 @@ function LaunchersTab() {
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => syncLauncher(l.id)}
-              className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
-            >
-              <RefreshCw size={14} /> Sync
-            </button>
+            {l.configured && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => syncLauncher(l.id)}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+                >
+                  <RefreshCw size={14} /> Sync
+                </button>
+                <button
+                  onClick={() => setConfirmRemove(l.id)}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-red-900/50 hover:bg-red-800/50 text-red-400 text-sm rounded transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
+
+      {/* Confirmation dialog */}
+      {confirmRemove && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-sm mx-4">
+            <h3 className="text-white font-medium mb-2">Remove Launcher</h3>
+            <p className="text-gray-400 text-sm mb-4">
+              Remove {launchers?.find(l => l.id === confirmRemove)?.display_name || confirmRemove} credentials? Your games will be hidden until you re-add credentials.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirmRemove(null)}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => removeLauncher(confirmRemove)}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
