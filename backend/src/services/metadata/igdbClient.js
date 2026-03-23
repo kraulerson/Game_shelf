@@ -128,7 +128,10 @@ async function getByExternalId(launcherName, launcherGameId) {
   // Step 1: query external_games to get the IGDB game ID
   const extBody = `where category = ${category} & uid = "${launcherGameId}"; fields game; limit 1;`;
   const extResults = await igdbRequest(extBody, 'external_games');
-  if (!extResults || extResults.length === 0 || !extResults[0].game) return null;
+  if (!extResults || extResults.length === 0 || !extResults[0].game) {
+    console.log(`[IGDB] No external_games match for ${launcherName}:${launcherGameId}`);
+    return null;
+  }
 
   // Step 2: fetch full game details
   const igdbGameId = extResults[0].game;

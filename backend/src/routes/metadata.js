@@ -26,6 +26,34 @@ router.post('/enrich-all', (req, res) => {
   res.json({ message: 'Gameshelf enrichment started' });
 });
 
+// POST /api/metadata/re-enrich/:gameId — reset and re-enrich a specific game
+router.post('/re-enrich/:gameId', async (req, res, next) => {
+  try {
+    const db = req.app.locals.db;
+    const { gameId } = req.params;
+
+    // Reset the game so enrichment picks it up
+    db.prepare(
+      "UPDATE games SET cover_url = NULL, hero_url = NULL, icon_url = NULL, " +
+      "description = NULL, last_enrichment_at = NULL WHERE id = ?"
+    ).run(gameId);
+
+    // Find an edition to re-enrich through
+    const edition = db.prepare(
+      "SELECT id FROM game_editions WHERE game_id = ? LIMIT 1"
+    ).get(gameId);
+
+    if (!edition) {
+      return res.status(404).json({ error: 'No edition found for this game' });
+    }
+
+    const result = await enrichGame(edition.id, db);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/metadata/status
 router.get('/status', (req, res) => {
   const db = req.app.locals.db;

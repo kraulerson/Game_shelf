@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, X, Plus } from 'lucide-react';
+import { ArrowLeft, Loader2, X, Plus, Pencil, RefreshCw } from 'lucide-react';
 import LauncherBadge from '../components/LauncherBadge';
 
 function formatPlaytime(minutes) {
@@ -18,6 +18,9 @@ export default function GameDetail() {
   const [showTagInput, setShowTagInput] = useState(false);
   const [tagSearch, setTagSearch] = useState('');
   const [confirmRemoveTag, setConfirmRemoveTag] = useState(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleInput, setTitleInput] = useState('');
+  const [enriching, setEnriching] = useState(false);
 
   const { data: game, isLoading, error } = useQuery({
     queryKey: ['game', id],
@@ -75,6 +78,28 @@ export default function GameDetail() {
     }
   }
 
+  async function saveTitle() {
+    if (!titleInput.trim()) return;
+    await fetch(`/api/games/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ title: titleInput.trim() }),
+    });
+    setEditingTitle(false);
+    queryClient.invalidateQueries({ queryKey: ['game', id] });
+  }
+
+  async function reEnrich() {
+    setEnriching(true);
+    await fetch(`/api/metadata/re-enrich/${id}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    setEnriching(false);
+    queryClient.invalidateQueries({ queryKey: ['game', id] });
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -128,7 +153,30 @@ export default function GameDetail() {
             />
           )}
           <div className="pb-2">
-            <h1 className="text-2xl md:text-3xl font-bold">{game.title}</h1>
+            <div className="flex items-center gap-2">
+              {editingTitle ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={titleInput}
+                    onChange={e => setTitleInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && saveTitle()}
+                    autoFocus
+                    className="text-2xl font-bold bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button onClick={saveTitle} className="text-green-400 hover:text-green-300 text-sm">Save</button>
+                  <button onClick={() => setEditingTitle(false)} className="text-gray-400 hover:text-white text-sm">Cancel</button>
+                </div>
+              ) : (
+                <>
+                  <h1 className="text-2xl md:text-3xl font-bold">{game.title}</h1>
+                  <button onClick={() => { setEditingTitle(true); setTitleInput(game.title); }} className="text-gray-500 hover:text-white"><Pencil size={14} /></button>
+                  <button onClick={reEnrich} disabled={enriching} className="text-gray-500 hover:text-blue-400" title="Re-enrich metadata">
+                    {enriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  </button>
+                </>
+              )}
+            </div>
             <div className="flex items-center gap-2 text-sm text-gray-400 mt-1">
               {game.developer && <span>{game.developer}</span>}
               {game.developer && game.publisher && game.developer !== game.publisher && (

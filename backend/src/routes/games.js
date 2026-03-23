@@ -108,6 +108,28 @@ router.get('/:id', (req, res) => {
   });
 });
 
+// PATCH /api/games/:id — update game title
+router.patch('/:id', (req, res) => {
+  const db = req.app.locals.db;
+  const { id } = req.params;
+  const { title } = req.body || {};
+
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'Title is required' });
+  }
+
+  const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);
+  if (!game) {
+    return res.status(404).json({ error: 'Game not found' });
+  }
+
+  db.prepare(
+    "UPDATE games SET title = ?, slug = ?, updated_at = datetime('now') WHERE id = ?"
+  ).run(title.trim(), require('../services/metadata/titleMatcher').slugify(title.trim()), id);
+
+  res.json({ updated: true });
+});
+
 // PUT /api/games/:id/tags — set user-created tags for a game
 router.put('/:id/tags', (req, res) => {
   const db = req.app.locals.db;
