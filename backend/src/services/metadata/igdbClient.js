@@ -48,7 +48,7 @@ async function authenticate() {
   }
 }
 
-async function igdbRequest(body) {
+async function igdbRequest(body, endpoint = 'games') {
   const creds = getCredentials();
   if (!creds) return null;
 
@@ -57,7 +57,7 @@ async function igdbRequest(body) {
 
   const config = {
     method: 'post',
-    url: 'https://api.igdb.com/v4/games',
+    url: `https://api.igdb.com/v4/${endpoint}`,
     headers: {
       'Client-ID': creds.clientId,
       'Authorization': `Bearer ${token}`,
@@ -125,9 +125,14 @@ async function getByExternalId(launcherName, launcherGameId) {
   const category = PLATFORM_CATEGORIES[launcherName];
   if (!category || !launcherGameId) return null;
 
-  const body = `where external_games.uid = "${launcherGameId}" & external_games.category = ${category}; fields ${IGDB_FIELDS}; limit 1;`;
-  const results = await igdbRequest(body);
-  return results && results.length > 0 ? results[0] : null;
+  // Step 1: query external_games to get the IGDB game ID
+  const extBody = `where category = ${category} & uid = "${launcherGameId}"; fields game; limit 1;`;
+  const extResults = await igdbRequest(extBody, 'external_games');
+  if (!extResults || extResults.length === 0 || !extResults[0].game) return null;
+
+  // Step 2: fetch full game details
+  const igdbGameId = extResults[0].game;
+  return getById(igdbGameId);
 }
 
 async function getById(igdbId) {

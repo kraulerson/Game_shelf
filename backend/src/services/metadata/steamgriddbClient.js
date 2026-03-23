@@ -1,4 +1,4 @@
-const SGDB = require('steamgriddb');
+const SGDB = require('steamgriddb').default || require('steamgriddb');
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
