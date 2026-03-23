@@ -95,10 +95,10 @@ router.get('/:id', (req, res) => {
   `).all(id).map(r => r.name);
 
   const tags = db.prepare(`
-    SELECT t.name FROM tags t
+    SELECT t.id, t.name FROM tags t
     JOIN game_tags gt ON gt.tag_id = t.id
     WHERE gt.game_id = ?
-  `).all(id).map(r => r.name);
+  `).all(id);
 
   res.json({
     ...game,
@@ -106,6 +106,33 @@ router.get('/:id', (req, res) => {
     tags,
     editions: editionsWithPrimary,
   });
+});
+
+// PUT /api/games/:id/tags — set user-created tags for a game
+router.put('/:id/tags', (req, res) => {
+  const db = req.app.locals.db;
+  const { id } = req.params;
+  const { tagIds = [] } = req.body || {};
+
+  const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);
+  if (!game) {
+    return res.status(404).json({ error: 'Game not found' });
+  }
+
+  const deleteNonGenre = db.prepare(
+    'DELETE FROM game_tags WHERE game_id = ? AND tag_id NOT IN (SELECT t.id FROM tags t JOIN genres g ON g.name = t.name)'
+  );
+  const insertTag = db.prepare('INSERT OR IGNORE INTO game_tags (game_id, tag_id) VALUES (?, ?)');
+
+  const updateTags = db.transaction(() => {
+    deleteNonGenre.run(id);
+    for (const tagId of tagIds) {
+      insertTag.run(id, tagId);
+    }
+  });
+  updateTags();
+
+  res.json({ updated: true });
 });
 
 // GET /api/games
