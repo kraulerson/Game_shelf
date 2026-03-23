@@ -30,8 +30,16 @@ router.post('/enrich-all', (req, res) => {
 router.get('/status', (req, res) => {
   const db = req.app.locals.db;
 
-  const total = db.prepare('SELECT COUNT(*) as count FROM games').get().count;
-  const unenriched = db.prepare('SELECT COUNT(*) as count FROM games WHERE cover_url IS NULL').get().count;
+  // Only count games that have at least one edition (exclude orphan rows)
+  const total = db.prepare(
+    "SELECT COUNT(*) as count FROM games g " +
+    "WHERE EXISTS (SELECT 1 FROM game_editions ge WHERE ge.game_id = g.id)"
+  ).get().count;
+  const unenriched = db.prepare(
+    "SELECT COUNT(*) as count FROM games g " +
+    "WHERE g.cover_url IS NULL " +
+    "AND EXISTS (SELECT 1 FROM game_editions ge WHERE ge.game_id = g.id)"
+  ).get().count;
 
   res.json({ unenriched, total });
 });

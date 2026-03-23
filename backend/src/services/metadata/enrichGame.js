@@ -403,6 +403,15 @@ async function enrichAll(db) {
   failed += reEnrichResult.failed;
   skipped += reEnrichResult.skipped;
 
+  // Phase 3: clean up orphan game rows (no editions linked)
+  const orphans = db.prepare(
+    "DELETE FROM games WHERE id NOT IN " +
+    "(SELECT DISTINCT game_id FROM game_editions WHERE game_id IS NOT NULL)"
+  ).run();
+  if (orphans.changes > 0) {
+    console.log(`[Gameshelf Metadata] Cleaned up ${orphans.changes} orphan game rows`);
+  }
+
   return { enriched, failed, skipped };
 }
 
