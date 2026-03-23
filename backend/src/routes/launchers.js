@@ -24,7 +24,18 @@ const LAUNCHER_MAP = Object.fromEntries(AVAILABLE_LAUNCHERS.map(l => [l.id, l]))
 
 // GET /api/launchers/available
 router.get('/available', (req, res) => {
-  res.json(AVAILABLE_LAUNCHERS);
+  const db = req.app.locals.db;
+  const configured = db.prepare(
+    'SELECT name FROM launchers WHERE credentials_json IS NOT NULL'
+  ).all();
+  const configuredSet = new Set(configured.map(r => r.name));
+
+  const result = AVAILABLE_LAUNCHERS.map(l => ({
+    ...l,
+    configured: configuredSet.has(l.id),
+  }));
+
+  res.json(result);
 });
 
 // POST /api/launchers/:id/credentials
