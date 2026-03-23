@@ -1,6 +1,6 @@
 const igdbClient = require('./igdbClient');
 const steamgriddbClient = require('./steamgriddbClient');
-const { normalize, slugify, findBestMatch } = require('./titleMatcher');
+const { normalize, simplifyTitle, slugify, findBestMatch } = require('./titleMatcher');
 const { cacheImage } = require('./imageCache');
 
 function sleep(ms) {
@@ -27,13 +27,22 @@ async function enrichGame(gameEditionId, db) {
   const normalizedTitle = normalize(title);
   const slug = slugify(title);
 
-  // Search IGDB: try external ID first (exact), then title search (fuzzy)
+  // Search IGDB: external ID → full title → simplified title
   let match = await igdbClient.getByExternalId(edition.launcher_name, edition.launcher_game_id);
   if (match) {
     console.log(`[Gameshelf Metadata] IGDB matched by external ID: ${title}`);
   } else {
     const igdbResults = await igdbClient.search(normalizedTitle);
     match = igdbResults ? findBestMatch(title, igdbResults) : null;
+    // Fallback: try simplified title (strip subtitle/edition)
+    if (!match) {
+      const simplified = simplifyTitle(title);
+      if (simplified !== title) {
+        const fallbackResults = await igdbClient.search(normalize(simplified));
+        match = fallbackResults ? findBestMatch(simplified, fallbackResults) : null;
+        if (match) console.log(`[Gameshelf Metadata] IGDB matched by simplified title: ${title} → ${simplified}`);
+      }
+    }
   }
 
   if (!match) {
@@ -205,7 +214,7 @@ async function enrichUnderEnriched(db) {
 
   for (const game of underEnriched) {
     try {
-      // Try IGDB: external ID first (exact), then title search (fuzzy)
+      // Try IGDB: external ID → full title → simplified title
       let match = await igdbClient.getByExternalId(game.launcher_name, game.launcher_game_id);
       if (match) {
         console.log(`[Gameshelf Metadata] Re-enrich: IGDB matched by external ID: ${game.title}`);
@@ -213,6 +222,15 @@ async function enrichUnderEnriched(db) {
         const normalizedTitle = normalize(game.title);
         const igdbResults = await igdbClient.search(normalizedTitle);
         match = igdbResults ? findBestMatch(game.title, igdbResults) : null;
+        // Fallback: try simplified title (strip subtitle/edition)
+        if (!match) {
+          const simplified = simplifyTitle(game.title);
+          if (simplified !== game.title) {
+            const fallbackResults = await igdbClient.search(normalize(simplified));
+            match = fallbackResults ? findBestMatch(simplified, fallbackResults) : null;
+            if (match) console.log(`[Gameshelf Metadata] Re-enrich: IGDB matched by simplified title: ${game.title} → ${simplified}`);
+          }
+        }
       }
 
       if (!match) {

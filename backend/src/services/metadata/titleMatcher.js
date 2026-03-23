@@ -1,12 +1,25 @@
 const EDITION_SUFFIXES = [
   /\s*[™®]/g,
+  /\s*\(TM\)/gi,
+  /\s*\(\d{4}\)/g,                          // (2010), (2023)
   /\s*-?\s*complete edition\s*$/i,
   /\s*-?\s*game of the year edition\s*$/i,
   /\s*-?\s*game of the year\s*$/i,
+  /\s*-?\s*goty edition\s*$/i,
   /\s*\bGOTY\b\s*$/i,
   /\s*-?\s*deluxe edition\s*$/i,
   /\s*-?\s*gold edition\s*$/i,
   /\s*-?\s*ultimate edition\s*$/i,
+  /\s*-?\s*special edition\s*$/i,
+  /\s*-?\s*enhanced edition\s*$/i,
+  /\s*-?\s*definitive edition\s*$/i,
+  /\s*-?\s*remastered\s*$/i,
+  /\s*-?\s*single player\s*$/i,
+  /\s*-?\s*multiplayer\s*$/i,
+  /\s*-?\s*beta demo\s*$/i,
+  /\s*-?\s*demo\s*$/i,
+  /\s*:\s*arena\s*$/i,
+  /\s*starring\s+.*$/i,                     // "Starring Lara Croft"
 ];
 
 function normalize(title) {
@@ -55,6 +68,14 @@ function levenshteinSimilarity(a, b) {
   return 1 - levenshteinDistance(a, b) / maxLen;
 }
 
+// Strip subtitle (everything after first : or –) for aggressive fallback matching
+function simplifyTitle(title) {
+  return title
+    .replace(/\s*[:–—]\s.*$/, '')   // remove subtitle after : or – or —
+    .replace(/\s*-\s+.*$/, '')       // remove after " - " (space-dash-space)
+    .trim();
+}
+
 function findBestMatch(searchTitle, igdbResults) {
   if (!igdbResults || igdbResults.length === 0) return null;
 
@@ -71,7 +92,7 @@ function findBestMatch(searchTitle, igdbResults) {
     }
   }
 
-  return bestSimilarity >= 0.8 ? bestMatch : null;
+  return bestSimilarity >= 0.75 ? bestMatch : null;
 }
 
-module.exports = { normalize, slugify, levenshteinDistance, levenshteinSimilarity, findBestMatch };
+module.exports = { normalize, simplifyTitle, slugify, levenshteinDistance, levenshteinSimilarity, findBestMatch };
