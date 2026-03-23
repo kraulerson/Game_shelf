@@ -1,16 +1,11 @@
-import { getLauncherIcon } from '../utils/launcherIcons';
-
-export default function LauncherBadge({ launcherName, displayName, compact = false, primary = false }) {
-  const icon = getLauncherIcon(launcherName);
-  const baseClasses = 'inline-flex items-center gap-1 rounded-full text-xs font-medium';
+export default function LauncherBadge({ launcherName, displayName, primary = false }) {
   const colorClasses = primary
-    ? 'bg-blue-600 text-white px-2 py-0.5'
-    : 'bg-gray-700 text-gray-300 px-2 py-0.5 opacity-70';
+    ? 'bg-blue-600 text-white'
+    : 'bg-gray-700 text-gray-300 opacity-70';
 
   return (
-    <span className={`${baseClasses} ${colorClasses}`}>
-      <span>{icon}</span>
-      {!compact && <span>{displayName}</span>}
+    <span className={`inline-flex items-center rounded-full text-sm font-medium px-2.5 py-0.5 ${colorClasses}`}>
+      {displayName || launcherName}
     </span>
   );
 }

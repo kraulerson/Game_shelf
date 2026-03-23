@@ -39,7 +39,7 @@ export default function GameRow({ game }) {
 
       {/* Launcher badges */}
       <div className="flex items-center gap-1 flex-shrink-0 relative">
-        <LauncherBadge launcherName={game.launcher_name} displayName={game.launcher_display_name} compact primary />
+        <LauncherBadge launcherName={game.launcher_name} displayName={game.launcher_display_name} primary />
         {alsoOn.length > 1 && (
           <>
             <button
@@ -52,7 +52,7 @@ export default function GameRow({ game }) {
               <div className="absolute z-10 top-full right-0 mt-1 bg-gray-700 rounded-lg shadow-lg p-2 min-w-[160px]">
                 {alsoOn.map((l, i) => (
                   <div key={i} className="flex items-center gap-2 py-1">
-                    <LauncherBadge launcherName={l.launcher_name} displayName={l.launcher_display_name} compact />
+                    <LauncherBadge launcherName={l.launcher_name} displayName={l.launcher_display_name} />
                     <span className="text-xs text-gray-300">{l.launcher_display_name}</span>
                   </div>
                 ))}
