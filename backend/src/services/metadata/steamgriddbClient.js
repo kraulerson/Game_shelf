@@ -30,7 +30,6 @@ async function getImages(sgdbGameId) {
   let coverUrl = null;
   let heroUrl = null;
 
-  // Get cover (grid) image
   try {
     const grids = await client.getGridsById(sgdbGameId);
     if (grids && grids.length > 0) {
@@ -42,7 +41,6 @@ async function getImages(sgdbGameId) {
 
   await sleep(500);
 
-  // Get hero image
   try {
     const heroes = await client.getHeroesById(sgdbGameId);
     if (heroes && heroes.length > 0) {
@@ -55,4 +53,34 @@ async function getImages(sgdbGameId) {
   return { coverUrl, heroUrl };
 }
 
-module.exports = { searchGame, getImages };
+async function getImagesBySteamAppId(steamAppId) {
+  const client = getClient();
+  if (!client) return { coverUrl: null, heroUrl: null };
+
+  let coverUrl = null;
+  let heroUrl = null;
+
+  try {
+    const grids = await client.getGridsBySteamAppId(Number(steamAppId));
+    if (grids && grids.length > 0) {
+      coverUrl = grids[0].url;
+    }
+  } catch (err) {
+    console.warn('[SteamGridDB] Grid by Steam ID failed:', err.message);
+  }
+
+  await sleep(500);
+
+  try {
+    const heroes = await client.getHeroesBySteamAppId(Number(steamAppId));
+    if (heroes && heroes.length > 0) {
+      heroUrl = heroes[0].url;
+    }
+  } catch (err) {
+    console.warn('[SteamGridDB] Hero by Steam ID failed:', err.message);
+  }
+
+  return { coverUrl, heroUrl };
+}
+
+module.exports = { searchGame, getImages, getImagesBySteamAppId };

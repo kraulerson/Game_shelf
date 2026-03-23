@@ -7,6 +7,28 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Try SteamGridDB for images: by Steam App ID first, then by title search
+async function getSteamGridDBImages(title, launcherName, launcherGameId) {
+  // Try direct Steam App ID lookup first (most reliable)
+  if (launcherName === 'steam' && launcherGameId) {
+    const directImages = await steamgriddbClient.getImagesBySteamAppId(launcherGameId);
+    if (directImages?.coverUrl || directImages?.heroUrl) {
+      console.log(`[SteamGridDB] Matched by Steam App ID: ${launcherGameId} (${title})`);
+      return directImages;
+    }
+  }
+
+  // Fall back to title search
+  const sgdbResults = await steamgriddbClient.searchGame(title);
+  const sgdbMatch = sgdbResults ? findBestMatch(title, sgdbResults) : null;
+  if (sgdbMatch) {
+    console.log(`[SteamGridDB] Matched by title search: ${title}`);
+    return steamgriddbClient.getImages(sgdbMatch.id);
+  }
+
+  return { coverUrl: null, heroUrl: null };
+}
+
 async function enrichGame(gameEditionId, db) {
   const edition = db.prepare(`
     SELECT ge.*, l.name as launcher_name
@@ -58,27 +80,23 @@ async function enrichGame(gameEditionId, db) {
 
     // Try SteamGridDB for images even without IGDB metadata
     try {
-      const sgdbResults = await steamgriddbClient.searchGame(title);
-      const sgdbMatch = sgdbResults ? findBestMatch(title, sgdbResults) : null;
-      if (sgdbMatch) {
-        const sgdbImages = await steamgriddbClient.getImages(sgdbMatch.id);
-        try {
-          if (sgdbImages?.coverUrl) {
-            const coverPath = await cacheImage(sgdbImages.coverUrl, game.id, 'cover');
-            if (coverPath) {
-              db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
-              const iconPath = await cacheImage(sgdbImages.coverUrl, game.id, 'icon');
-              if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
-            }
+      const sgdbImages = await getSteamGridDBImages(title, edition.launcher_name, edition.launcher_game_id);
+      try {
+        if (sgdbImages?.coverUrl) {
+          const coverPath = await cacheImage(sgdbImages.coverUrl, game.id, 'cover');
+          if (coverPath) {
+            db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
+            const iconPath = await cacheImage(sgdbImages.coverUrl, game.id, 'icon');
+            if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
           }
-        } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB cover failed for ${title}: ${err.message}`); }
-        try {
-          if (sgdbImages?.heroUrl) {
-            const heroPath = await cacheImage(sgdbImages.heroUrl, game.id, 'hero');
-            if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
-          }
-        } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB hero failed for ${title}: ${err.message}`); }
-      }
+        }
+      } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB cover failed for ${title}: ${err.message}`); }
+      try {
+        if (sgdbImages?.heroUrl) {
+          const heroPath = await cacheImage(sgdbImages.heroUrl, game.id, 'hero');
+          if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
+        }
+      } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB hero failed for ${title}: ${err.message}`); }
     } catch (err) {
       console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${title}: ${err.message}`);
     }
@@ -122,13 +140,9 @@ async function enrichGame(gameEditionId, db) {
   // SteamGridDB fallback if IGDB has no images
   if (!coverUrl || !artworkUrl) {
     try {
-      const sgdbResults = await steamgriddbClient.searchGame(gameTitle);
-      const sgdbMatch = sgdbResults ? findBestMatch(gameTitle, sgdbResults) : null;
-      if (sgdbMatch) {
-        const sgdbImages = await steamgriddbClient.getImages(sgdbMatch.id);
-        if (!coverUrl && sgdbImages?.coverUrl) coverUrl = sgdbImages.coverUrl;
-        if (!artworkUrl && sgdbImages?.heroUrl) artworkUrl = sgdbImages.heroUrl;
-      }
+      const sgdbImages = await getSteamGridDBImages(gameTitle, edition.launcher_name, edition.launcher_game_id);
+      if (!coverUrl && sgdbImages?.coverUrl) coverUrl = sgdbImages.coverUrl;
+      if (!artworkUrl && sgdbImages?.heroUrl) artworkUrl = sgdbImages.heroUrl;
     } catch (err) {
       console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${gameTitle}: ${err.message}`);
     }
@@ -238,27 +252,23 @@ async function enrichUnderEnriched(db) {
 
         // Try SteamGridDB for images even without IGDB metadata
         try {
-          const sgdbResults = await steamgriddbClient.searchGame(game.title);
-          const sgdbMatch = sgdbResults ? findBestMatch(game.title, sgdbResults) : null;
-          if (sgdbMatch) {
-            const sgdbImages = await steamgriddbClient.getImages(sgdbMatch.id);
-            try {
-              if (sgdbImages?.coverUrl) {
-                const coverPath = await cacheImage(sgdbImages.coverUrl, game.id, 'cover');
-                if (coverPath) {
-                  db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
-                  const iconPath = await cacheImage(sgdbImages.coverUrl, game.id, 'icon');
-                  if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
-                }
+          const sgdbImages = await getSteamGridDBImages(game.title, game.launcher_name, game.launcher_game_id);
+          try {
+            if (sgdbImages?.coverUrl) {
+              const coverPath = await cacheImage(sgdbImages.coverUrl, game.id, 'cover');
+              if (coverPath) {
+                db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
+                const iconPath = await cacheImage(sgdbImages.coverUrl, game.id, 'icon');
+                if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
               }
-            } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB cover failed for ${game.title}: ${err.message}`); }
-            try {
-              if (sgdbImages?.heroUrl) {
-                const heroPath = await cacheImage(sgdbImages.heroUrl, game.id, 'hero');
-                if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
-              }
-            } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB hero failed for ${game.title}: ${err.message}`); }
-          }
+            }
+          } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB cover failed for ${game.title}: ${err.message}`); }
+          try {
+            if (sgdbImages?.heroUrl) {
+              const heroPath = await cacheImage(sgdbImages.heroUrl, game.id, 'hero');
+              if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
+            }
+          } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB hero failed for ${game.title}: ${err.message}`); }
         } catch (err) {
           console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${game.title}: ${err.message}`);
         }
@@ -296,13 +306,9 @@ async function enrichUnderEnriched(db) {
       // SteamGridDB fallback if IGDB has no images
       if (!coverUrl || !artworkUrl) {
         try {
-          const sgdbResults = await steamgriddbClient.searchGame(game.title);
-          const sgdbMatch = sgdbResults ? findBestMatch(game.title, sgdbResults) : null;
-          if (sgdbMatch) {
-            const sgdbImages = await steamgriddbClient.getImages(sgdbMatch.id);
-            if (!coverUrl && sgdbImages?.coverUrl) coverUrl = sgdbImages.coverUrl;
-            if (!artworkUrl && sgdbImages?.heroUrl) artworkUrl = sgdbImages.heroUrl;
-          }
+          const sgdbImages = await getSteamGridDBImages(game.title, game.launcher_name, game.launcher_game_id);
+          if (!coverUrl && sgdbImages?.coverUrl) coverUrl = sgdbImages.coverUrl;
+          if (!artworkUrl && sgdbImages?.heroUrl) artworkUrl = sgdbImages.heroUrl;
         } catch (err) {
           console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${game.title}: ${err.message}`);
         }
