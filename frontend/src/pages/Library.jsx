@@ -77,7 +77,7 @@ export default function Library() {
     }, 3000);
   }
 
-  const filterKeys = ['genre', 'tag', 'launcher', 'release_year_min', 'release_year_max', 'playtime_min', 'playtime_max', 'owned', 'duplicates'];
+  const filterKeys = ['genre', 'tag', 'launcher', 'release_year_min', 'release_year_max', 'playtime_min', 'playtime_max', 'owned', 'duplicates', 'starts_with'];
   const activeFilterCount = filterKeys.filter(k => searchParams.has(k)).length;
 
   function clearAllFilters() {
@@ -97,8 +97,16 @@ export default function Library() {
               placeholder="Search games..."
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className={`w-full pl-9 ${searchInput ? 'pr-8' : 'pr-3'} py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
             />
+            {searchInput && (
+              <button
+                onClick={() => setSearchInput('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1">
@@ -161,6 +169,37 @@ export default function Library() {
           {activeFilterCount > 0 && (
             <button onClick={clearAllFilters} className="text-xs text-gray-400 hover:text-white">Clear all</button>
           )}
+        </div>
+      </div>
+
+      {/* Alphabetical navigation */}
+      <div className="border-b border-gray-800 px-4 py-2">
+        <div className="flex flex-wrap gap-1">
+          {['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(letter => {
+            const active = searchParams.get('starts_with') === letter;
+            return (
+              <button
+                key={letter}
+                onClick={() => {
+                  const p = new URLSearchParams(searchParams);
+                  if (active) {
+                    p.delete('starts_with');
+                  } else {
+                    p.set('starts_with', letter);
+                  }
+                  p.set('page', '1');
+                  setSearchParams(p);
+                }}
+                className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
+                  active
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                }`}
+              >
+                {letter}
+              </button>
+            );
+          })}
         </div>
       </div>
 
