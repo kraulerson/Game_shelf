@@ -1,19 +1,33 @@
 var db = require("better-sqlite3")("/app/data/gameshelf.db");
 
-var games = db.prepare(
+// Find games with no cover
+var nocover = db.prepare(
   "SELECT g.id, g.title, g.slug, " +
-  "ge.launcher_game_id, l.name as launcher " +
-  "FROM games g " +
-  "JOIN game_editions ge ON ge.game_id = g.id AND ge.owned = 1 " +
-  "JOIN launchers l ON l.id = ge.launcher_id " +
-  "WHERE g.cover_url IS NULL " +
+  "(SELECT COUNT(*) FROM game_editions ge " +
+  "WHERE ge.game_id = g.id) as editions " +
+  "FROM games g WHERE g.cover_url IS NULL " +
   "ORDER BY g.title"
 ).all();
 
-games.forEach(function(r) {
-  console.log(
-    r.launcher + " | " +
-    r.launcher_game_id + " | " +
-    r.title + " | slug:" + r.slug
-  );
+console.log("=== Games with no cover ===");
+nocover.forEach(function(r) {
+  var label = r.editions === 0 ? "ORPHAN" : "LINKED(" + r.editions + ")";
+  console.log(label + " | " + r.title + " | id:" + r.id);
+});
+
+console.log("");
+console.log("Total no-cover:", nocover.length);
+console.log("Orphans:", nocover.filter(function(r) {
+  return r.editions === 0;
+}).length);
+
+// Check for duplicate slugs
+console.log("");
+console.log("=== Duplicate slugs ===");
+var dupes = db.prepare(
+  "SELECT slug, COUNT(*) as c FROM games " +
+  "GROUP BY slug HAVING c > 1"
+).all();
+dupes.forEach(function(r) {
+  console.log(r.slug + " (" + r.c + " rows)");
 });
