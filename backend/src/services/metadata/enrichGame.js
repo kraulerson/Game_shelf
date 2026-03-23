@@ -132,6 +132,121 @@ async function enrichGame(gameEditionId, db) {
   return { status: 'enriched', gameId };
 }
 
+async function enrichUnderEnriched(db) {
+  const underEnriched = db.prepare(`
+    SELECT DISTINCT g.id, g.title, g.slug
+    FROM games g
+    JOIN game_editions ge ON ge.game_id = g.id AND ge.owned = 1
+    WHERE (g.cover_url IS NULL OR g.description IS NULL)
+      AND (g.last_enrichment_at IS NULL
+           OR g.last_enrichment_at < datetime('now', '-7 days'))
+  `).all();
+
+  let enriched = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const game of underEnriched) {
+    try {
+      const normalizedTitle = normalize(game.title);
+      const igdbResults = await igdbClient.search(normalizedTitle);
+      const match = igdbResults ? findBestMatch(game.title, igdbResults) : null;
+
+      if (!match) {
+        console.log(`[Gameshelf Metadata] Re-enrich: no IGDB match for: ${game.title}`);
+        db.prepare("UPDATE games SET last_enrichment_at = datetime('now') WHERE id = ?").run(game.id);
+        skipped++;
+        await sleep(500);
+        continue;
+      }
+
+      const description = match.summary || null;
+      const releaseYear = match.first_release_date
+        ? new Date(match.first_release_date * 1000).getFullYear()
+        : null;
+      const companies = match.involved_companies || [];
+      const developer = companies.find(c => c.developer)?.company?.name || null;
+      const publisher = companies.find(c => c.publisher)?.company?.name || null;
+
+      // Update game metadata + last_enrichment_at in one statement
+      db.prepare(`
+        UPDATE games SET
+          description = COALESCE(?, description),
+          release_year = COALESCE(?, release_year),
+          developer = COALESCE(?, developer),
+          publisher = COALESCE(?, publisher),
+          last_enrichment_at = datetime('now'),
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(description, releaseYear, developer, publisher, game.id);
+
+      // Download and cache images
+      try {
+        const coverUrl = match.cover?.url || null;
+        const artworkUrl = match.artworks?.[0]?.url || null;
+
+        if (coverUrl) {
+          const coverPath = await cacheImage(coverUrl, game.id, 'cover');
+          if (coverPath) {
+            db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
+            const iconPath = await cacheImage(coverUrl, game.id, 'icon');
+            if (iconPath) {
+              db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
+            }
+          }
+        }
+
+        if (artworkUrl) {
+          const heroPath = await cacheImage(artworkUrl, game.id, 'hero');
+          if (heroPath) {
+            db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
+          }
+        }
+      } catch (err) {
+        console.warn(`[Gameshelf Metadata] Re-enrich image download failed for ${game.title}: ${err.message}`);
+      }
+
+      // Update genres and tags
+      db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(game.id);
+      db.prepare('DELETE FROM game_tags WHERE game_id = ?').run(game.id);
+
+      const genres = match.genres || [];
+      const insertGenre = db.prepare('INSERT OR IGNORE INTO genres (name) VALUES (?)');
+      const insertGameGenre = db.prepare('INSERT OR IGNORE INTO game_genres (game_id, genre_id) VALUES (?, ?)');
+      const insertTag = db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)');
+      const insertGameTag = db.prepare('INSERT OR IGNORE INTO game_tags (game_id, tag_id) VALUES (?, ?)');
+
+      const upsertGenres = db.transaction((genreList) => {
+        for (const genre of genreList) {
+          const genreName = genre.name || genre;
+          if (!genreName) continue;
+          insertGenre.run(genreName);
+          const genreRow = db.prepare('SELECT id FROM genres WHERE name = ?').get(genreName);
+          insertGameGenre.run(game.id, genreRow.id);
+          insertTag.run(genreName);
+          const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(genreName);
+          insertGameTag.run(game.id, tagRow.id);
+        }
+      });
+      upsertGenres(genres);
+
+      enriched++;
+      console.log(`[Gameshelf Metadata] Re-enriched: ${game.title}`);
+    } catch (err) {
+      console.error(`[Gameshelf Metadata] Re-enrich failed for "${game.title}": ${err.message}`);
+      // Still mark last_enrichment_at to avoid infinite retries on crash-inducing games
+      try {
+        db.prepare("UPDATE games SET last_enrichment_at = datetime('now') WHERE id = ?").run(game.id);
+      } catch (_) { /* ignore */ }
+      failed++;
+    }
+
+    await sleep(500);
+  }
+
+  return { enriched, failed, skipped };
+}
+
 async function enrichAll(db) {
   const editions = db.prepare('SELECT id, title FROM game_editions WHERE game_id IS NULL').all();
 
@@ -149,11 +264,16 @@ async function enrichAll(db) {
       failed++;
     }
 
-    // 500ms delay between calls to avoid rate limiting
     await sleep(500);
   }
+
+  // Phase 2: retry under-enriched games
+  const reEnrichResult = await enrichUnderEnriched(db);
+  enriched += reEnrichResult.enriched;
+  failed += reEnrichResult.failed;
+  skipped += reEnrichResult.skipped;
 
   return { enriched, failed, skipped };
 }
 
-module.exports = { enrichGame, enrichAll };
+module.exports = { enrichGame, enrichAll, enrichUnderEnriched };
