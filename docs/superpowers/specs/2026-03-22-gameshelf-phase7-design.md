@@ -73,7 +73,7 @@ FROM game_editions ge
 JOIN launchers l ON l.id = ge.launcher_id
 LEFT JOIN games g ON g.id = ge.game_id
 LEFT JOIN game_tags gt ON gt.game_id = g.id AND gt.tag_id = ?
-WHERE ge.owned = 1
+WHERE ge.owned = 1 AND ge.game_id IS NOT NULL
   [AND (g.title LIKE ? OR ge.title LIKE ?)]  -- if search param
 ORDER BY COALESCE(g.title, ge.title) COLLATE NOCASE ASC
 LIMIT ? OFFSET ?
@@ -137,6 +137,7 @@ Returns: `{ updated: true }`
 
 On the GameDetail page, the existing tag chip section becomes interactive:
 
+- Only user-created tags are shown as editable chips. Genre-mirrored tags (where `tag.name` matches a genre name) are excluded from the editable section — they continue to display as read-only blue genre chips. The frontend filters using `game.tags.filter(t => !game.genres?.includes(t.name))` to get only user-created tags.
 - Tags display as removable chips with an "X" button
 - Clicking X shows confirmation ("Remove tag [name] from this game?"). On confirm: removes the tag and calls `PUT /api/games/:id/tags` with updated list.
 - "Add tag" button/input at the end of the tag chips
