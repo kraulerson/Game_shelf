@@ -6,6 +6,7 @@ import LauncherBadge from '../components/LauncherBadge';
 
 function LaunchersTab() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [confirmRemove, setConfirmRemove] = useState(null);
 
   const { data: launchers } = useQuery({
@@ -56,7 +57,7 @@ function LaunchersTab() {
                 </div>
               </div>
             </div>
-            {l.configured && (
+            {l.configured ? (
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => syncLauncher(l.id)}
@@ -71,6 +72,13 @@ function LaunchersTab() {
                   Remove
                 </button>
               </div>
+            ) : (
+              <button
+                onClick={() => navigate('/setup')}
+                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
+              >
+                Configure
+              </button>
             )}
           </div>
         );
