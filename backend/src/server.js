@@ -36,6 +36,7 @@ const launchersRouter = require('./routes/launchers');
 const gamesRouter = require('./routes/games');
 const syncRouter = require('./routes/sync');
 const metadataRouter = require('./routes/metadata');
+const tagsRouter = require('./routes/tags');
 
 // Run migrations
 const dbPath = process.env.GAMESHELF_DB_PATH || './data/gameshelf.db';
@@ -67,6 +68,7 @@ app.use('/api/launchers', launchersRouter);
 app.use('/api/games', gamesRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/metadata', metadataRouter);
+app.use('/api/tags', tagsRouter);
 
 // Global error handler
 app.use(errorHandler);
