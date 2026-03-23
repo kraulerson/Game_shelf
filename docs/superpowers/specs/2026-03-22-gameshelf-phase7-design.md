@@ -8,6 +8,7 @@ Add tag editing capabilities to Gameshelf:
 2. **Bulk tag editor** — Settings tab for managing tags and assigning them to games at scale
 3. **Individual game tag editing** — inline tag editor on the GameDetail page
 4. **Filter integration** — new tags automatically appear in the Library filter panel
+5. **Enrichment fix** — protect user-created tags from being wiped by enrichment
 
 ## Design Decisions
 
@@ -15,7 +16,9 @@ Add tag editing capabilities to Gameshelf:
 - **Tag-centric bulk editor** — select a tag, then check/uncheck games. Optimized for "tag many games at once."
 - **Paginated at 200/page with search** — handles 3K+ game libraries without loading everything at once.
 - **Bulk editor shows duplicates** — all game_editions across launchers are visible, but tags are applied at the `games` level (not edition level), so checking one edition of a game tags the game itself.
-- **Confirmation on tag removal** — removing a tag from a game on the GameDetail page requires confirmation.
+- **Confirmation on tag removal** — removing a tag from a game on the GameDetail page requires confirmation. No confirmation in the bulk editor (would be tedious for bulk operations).
+- **PATCH-style bulk updates** — the bulk editor uses `{ add: [], remove: [] }` instead of replace-all, which is safe across pagination boundaries.
+- **Genre-mirrored tags are protected** — cannot be deleted by users; enrichment only deletes genre-mirrored `game_tags`, preserving user-created tags.
 
 ## Feature 1: Tag CRUD API
 
@@ -40,21 +43,30 @@ ORDER BY t.name COLLATE NOCASE ASC
 
 **`POST /api/tags`** — Create a new tag.
 
-Body: `{ name }`. Validates name is non-empty and unique (case-insensitive). Returns `{ id, name }`.
+Body: `{ name }`. Validation:
+- Non-empty after trimming whitespace
+- Max 50 characters
+- Case-insensitive uniqueness check via application-level `SELECT ... WHERE name = ? COLLATE NOCASE` before insert (SQLite UNIQUE is case-sensitive by default)
+
+Returns: `{ id, name }`. Returns 400 if validation fails or name already exists.
 
 **`DELETE /api/tags/:id`** — Delete a tag.
 
-Deletes from `tags` table. `game_tags` rows cascade-delete via FK. Returns `{ deleted: true }`. Returns 404 if tag not found.
+First checks if the tag name matches a genre name (`SELECT name FROM genres WHERE name = (SELECT name FROM tags WHERE id = ?)`). If so, returns 400 with error "Cannot delete genre-mirrored tag. This tag is managed by metadata enrichment." This prevents user confusion when enrichment re-creates the tag.
+
+Otherwise, deletes from `tags` table. `game_tags` rows cascade-delete via FK. Returns `{ deleted: true }`. Returns 404 if tag not found.
 
 **`GET /api/tags/:id/games`** — Get all game_editions for the bulk editor, with tag membership indicated.
 
 Query params: `page` (default 1), `limit` (default 200), `search` (optional).
 
-Returns all game_editions (including duplicates across launchers) with a `tagged` boolean indicating whether the parent game has this tag. Paginated.
+Returns all game_editions (including duplicates across launchers) with a `tagged` boolean indicating whether the parent game has this tag. Paginated. Also returns `taggedCount` (total games tagged with this tag, regardless of pagination).
 
 ```sql
-SELECT ge.id as edition_id, ge.title as edition_title, ge.launcher_game_id,
-       g.id as game_id, g.title, g.cover_url, g.icon_url,
+SELECT ge.id as edition_id,
+       COALESCE(g.title, ge.title) as title,
+       COALESCE(g.icon_url, g.cover_url) as icon_url,
+       g.id as game_id, ge.launcher_game_id,
        l.name as launcher_name, l.display_name as launcher_display_name,
        CASE WHEN gt.tag_id IS NOT NULL THEN 1 ELSE 0 END as tagged
 FROM game_editions ge
@@ -67,23 +79,25 @@ ORDER BY COALESCE(g.title, ge.title) COLLATE NOCASE ASC
 LIMIT ? OFFSET ?
 ```
 
-Returns: `{ games: [...], total, page, limit }`
+Returns: `{ games: [...], total, taggedCount, page, limit }`
 
-**`PUT /api/tags/:id/games`** — Bulk update which games have this tag.
+**`PATCH /api/tags/:id/games`** — Bulk add/remove games from a tag.
 
-Body: `{ gameIds: [1, 2, 3] }` — the complete set of game IDs that should have this tag (replaces all).
+Body: `{ add: [gameId, ...], remove: [gameId, ...] }` — game IDs to add or remove from this tag. This is safe across pagination boundaries since it doesn't replace the full set.
 
-Implementation: within a transaction, delete all `game_tags` for this tag_id, then insert new rows for each gameId.
+Implementation: within a transaction, `INSERT OR IGNORE INTO game_tags` for each add, `DELETE FROM game_tags` for each remove.
 
-Returns: `{ updated: true, count: <number of games tagged> }`
+Returns: `{ updated: true }`
 
-**`PUT /api/games/:id/tags`** — Set tags for a single game (for GameDetail page).
+**`PUT /api/games/:id/tags`** — Set user-created tags for a single game (for GameDetail page).
 
-Body: `{ tagIds: [1, 2, 3] }` — the complete set of tag IDs for this game.
+Body: `{ tagIds: [1, 2, 3] }` — the set of user-created tag IDs for this game.
 
-Implementation: within a transaction, delete all `game_tags` for this game_id where the tag is user-created (not a genre-mirrored tag), then insert new rows. Note: genres are also mirrored as tags during enrichment. To avoid removing genre-sourced tags, only delete `game_tags` rows whose `tag_id` corresponds to tags NOT present in the `genres` table, then re-insert the user-specified tagIds.
+Implementation: within a transaction:
+1. Delete `game_tags` rows for this game where the tag is NOT genre-mirrored: `DELETE FROM game_tags WHERE game_id = ? AND tag_id NOT IN (SELECT t.id FROM tags t JOIN genres g ON g.name = t.name)`
+2. Insert new rows for each tagId: `INSERT OR IGNORE INTO game_tags (game_id, tag_id) VALUES (?, ?)`
 
-Actually, simpler approach: delete ALL `game_tags` for this game, then insert all tagIds. The frontend sends the complete list including genre-mirrored tags, so nothing is lost.
+This preserves genre-mirrored tags regardless of what the frontend sends.
 
 Returns: `{ updated: true }`
 
@@ -99,10 +113,11 @@ Returns: `{ updated: true }`
 - Shows tags in a list: tag name, game count, "Edit" button, "Delete" button
 - "Create Tag" button at top: shows a text input + submit. Calls `POST /api/tags`. Invalidates `tags` and `gameFilters` queries.
 - "Delete" button shows confirmation dialog ("Delete tag [name]? It will be removed from all games."). Calls `DELETE /api/tags/:id`. Invalidates `tags` and `gameFilters` queries.
+- Genre-mirrored tags are visually distinguished (e.g. grayed-out delete button or label) to indicate they can't be deleted.
 
 **Bulk editor view (entered by clicking Edit on a tag):**
 
-- Header: tag name + "Back to tags" link
+- Header: tag name + "Back to tags" link + "X of Y games tagged" count
 - Search box: filters games by title (debounced, triggers re-fetch)
 - Game list: 200 items per page, each row shows:
   - Game icon/cover (small thumbnail)
@@ -110,13 +125,15 @@ Returns: `{ updated: true }`
   - Launcher badge
   - Checkbox (checked = game has this tag)
 - Data fetched from `GET /api/tags/:id/games?page=X&limit=200&search=Y`
-- Checking/unchecking: tracks changes locally, then a "Save" button sends `PUT /api/tags/:id/games` with the full list of tagged gameIds
+- Checking/unchecking immediately sends `PATCH /api/tags/:id/games` with `{ add: [gameId] }` or `{ remove: [gameId] }`. This avoids tracking local state and ensures changes persist across page navigation.
 - Pagination controls at bottom (Previous / Next / page indicator)
-- On save: invalidates `tags`, `gameFilters`, and `games` queries
+- After each change: invalidates `tagGames` (current page data), `tags` (for count updates), and `gameFilters` queries
 
 ## Feature 3: Individual Game Tag Editing (GameDetail)
 
 ### Frontend
+
+**Update `GET /api/games/:id` response:** Tags must return `[{ id, name }]` instead of just names, so the frontend has tag IDs for the PUT body. Genres continue to return as name strings (they are read-only display).
 
 On the GameDetail page, the existing tag chip section becomes interactive:
 
@@ -133,12 +150,29 @@ On the GameDetail page, the existing tag chip section becomes interactive:
 
 No code changes needed. The existing `GET /api/games/filters` endpoint already aggregates tags with counts from `game_tags`. New tags appear automatically once games are assigned. The frontend just needs to invalidate `gameFilters` after tag mutations.
 
+## Feature 5: Protect User-Created Tags During Enrichment
+
+### Backend
+
+**Modify `enrichGame.js`:** Both `enrichGame()` and `enrichUnderEnriched()` currently run `DELETE FROM game_tags WHERE game_id = ?` before re-inserting genre-mirrored tags. This wipes user-created tags.
+
+Change both functions to only delete genre-mirrored `game_tags`:
+
+```sql
+DELETE FROM game_tags WHERE game_id = ? AND tag_id IN (
+  SELECT t.id FROM tags t JOIN genres g ON g.name = t.name
+)
+```
+
+This preserves any user-created `game_tags` rows while still allowing enrichment to refresh genre associations.
+
 ## Files Changed
 
 ### Backend
 - Create: `backend/src/routes/tags.js` — all tag CRUD and bulk editor endpoints
 - Modify: `backend/src/server.js` — mount tags router at `/api/tags`
-- Modify: `backend/src/routes/games.js` — add `PUT /api/games/:id/tags` endpoint
+- Modify: `backend/src/routes/games.js` — add `PUT /api/games/:id/tags` endpoint, update `GET /api/games/:id` to return tag objects `[{ id, name }]`
+- Modify: `backend/src/services/metadata/enrichGame.js` — protect user-created tags during enrichment (both `enrichGame` and `enrichUnderEnriched`)
 
 ### Frontend
 - Modify: `frontend/src/pages/Settings.jsx` — add TagsTab component with tag list and bulk editor views
@@ -146,10 +180,13 @@ No code changes needed. The existing `GET /api/games/filters` endpoint already a
 
 ## Testing Considerations
 
-- Tag CRUD: create, list, delete, uniqueness validation
-- Bulk editor: `GET /api/tags/:id/games` returns correct `tagged` boolean, pagination works, search filters
-- `PUT /api/tags/:id/games`: replaces all associations correctly, handles empty array (untag all)
-- `PUT /api/games/:id/tags`: replaces tags for a game, doesn't affect genres
-- Delete cascade: deleting a tag removes all game_tags rows
+- Tag CRUD: create, list, delete, uniqueness validation (case-insensitive), name length limit
+- Genre-mirrored tag deletion: returns 400 error
+- Bulk editor: `GET /api/tags/:id/games` returns correct `tagged` boolean, pagination works, search filters, `taggedCount` is accurate
+- `PATCH /api/tags/:id/games`: add/remove work correctly, idempotent (adding already-tagged game is no-op)
+- `PUT /api/games/:id/tags`: replaces user-created tags only, preserves genre-mirrored tags
+- Enrichment protection: enrichment does not delete user-created tags (regression test)
+- Delete cascade: deleting a user-created tag removes all game_tags rows
 - Filter integration: new tag with assigned games appears in `GET /api/games/filters`
 - Scale: 200/page pagination handles 3K+ games
+- GameDetail: `GET /api/games/:id` returns tag objects with id and name
