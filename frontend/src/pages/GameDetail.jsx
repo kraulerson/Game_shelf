@@ -80,14 +80,17 @@ export default function GameDetail() {
 
   async function saveTitle() {
     if (!titleInput.trim()) return;
-    await fetch(`/api/games/${id}`, {
+    const res = await fetch(`/api/games/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
       body: JSON.stringify({ title: titleInput.trim() }),
     });
-    setEditingTitle(false);
-    queryClient.invalidateQueries({ queryKey: ['game', id] });
+    if (res.ok) {
+      setEditingTitle(false);
+      queryClient.invalidateQueries({ queryKey: ['game', id] });
+      queryClient.invalidateQueries({ queryKey: ['games'] });
+    }
   }
 
   async function reEnrich() {
@@ -98,6 +101,7 @@ export default function GameDetail() {
     });
     setEnriching(false);
     queryClient.invalidateQueries({ queryKey: ['game', id] });
+    queryClient.invalidateQueries({ queryKey: ['games'] });
   }
 
   if (isLoading) {
