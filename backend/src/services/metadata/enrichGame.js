@@ -29,6 +29,68 @@ async function getSteamGridDBImages(title, launcherName, launcherGameId) {
   return { coverUrl: null, heroUrl: null };
 }
 
+// Steam CDN direct image URLs — always available for Steam games, no API key needed
+function getSteamCDNImages(launcherName, launcherGameId) {
+  if (launcherName !== 'steam' || !launcherGameId) return null;
+  return {
+    coverUrl: `https://cdn.akamai.steamstatic.com/steam/apps/${launcherGameId}/library_600x900_2x.jpg`,
+    heroUrl: `https://cdn.akamai.steamstatic.com/steam/apps/${launcherGameId}/library_hero.jpg`,
+  };
+}
+
+// Get best available images: IGDB → SteamGridDB → Steam CDN
+async function getBestImages(igdbMatch, title, launcherName, launcherGameId) {
+  let coverUrl = igdbMatch?.cover?.url || null;
+  let artworkUrl = igdbMatch?.artworks?.[0]?.url || null;
+
+  // SteamGridDB fallback
+  if (!coverUrl || !artworkUrl) {
+    try {
+      const sgdbImages = await getSteamGridDBImages(title, launcherName, launcherGameId);
+      if (!coverUrl && sgdbImages?.coverUrl) coverUrl = sgdbImages.coverUrl;
+      if (!artworkUrl && sgdbImages?.heroUrl) artworkUrl = sgdbImages.heroUrl;
+    } catch (err) {
+      console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${title}: ${err.message}`);
+    }
+  }
+
+  // Steam CDN fallback (always works for Steam games)
+  if (!coverUrl || !artworkUrl) {
+    const cdnImages = getSteamCDNImages(launcherName, launcherGameId);
+    if (cdnImages) {
+      if (!coverUrl) { coverUrl = cdnImages.coverUrl; console.log(`[Steam CDN] Using cover for ${title}`); }
+      if (!artworkUrl) { artworkUrl = cdnImages.heroUrl; console.log(`[Steam CDN] Using hero for ${title}`); }
+    }
+  }
+
+  return { coverUrl, artworkUrl };
+}
+
+// Download and cache cover + hero images for a game
+async function cacheGameImages(coverUrl, artworkUrl, gameId, title, db) {
+  try {
+    if (coverUrl) {
+      const coverPath = await cacheImage(coverUrl, gameId, 'cover');
+      if (coverPath) {
+        db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, gameId);
+        const iconPath = await cacheImage(coverUrl, gameId, 'icon');
+        if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, gameId);
+      }
+    }
+  } catch (err) {
+    console.warn(`[Gameshelf Metadata] Cover download failed for ${title}: ${err.message}`);
+  }
+
+  try {
+    if (artworkUrl) {
+      const heroPath = await cacheImage(artworkUrl, gameId, 'hero');
+      if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, gameId);
+    }
+  } catch (err) {
+    console.warn(`[Gameshelf Metadata] Hero download failed for ${title}: ${err.message}`);
+  }
+}
+
 async function enrichGame(gameEditionId, db) {
   const edition = db.prepare(`
     SELECT ge.*, l.name as launcher_name
@@ -78,28 +140,9 @@ async function enrichGame(gameEditionId, db) {
     const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(slug);
     db.prepare('UPDATE game_editions SET game_id = ? WHERE id = ?').run(game.id, gameEditionId);
 
-    // Try SteamGridDB for images even without IGDB metadata
-    try {
-      const sgdbImages = await getSteamGridDBImages(title, edition.launcher_name, edition.launcher_game_id);
-      try {
-        if (sgdbImages?.coverUrl) {
-          const coverPath = await cacheImage(sgdbImages.coverUrl, game.id, 'cover');
-          if (coverPath) {
-            db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
-            const iconPath = await cacheImage(sgdbImages.coverUrl, game.id, 'icon');
-            if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
-          }
-        }
-      } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB cover failed for ${title}: ${err.message}`); }
-      try {
-        if (sgdbImages?.heroUrl) {
-          const heroPath = await cacheImage(sgdbImages.heroUrl, game.id, 'hero');
-          if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
-        }
-      } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB hero failed for ${title}: ${err.message}`); }
-    } catch (err) {
-      console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${title}: ${err.message}`);
-    }
+    // Try SteamGridDB → Steam CDN for images
+    const { coverUrl, artworkUrl } = await getBestImages(null, title, edition.launcher_name, edition.launcher_game_id);
+    await cacheGameImages(coverUrl, artworkUrl, game.id, title, db);
 
     return { status: 'minimal', gameId: game.id };
   }
@@ -133,48 +176,9 @@ async function enrichGame(gameEditionId, db) {
   const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(gameSlug);
   const gameId = game.id;
 
-  // Download and cache images
-  let coverUrl = match.cover?.url || null;
-  let artworkUrl = match.artworks?.[0]?.url || null;
-
-  // SteamGridDB fallback if IGDB has no images
-  if (!coverUrl || !artworkUrl) {
-    try {
-      const sgdbImages = await getSteamGridDBImages(gameTitle, edition.launcher_name, edition.launcher_game_id);
-      if (!coverUrl && sgdbImages?.coverUrl) coverUrl = sgdbImages.coverUrl;
-      if (!artworkUrl && sgdbImages?.heroUrl) artworkUrl = sgdbImages.heroUrl;
-    } catch (err) {
-      console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${gameTitle}: ${err.message}`);
-    }
-  }
-
-  // Cache cover image
-  try {
-    if (coverUrl) {
-      const coverPath = await cacheImage(coverUrl, gameId, 'cover');
-      if (coverPath) {
-        db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, gameId);
-        const iconPath = await cacheImage(coverUrl, gameId, 'icon');
-        if (iconPath) {
-          db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, gameId);
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[Gameshelf Metadata] Cover download failed for ${gameTitle}: ${err.message}`);
-  }
-
-  // Cache hero image
-  try {
-    if (artworkUrl) {
-      const heroPath = await cacheImage(artworkUrl, gameId, 'hero');
-      if (heroPath) {
-        db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, gameId);
-      }
-    }
-  } catch (err) {
-    console.warn(`[Gameshelf Metadata] Hero download failed for ${gameTitle}: ${err.message}`);
-  }
+  // Download and cache images: IGDB → SteamGridDB → Steam CDN
+  const { coverUrl, artworkUrl } = await getBestImages(match, gameTitle, edition.launcher_name, edition.launcher_game_id);
+  await cacheGameImages(coverUrl, artworkUrl, gameId, gameTitle, db);
 
   // Clear stale genre/tag associations before re-inserting (preserve user-created tags)
   db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(gameId);
@@ -250,28 +254,9 @@ async function enrichUnderEnriched(db) {
       if (!match) {
         console.log(`[Gameshelf Metadata] Re-enrich: no IGDB match for: ${game.title}`);
 
-        // Try SteamGridDB for images even without IGDB metadata
-        try {
-          const sgdbImages = await getSteamGridDBImages(game.title, game.launcher_name, game.launcher_game_id);
-          try {
-            if (sgdbImages?.coverUrl) {
-              const coverPath = await cacheImage(sgdbImages.coverUrl, game.id, 'cover');
-              if (coverPath) {
-                db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
-                const iconPath = await cacheImage(sgdbImages.coverUrl, game.id, 'icon');
-                if (iconPath) db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
-              }
-            }
-          } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB cover failed for ${game.title}: ${err.message}`); }
-          try {
-            if (sgdbImages?.heroUrl) {
-              const heroPath = await cacheImage(sgdbImages.heroUrl, game.id, 'hero');
-              if (heroPath) db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
-            }
-          } catch (err) { console.warn(`[Gameshelf Metadata] SteamGridDB hero failed for ${game.title}: ${err.message}`); }
-        } catch (err) {
-          console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${game.title}: ${err.message}`);
-        }
+        // Try SteamGridDB → Steam CDN for images
+        const { coverUrl, artworkUrl } = await getBestImages(null, game.title, game.launcher_name, game.launcher_game_id);
+        await cacheGameImages(coverUrl, artworkUrl, game.id, game.title, db);
 
         db.prepare("UPDATE games SET last_enrichment_at = datetime('now') WHERE id = ?").run(game.id);
         skipped++;
@@ -299,48 +284,9 @@ async function enrichUnderEnriched(db) {
         WHERE id = ?
       `).run(description, releaseYear, developer, publisher, game.id);
 
-      // Download and cache images
-      let coverUrl = match.cover?.url || null;
-      let artworkUrl = match.artworks?.[0]?.url || null;
-
-      // SteamGridDB fallback if IGDB has no images
-      if (!coverUrl || !artworkUrl) {
-        try {
-          const sgdbImages = await getSteamGridDBImages(game.title, game.launcher_name, game.launcher_game_id);
-          if (!coverUrl && sgdbImages?.coverUrl) coverUrl = sgdbImages.coverUrl;
-          if (!artworkUrl && sgdbImages?.heroUrl) artworkUrl = sgdbImages.heroUrl;
-        } catch (err) {
-          console.warn(`[Gameshelf Metadata] SteamGridDB fallback failed for ${game.title}: ${err.message}`);
-        }
-      }
-
-      // Cache cover image
-      try {
-        if (coverUrl) {
-          const coverPath = await cacheImage(coverUrl, game.id, 'cover');
-          if (coverPath) {
-            db.prepare('UPDATE games SET cover_url = ? WHERE id = ?').run(coverPath, game.id);
-            const iconPath = await cacheImage(coverUrl, game.id, 'icon');
-            if (iconPath) {
-              db.prepare('UPDATE games SET icon_url = ? WHERE id = ?').run(iconPath, game.id);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn(`[Gameshelf Metadata] Re-enrich cover download failed for ${game.title}: ${err.message}`);
-      }
-
-      // Cache hero image
-      try {
-        if (artworkUrl) {
-          const heroPath = await cacheImage(artworkUrl, game.id, 'hero');
-          if (heroPath) {
-            db.prepare('UPDATE games SET hero_url = ? WHERE id = ?').run(heroPath, game.id);
-          }
-        }
-      } catch (err) {
-        console.warn(`[Gameshelf Metadata] Re-enrich hero download failed for ${game.title}: ${err.message}`);
-      }
+      // Download and cache images: IGDB → SteamGridDB → Steam CDN
+      const { coverUrl, artworkUrl } = await getBestImages(match, game.title, game.launcher_name, game.launcher_game_id);
+      await cacheGameImages(coverUrl, artworkUrl, game.id, game.title, db);
 
       // Update genres and tags (preserve user-created tags)
       db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(game.id);
