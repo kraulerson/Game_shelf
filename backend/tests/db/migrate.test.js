@@ -28,7 +28,7 @@ describe('migration runner', () => {
     ).all().map(r => r.name);
 
     assert.deepEqual(tables, [
-      'game_editions', 'game_genres', 'game_tags',
+      'edition_tiers', 'game_editions', 'game_genres', 'game_tags',
       'games', 'genres', 'launchers',
       'settings', 'sync_jobs', 'tags', 'users'
     ]);
