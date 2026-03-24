@@ -169,9 +169,25 @@ class EpicLauncher extends BaseLauncher {
       console.warn('[Epic] Playtime fetch failed:', err.message, err.response?.status, JSON.stringify(err.response?.data));
     }
 
-    // Map to game format
+    // Log namespace distribution for "Live" items vs real games
+    const nsCount = {};
+    allItems.forEach(item => {
+      const key = `${item.sandboxName}|${item.namespace}`;
+      nsCount[key] = (nsCount[key] || 0) + 1;
+    });
+    const topEntries = Object.entries(nsCount).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    console.log('[Epic] Top sandboxName|namespace groups:', JSON.stringify(topEntries));
+    console.log('[Epic] Unique namespaces:', new Set(allItems.map(i => i.namespace)).size, 'Total items:', allItems.length);
+
+    // Map to game format — deduplicate by namespace (one entry per game)
+    const seenNamespaces = new Set();
     return allItems
-      .filter(item => item.appName || item.catalogItemId)
+      .filter(item => {
+        if (!item.appName && !item.catalogItemId) return false;
+        if (seenNamespaces.has(item.namespace)) return false;
+        seenNamespaces.add(item.namespace);
+        return true;
+      })
       .map(item => {
         const id = item.appName || item.catalogItemId;
         return {

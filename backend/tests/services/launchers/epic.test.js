@@ -59,8 +59,8 @@ describe('EpicLauncher', () => {
       return {
         data: {
           records: [
-            { appName: 'Peony', catalogItemId: 'abc123', sandboxName: 'The Escapists' },
-            { appName: 'Hoki', catalogItemId: 'def456' },
+            { appName: 'Peony', catalogItemId: 'abc123', sandboxName: 'The Escapists', namespace: 'ns1' },
+            { appName: 'Hoki', catalogItemId: 'def456', namespace: 'ns2' },
           ],
           responseMetadata: {},
         }
@@ -82,6 +82,44 @@ describe('EpicLauncher', () => {
       // Falls back to appName when sandboxName is missing
       assert.equal(games[1].title, 'Hoki',
         'Should fall back to appName when sandboxName is missing');
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+
+  it('fetchOwnedGames() should deduplicate items by namespace', async () => {
+    const axios = require('axios');
+    const originalGet = axios.get;
+    axios.get = async (url) => {
+      if (url.includes('/playtime/')) {
+        return { data: [] };
+      }
+      return {
+        data: {
+          records: [
+            { appName: 'Game1', namespace: 'ns-fortnite', sandboxName: 'Live' },
+            { appName: 'Game2', namespace: 'ns-fortnite', sandboxName: 'Live' },
+            { appName: 'Game3', namespace: 'ns-fortnite', sandboxName: 'Live' },
+            { appName: 'Peony', namespace: 'ns-escapists', sandboxName: 'The Escapists' },
+            { appName: 'Hoki', namespace: 'ns-other', sandboxName: 'Some Game' },
+          ],
+          responseMetadata: {},
+        }
+      };
+    };
+
+    try {
+      const EpicLauncher = require('../../../src/services/launchers/epic');
+      const launcher = new EpicLauncher('epic', {});
+      const games = await launcher.fetchOwnedGames({
+        access_token: 'test', token_type: 'bearer', account_id: 'test123'
+      });
+
+      // REGRESSION: must deduplicate by namespace — 3 Fortnite items become 1
+      assert.equal(games.length, 3,
+        'Should deduplicate: 5 items across 3 namespaces = 3 games');
+      const titles = games.map(g => g.title).sort();
+      assert.deepEqual(titles, ['Live', 'Some Game', 'The Escapists']);
     } finally {
       axios.get = originalGet;
     }
