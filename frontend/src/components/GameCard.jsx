@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import LauncherBadge from './LauncherBadge';
 
@@ -14,11 +13,9 @@ function formatPlaytime(minutes) {
 }
 
 export default function GameCard({ game }) {
-  const [showAlsoOn, setShowAlsoOn] = useState(false);
   const navigate = useNavigate();
 
-  const alsoOn = game.also_on || [];
-  const hasMultipleLaunchers = alsoOn.length > 1;
+  const platforms = game.platforms || [];
   const playtime = formatPlaytime(game.playtime_minutes);
 
   return (
@@ -50,34 +47,21 @@ export default function GameCard({ game }) {
       {/* Info */}
       <div className="p-2">
         <h3 className="text-white text-sm font-medium line-clamp-2 mb-1">{game.title}</h3>
+        {game.display_edition_title && game.display_edition_title !== game.title && (
+          <p className="text-gray-400 text-xs truncate">{game.display_edition_title}</p>
+        )}
 
-        {/* Launcher badges */}
+        {/* Platform tags */}
         <div className="flex flex-wrap gap-1 mb-1">
-          <LauncherBadge
-            launcherName={game.launcher_name}
-            displayName={game.launcher_display_name}
-            primary
-          />
-          {hasMultipleLaunchers && (
-            <div className="relative">
-              <button
-                onClick={(e) => { e.stopPropagation(); setShowAlsoOn(!showAlsoOn); }}
-                className="text-xs text-gray-400 hover:text-gray-200"
-              >
-                +{alsoOn.length - 1} more
-              </button>
-              {showAlsoOn && (
-                <div className="absolute z-10 top-full left-0 mt-1 bg-gray-700 rounded-lg shadow-lg p-2 min-w-[160px]">
-                  {alsoOn.map((l, i) => (
-                    <div key={i} className="flex items-center gap-2 py-1">
-                      <LauncherBadge launcherName={l.launcher_name} displayName={l.launcher_display_name} />
-                      <span className="text-xs text-gray-300">{l.launcher_display_name}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {platforms.map((p) => (
+            <LauncherBadge
+              key={p.launcher_name}
+              launcherName={p.launcher_name}
+              displayName={p.launcher_display_name}
+              primary
+              size="small"
+            />
+          ))}
         </div>
 
         {/* Playtime */}
