@@ -137,6 +137,10 @@ class EpicLauncher extends BaseLauncher {
           if (allItems.length === 0 && records.length > 0) {
             console.log('[Epic] Sample library item keys:', Object.keys(records[0]));
             console.log('[Epic] Sample library item:', JSON.stringify(records[0]).substring(0, 500));
+            // Log recordType distribution from first page
+            const types = {};
+            records.forEach(r => { types[r.recordType] = (types[r.recordType] || 0) + 1; });
+            console.log('[Epic] recordType distribution (page 1):', JSON.stringify(types));
           }
           allItems.push(...records);
         }
