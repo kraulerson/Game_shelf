@@ -83,7 +83,13 @@ async function resolveCodenames(db, launcherId, session) {
     )
   `);
 
+  let processed = 0;
   for (const { epic_namespace } of namespaces) {
+    processed++;
+    if (processed % 50 === 0) {
+      console.log(`[Epic Catalog] Progress: ${processed}/${namespaces.length} namespaces, ${resolved} resolved so far`);
+    }
+
     // Get all catalog IDs in this namespace
     const editions = db.prepare(
       'SELECT epic_catalog_id, title, launcher_game_id FROM game_editions WHERE launcher_id = ? AND epic_namespace = ? AND epic_catalog_id IS NOT NULL'
@@ -96,6 +102,7 @@ async function resolveCodenames(db, launcherId, session) {
       const catalogIds = editions.map(e => e.epic_catalog_id);
       const res = await axios.get(CATALOG_URL, {
         headers: { Authorization: authHeader },
+        timeout: 10000,
         params: {
           id: catalogIds.join(','),
           namespace: epic_namespace,
