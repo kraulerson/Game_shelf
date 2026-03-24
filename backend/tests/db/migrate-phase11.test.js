@@ -57,4 +57,44 @@ describe('Phase 11 migration: edition_tiers', () => {
     const tier = db.prepare('SELECT tier FROM edition_tiers WHERE game_edition_id = ?').get(ed.id);
     assert.equal(tier.tier, 4);
   });
+
+  it('should consolidate duplicate games rows into one', () => {
+    // Create two games with the same title (simulates cross-launcher enrichment bug)
+    db.prepare('INSERT INTO games (title, slug, description) VALUES (?, ?, ?)').run('Satisfactory', 'satisfactory-steam', 'A factory building game');
+    db.prepare('INSERT INTO games (title, slug) VALUES (?, ?)').run('Satisfactory', 'satisfactory-epic');
+
+    const game1 = db.prepare("SELECT id FROM games WHERE slug = 'satisfactory-steam'").get();
+    const game2 = db.prepare("SELECT id FROM games WHERE slug = 'satisfactory-epic'").get();
+
+    const launcher = db.prepare('SELECT id FROM launchers WHERE name = ?').get('steam');
+    db.prepare('INSERT INTO game_editions (launcher_id, launcher_game_id, title, game_id) VALUES (?, ?, ?, ?)').run(launcher.id, 'sat-steam', 'Satisfactory', game1.id);
+    db.prepare('INSERT INTO game_editions (launcher_id, launcher_game_id, title, game_id) VALUES (?, ?, ?, ?)').run(launcher.id, 'sat-epic', 'Satisfactory', game2.id);
+
+    // Run consolidation (same logic as migration 11b)
+    const dupeGroups = db.prepare("SELECT title, COUNT(*) as c FROM games GROUP BY title HAVING c > 1").all();
+    const consolidate = db.transaction(() => {
+      for (const { title } of dupeGroups) {
+        const candidates = db.prepare(`
+          SELECT id, CASE WHEN description IS NOT NULL THEN 1 ELSE 0 END as has_desc,
+            CASE WHEN cover_url IS NOT NULL THEN 1 ELSE 0 END as has_cover
+          FROM games WHERE title = ? ORDER BY has_desc DESC, has_cover DESC, id ASC
+        `).all(title);
+        const canonical = candidates[0];
+        for (const dupe of candidates.slice(1)) {
+          db.prepare('UPDATE game_editions SET game_id = ? WHERE game_id = ?').run(canonical.id, dupe.id);
+          db.prepare('DELETE FROM games WHERE id = ?').run(dupe.id);
+        }
+      }
+    });
+    consolidate();
+
+    // REGRESSION: duplicate games must be merged
+    const remaining = db.prepare("SELECT COUNT(*) as c FROM games WHERE title = 'Satisfactory'").get();
+    assert.equal(remaining.c, 1, 'Should have exactly one Satisfactory game');
+
+    // Both editions should point to the canonical game (the one with description)
+    const editions = db.prepare("SELECT game_id FROM game_editions WHERE launcher_game_id IN ('sat-steam', 'sat-epic')").all();
+    assert.equal(editions[0].game_id, editions[1].game_id, 'Both editions should share the same game_id');
+    assert.equal(editions[0].game_id, game1.id, 'Should keep the game with description');
+  });
 });

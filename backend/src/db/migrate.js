@@ -123,6 +123,45 @@ function runMigrations(dbPath) {
     console.log(`[Migration] Phase 11: Created edition_tiers, populated ${editions.length} rows`);
   }
 
+  // Phase 11b: consolidate duplicate games rows (same title, different IDs)
+  // This fixes data created when Epic/other launchers enriched separately from Steam
+  const dupeGroups = db.prepare(`
+    SELECT title, COUNT(*) as c FROM games GROUP BY title HAVING c > 1
+  `).all();
+  if (dupeGroups.length > 0) {
+    let merged = 0;
+    const consolidate = db.transaction(() => {
+      for (const { title } of dupeGroups) {
+        // Pick canonical game: prefer one with description, then cover_url, then lowest id
+        const candidates = db.prepare(`
+          SELECT id, title, slug,
+            CASE WHEN description IS NOT NULL THEN 1 ELSE 0 END as has_desc,
+            CASE WHEN cover_url IS NOT NULL THEN 1 ELSE 0 END as has_cover
+          FROM games WHERE title = ? ORDER BY has_desc DESC, has_cover DESC, id ASC
+        `).all(title);
+
+        const canonical = candidates[0];
+        const dupes = candidates.slice(1);
+
+        for (const dupe of dupes) {
+          // Re-link editions
+          db.prepare('UPDATE game_editions SET game_id = ? WHERE game_id = ?').run(canonical.id, dupe.id);
+          // Re-link genres (ignore conflicts)
+          db.prepare('INSERT OR IGNORE INTO game_genres (game_id, genre_id) SELECT ?, genre_id FROM game_genres WHERE game_id = ?').run(canonical.id, dupe.id);
+          db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(dupe.id);
+          // Re-link tags (ignore conflicts)
+          db.prepare('INSERT OR IGNORE INTO game_tags (game_id, tag_id) SELECT ?, tag_id FROM game_tags WHERE game_id = ?').run(canonical.id, dupe.id);
+          db.prepare('DELETE FROM game_tags WHERE game_id = ?').run(dupe.id);
+          // Delete dupe game
+          db.prepare('DELETE FROM games WHERE id = ?').run(dupe.id);
+          merged++;
+        }
+      }
+    });
+    consolidate();
+    console.log(`[Migration] Phase 11b: Consolidated ${merged} duplicate game rows across ${dupeGroups.length} titles`);
+  }
+
   return db;
 }
 
