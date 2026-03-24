@@ -149,5 +149,41 @@ describe('epicCatalog', () => {
         db.close();
       }
     });
+
+    it('should resolve single-capitalized codenames like Capsicum (REGRESSION)', async () => {
+      // REGRESSION: single-capitalized words like Capsicum, Risotto, Amethyst
+      // were missed by the old isLikelyCodename heuristic because they look
+      // structurally identical to real titles like Celeste
+      const axios = require('axios');
+      const originalGet = axios.get;
+      const { resolveCodenames } = require('../../../src/services/launchers/epicCatalog');
+
+      const db = createTestDb();
+      db.exec(`
+        INSERT INTO game_editions (id, launcher_id, launcher_game_id, title, epic_namespace, epic_catalog_id)
+          VALUES
+            (1, 1, 'abc1', 'Risotto', 'ns-risotto', 'cat-r1'),
+            (2, 1, 'abc2', 'Amethyst', 'ns-amethyst', 'cat-a1'),
+            (3, 1, 'abc3', 'Celeste', 'ns-celeste', 'cat-c1');
+      `);
+
+      axios.get = async (url) => {
+        if (url.includes('ns-risotto')) return { data: { 'cat-r1': { title: 'Cooking Simulator' } } };
+        if (url.includes('ns-amethyst')) return { data: { 'cat-a1': { title: 'Dying Light 2' } } };
+        if (url.includes('ns-celeste')) return { data: { 'cat-c1': { title: 'Celeste' } } };
+        return { data: {} };
+      };
+
+      try {
+        await resolveCodenames(db, 1, { access_token: 'test', token_type: 'bearer' });
+
+        assert.equal(db.prepare('SELECT title FROM game_editions WHERE id = 1').get().title, 'Cooking Simulator');
+        assert.equal(db.prepare('SELECT title FROM game_editions WHERE id = 2').get().title, 'Dying Light 2');
+        assert.equal(db.prepare('SELECT title FROM game_editions WHERE id = 3').get().title, 'Celeste'); // same title, no change
+      } finally {
+        axios.get = originalGet;
+        db.close();
+      }
+    });
   });
 });

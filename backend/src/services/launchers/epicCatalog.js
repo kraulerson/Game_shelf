@@ -97,7 +97,12 @@ async function resolveCodenames(db, launcherId, session) {
           'SELECT id, title, launcher_game_id FROM game_editions WHERE epic_catalog_id = ? AND launcher_id = ?'
         ).get(catalogId, launcherId);
         if (!edition) continue;
-        if (!isLikelyCodename(edition.title, edition.launcher_game_id)) continue;
+
+        // Update if catalog returns a different title AND current title is single-word
+        // This catches codenames (Capsicum→Pepper Grinder) without a fragile heuristic
+        // Multi-word titles are already real names; same-title means no change needed
+        const isSingleWord = !/\s/.test(edition.title) && !/-/.test(edition.title);
+        if (!isSingleWord || edition.title === item.title) continue;
 
         updateTitle.run(item.title, catalogId, launcherId);
         updateGameTitle.run(item.title, catalogId, launcherId);
