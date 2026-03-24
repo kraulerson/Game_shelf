@@ -35,6 +35,7 @@ class EpicLauncher extends BaseLauncher {
     const res = await axios.post(EPIC_TOKEN_URL, new URLSearchParams({
       grant_type: 'authorization_code',
       code: auth_code,
+      token_type: 'eg1',
     }).toString(), {
       headers: {
         'Authorization': EPIC_AUTH_HEADER,
@@ -45,6 +46,7 @@ class EpicLauncher extends BaseLauncher {
     const data = res.data;
     return {
       access_token: data.access_token,
+      token_type: data.token_type || 'eg1',
       refresh_token: data.refresh_token,
       expires_at: data.expires_at,
       refresh_expires_at: data.refresh_expires_at,
@@ -58,9 +60,9 @@ class EpicLauncher extends BaseLauncher {
    * Returns { session, updatedCredentials } for syncEngine to persist.
    */
   async refreshIfNeeded(credentials) {
-    const { access_token, refresh_token, expires_at, account_id } = credentials;
+    const { access_token, token_type, refresh_token, expires_at, account_id } = credentials;
 
-    const session = { access_token, account_id };
+    const session = { access_token, token_type: token_type || 'eg1', account_id };
 
     // Check if access token is still valid (with 60s buffer)
     const expiresAt = new Date(expires_at).getTime();
@@ -74,6 +76,7 @@ class EpicLauncher extends BaseLauncher {
       const res = await axios.post(EPIC_TOKEN_URL, new URLSearchParams({
         grant_type: 'refresh_token',
         refresh_token: refresh_token,
+        token_type: 'eg1',
       }).toString(), {
         headers: {
           'Authorization': EPIC_AUTH_HEADER,
@@ -84,6 +87,7 @@ class EpicLauncher extends BaseLauncher {
       const data = res.data;
       const updatedCredentials = {
         access_token: data.access_token,
+        token_type: data.token_type || 'eg1',
         refresh_token: data.refresh_token,
         expires_at: data.expires_at,
         refresh_expires_at: data.refresh_expires_at,
@@ -92,7 +96,7 @@ class EpicLauncher extends BaseLauncher {
 
       console.log('[Epic] Token refreshed successfully');
       return {
-        session: { access_token: data.access_token, account_id: data.account_id },
+        session: { access_token: data.access_token, token_type: data.token_type || 'eg1', account_id: data.account_id },
         updatedCredentials,
       };
     } catch (err) {
@@ -102,8 +106,9 @@ class EpicLauncher extends BaseLauncher {
   }
 
   async fetchOwnedGames(session) {
-    const { access_token, account_id } = session;
-    const headers = { Authorization: `Bearer ${access_token}` };
+    const { access_token, token_type, account_id } = session;
+    const authType = token_type || 'eg1';
+    const headers = { Authorization: `${authType} ${access_token}` };
 
     // Fetch library items (paginated)
     let allItems = [];
@@ -111,7 +116,7 @@ class EpicLauncher extends BaseLauncher {
     let hasMore = true;
 
     while (hasMore) {
-      const params = { includeMetadata: true };
+      const params = { includeMetadata: true, platform: 'Windows' };
       if (cursor) params.cursor = cursor;
 
       try {
