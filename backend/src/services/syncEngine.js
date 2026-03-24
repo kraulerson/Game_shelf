@@ -138,12 +138,15 @@ async function syncLauncher(launcherName, db) {
       const { nestDLC, resolveCodenames } = require('./launchers/epicCatalog');
       nestDLC(db, launcher.id);
 
+      console.log('[Epic Catalog] Session check:', JSON.stringify({ hasSession: !!session, hasToken: !!session?.access_token, type: typeof session }));
       if (session && session.access_token) {
         try {
           await resolveCodenames(db, launcher.id, session);
         } catch (err) {
           console.warn('[Epic Catalog] Codename resolution failed:', err.message);
         }
+      } else {
+        console.warn('[Epic Catalog] Skipping codename resolution: no valid session token');
       }
     }
 
