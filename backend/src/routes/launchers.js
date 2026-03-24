@@ -12,12 +12,12 @@ const AVAILABLE_LAUNCHERS = [
   { id: 'steam', display_name: 'Steam', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'ea', display_name: 'EA App', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
   { id: 'ubisoft', display_name: 'Ubisoft Connect', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
-  { id: 'epic', display_name: 'Epic Games', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
+  { id: 'epic', display_name: 'Epic Games', auth_type: 'auth_code', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'humble', display_name: 'Humble Bundle', auth_type: 'credentials', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'itchio', display_name: 'itch.io', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'gog', display_name: 'GOG', auth_type: 'credentials', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'battlenet', display_name: 'Battle.net', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
-  { id: 'xbox', display_name: 'Xbox / Microsoft', auth_type: 'credentials', otp_supported: false, qr_supported: false, implemented: false },
+  { id: 'xbox', display_name: 'Xbox / Microsoft', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
 ];
 
 const LAUNCHER_MAP = Object.fromEntries(AVAILABLE_LAUNCHERS.map(l => [l.id, l]));
@@ -39,7 +39,7 @@ router.get('/available', (req, res) => {
 });
 
 // POST /api/launchers/:id/credentials
-router.post('/:id/credentials', (req, res) => {
+router.post('/:id/credentials', async (req, res) => {
   const { id } = req.params;
   const launcher = LAUNCHER_MAP[id];
 
@@ -51,12 +51,16 @@ router.post('/:id/credentials', (req, res) => {
     return res.status(400).json({ error: 'This launcher is not yet implemented' });
   }
 
-  const { username, password, api_key, steamid64, totp_secret } = req.body || {};
+  const { username, password, api_key, steamid64, totp_secret, auth_code } = req.body || {};
 
   // Validate required fields by auth_type
   if (launcher.auth_type === 'api_key') {
     if (!api_key) {
       return res.status(400).json({ error: 'api_key is required for this launcher' });
+    }
+  } else if (launcher.auth_type === 'auth_code') {
+    if (!auth_code) {
+      return res.status(400).json({ error: 'auth_code is required for this launcher' });
     }
   } else {
     // credentials or credentials+totp
@@ -70,12 +74,26 @@ router.post('/:id/credentials', (req, res) => {
     return res.status(400).json({ error: 'steamid64 is required for Steam' });
   }
 
-  const payload = {};
-  if (username) payload.username = username;
-  if (password) payload.password = password;
-  if (api_key) payload.api_key = api_key;
-  if (steamid64) payload.steamid64 = steamid64;
-  if (totp_secret) payload.totp_secret = totp_secret;
+  let payload;
+
+  if (launcher.auth_type === 'auth_code') {
+    // Exchange auth code for tokens via the launcher class
+    try {
+      const { LAUNCHER_CLASSES } = require('../services/launchers');
+      const LauncherClass = LAUNCHER_CLASSES[id];
+      const instance = new LauncherClass(id, null);
+      payload = await instance.authenticate({ auth_code });
+    } catch (err) {
+      return res.status(400).json({ error: `Authentication failed: ${err.message}` });
+    }
+  } else {
+    payload = {};
+    if (username) payload.username = username;
+    if (password) payload.password = password;
+    if (api_key) payload.api_key = api_key;
+    if (steamid64) payload.steamid64 = steamid64;
+    if (totp_secret) payload.totp_secret = totp_secret;
+  }
 
   const encryptedCredentials = encrypt(JSON.stringify(payload));
 
