@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS game_editions (
   install_state TEXT,
   playtime_minutes INTEGER DEFAULT 0,
   last_played_at TEXT,
+  epic_namespace TEXT,
+  epic_catalog_id TEXT,
+  sandbox_type TEXT,
+  parent_edition_id INTEGER REFERENCES game_editions(id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
   FOREIGN KEY (launcher_id) REFERENCES launchers(id) ON DELETE CASCADE

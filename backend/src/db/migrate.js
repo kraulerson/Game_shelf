@@ -162,6 +162,19 @@ function runMigrations(dbPath) {
     console.log(`[Migration] Phase 11b: Consolidated ${merged} duplicate game rows across ${dupeGroups.length} titles`);
   }
 
+  // Phase 12: Epic catalog resolution columns
+  const geColsP12 = db.pragma('table_info(game_editions)');
+  if (!geColsP12.some(c => c.name === 'epic_namespace')) {
+    db.exec('ALTER TABLE game_editions ADD COLUMN epic_namespace TEXT');
+    db.exec('ALTER TABLE game_editions ADD COLUMN epic_catalog_id TEXT');
+    db.exec('ALTER TABLE game_editions ADD COLUMN sandbox_type TEXT');
+    console.log('[Migration] Phase 12: Added epic_namespace, epic_catalog_id, sandbox_type columns');
+  }
+  if (!geColsP12.some(c => c.name === 'parent_edition_id')) {
+    db.exec('ALTER TABLE game_editions ADD COLUMN parent_edition_id INTEGER REFERENCES game_editions(id)');
+    console.log('[Migration] Phase 12: Added parent_edition_id column');
+  }
+
   return db;
 }
 
