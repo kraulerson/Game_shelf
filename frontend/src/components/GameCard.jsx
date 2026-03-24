@@ -64,10 +64,15 @@ export default function GameCard({ game }) {
           ))}
         </div>
 
-        {/* Playtime */}
-        {playtime && (
-          <span className="text-xs text-gray-500">{playtime}</span>
-        )}
+        {/* DLC count + Playtime */}
+        <div className="flex gap-2 items-center">
+          {game.dlc_count > 0 && (
+            <span className="text-xs text-purple-400">+{game.dlc_count} DLC</span>
+          )}
+          {playtime && (
+            <span className="text-xs text-gray-500">{playtime}</span>
+          )}
+        </div>
       </div>
     </div>
   );

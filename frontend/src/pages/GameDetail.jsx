@@ -21,6 +21,7 @@ export default function GameDetail() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const [enriching, setEnriching] = useState(false);
+  const [showDLC, setShowDLC] = useState(false);
 
   const { data: game, isLoading, error } = useQuery({
     queryKey: ['game', id],
@@ -333,6 +334,33 @@ export default function GameDetail() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* DLC & Content */}
+        {game.dlc && game.dlc.length > 0 && (
+          <div className="mt-6">
+            <button
+              onClick={() => setShowDLC(!showDLC)}
+              className="text-lg font-semibold text-white mb-3 flex items-center gap-2"
+            >
+              DLC & Content ({game.dlc.length})
+              <span className="text-sm text-gray-400">{showDLC ? '\u25BC' : '\u25B6'}</span>
+            </button>
+            {showDLC && (
+              <div className="space-y-1">
+                {game.dlc.map(item => (
+                  <div key={item.id} className="flex items-center gap-3 p-2 bg-gray-800 rounded">
+                    <LauncherBadge
+                      launcherName={item.launcher_name}
+                      displayName={item.launcher_display_name}
+                      size="small"
+                    />
+                    <span className="text-gray-300 text-sm">{item.edition_title}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
