@@ -44,6 +44,14 @@ class EpicLauncher extends BaseLauncher {
     });
 
     const data = res.data;
+    console.log('[Epic] Token response:', JSON.stringify({
+      token_type: data.token_type,
+      expires_at: data.expires_at,
+      account_id: data.account_id,
+      scope: data.scope,
+      app: data.app,
+      client_id: data.client_id,
+    }));
     return {
       access_token: data.access_token,
       token_type: data.token_type || 'eg1',
