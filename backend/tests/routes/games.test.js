@@ -88,7 +88,7 @@ describe('Games routes', () => {
     const hl2 = body.games.find(g => g.slug === 'half-life-2');
     assert.ok(hl2, 'Should include Half-Life 2');
     assert.equal(hl2.launcher_name, 'steam');
-    assert.ok(hl2.also_on.length >= 2, 'Should have also_on with both launchers');
+    assert.ok(hl2.platforms.length >= 2, 'Should have platforms with both launchers');
   });
 
   it('GET /api/games?search= should filter by title', async () => {

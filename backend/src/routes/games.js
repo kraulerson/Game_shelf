@@ -263,12 +263,14 @@ router.get('/', (req, res) => {
     query = `
       SELECT ge.id as edition_id, ge.launcher_game_id, ge.playtime_minutes as r_playtime,
              ge.owned, ge.title as r_title,
+             COALESCE(et.tier, 0) as display_tier, ge.title as display_edition_title,
              g.id, g.title, g.slug, g.cover_url, g.icon_url, g.description,
              g.release_year, g.developer, g.publisher,
              l.name as launcher_name, l.display_name as launcher_display_name
       FROM game_editions ge
       JOIN launchers l ON l.id = ge.launcher_id
       LEFT JOIN games g ON g.id = ge.game_id
+      LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
       WHERE 1=1 ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
@@ -288,16 +290,20 @@ router.get('/', (req, res) => {
         SELECT ge.id, ge.game_id, ge.launcher_id, ge.launcher_game_id,
                ge.playtime_minutes, ge.owned, ge.title as edition_title,
                l.name as launcher_name, l.display_name as launcher_display_name, l.priority,
+               COALESCE(et.tier, 0) as edition_tier,
+               COALESCE(et.is_display_edition, 0) as is_display_override,
                ROW_NUMBER() OVER (
                  PARTITION BY COALESCE(ge.game_id, ge.id * -1)
-                 ORDER BY l.priority ASC
+                 ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, l.priority ASC
                ) as rn
         FROM game_editions ge
         JOIN launchers l ON l.id = ge.launcher_id
+        LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
         WHERE 1=1 ${innerWhere}
       )
       SELECT r.id as edition_id, r.launcher_game_id, r.playtime_minutes as r_playtime,
              r.owned, r.edition_title as r_title,
+             r.edition_tier as display_tier, r.edition_title as display_edition_title,
              r.launcher_name, r.launcher_display_name,
              g.id, g.title, g.slug, g.cover_url, g.icon_url, g.description,
              g.release_year, g.developer, g.publisher
@@ -314,10 +320,11 @@ router.get('/', (req, res) => {
                l.name as launcher_name, l.display_name as launcher_display_name, l.priority,
                ROW_NUMBER() OVER (
                  PARTITION BY COALESCE(ge.game_id, ge.id * -1)
-                 ORDER BY l.priority ASC
+                 ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, l.priority ASC
                ) as rn
         FROM game_editions ge
         JOIN launchers l ON l.id = ge.launcher_id
+        LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
         WHERE 1=1 ${innerWhere}
       )
       SELECT COUNT(*) as total
@@ -332,10 +339,9 @@ router.get('/', (req, res) => {
   const total = db.prepare(countQuery).get(...countParams)?.total || 0;
   const rows = db.prepare(query).all(...allParams);
 
-  // Build also_on, genres, tags for each game
-  const alsoOnStmt = db.prepare(`
-    SELECT l.name as launcher_name, l.display_name as launcher_display_name,
-           ge.playtime_minutes, ge.launcher_game_id
+  // Build platforms, genres, tags for each game
+  const platformsStmt = db.prepare(`
+    SELECT DISTINCT l.name as launcher_name, l.display_name as launcher_display_name
     FROM game_editions ge
     JOIN launchers l ON l.id = ge.launcher_id
     WHERE ge.game_id = ? AND ge.owned = 1
@@ -352,7 +358,7 @@ router.get('/', (req, res) => {
 
   const games = rows.map(row => {
     const gameId = row.id;
-    const alsoOn = gameId ? alsoOnStmt.all(gameId) : [];
+    const platformsList = gameId ? platformsStmt.all(gameId) : [];
     const genres = gameId ? genresStmt.all(gameId).map(r => r.name) : [];
     const tags = gameId ? tagsStmt.all(gameId).map(r => r.name) : [];
 
@@ -372,11 +378,11 @@ router.get('/', (req, res) => {
       launcher_name: row.launcher_name,
       launcher_display_name: row.launcher_display_name,
       launcher_game_id: row.launcher_game_id,
-      also_on: alsoOn.length > 0 ? alsoOn : [{
+      display_edition_title: row.display_edition_title || row.r_title,
+      display_tier: row.display_tier || 0,
+      platforms: platformsList.length > 0 ? platformsList : [{
         launcher_name: row.launcher_name,
         launcher_display_name: row.launcher_display_name,
-        playtime_minutes: row.r_playtime,
-        launcher_game_id: row.launcher_game_id,
       }],
     };
   });
