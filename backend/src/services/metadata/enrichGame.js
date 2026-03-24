@@ -352,7 +352,7 @@ async function enrichUnderEnriched(db) {
 }
 
 async function enrichAll(db) {
-  const editions = db.prepare('SELECT id, title FROM game_editions WHERE game_id IS NULL').all();
+  const editions = db.prepare('SELECT id, title FROM game_editions WHERE game_id IS NULL AND parent_edition_id IS NULL').all();
 
   let enriched = 0;
   let failed = 0;

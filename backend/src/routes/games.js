@@ -13,7 +13,7 @@ router.get('/filters', (req, res) => {
     SELECT g.name, COUNT(DISTINCT gg.game_id) as count
     FROM genres g
     JOIN game_genres gg ON gg.genre_id = g.id
-    JOIN game_editions ge ON ge.game_id = gg.game_id AND ge.owned = 1
+    JOIN game_editions ge ON ge.game_id = gg.game_id AND ge.owned = 1 AND ge.parent_edition_id IS NULL
     GROUP BY g.name ORDER BY count DESC
   `).all();
 
@@ -21,14 +21,14 @@ router.get('/filters', (req, res) => {
     SELECT t.name, COUNT(DISTINCT gt.game_id) as count
     FROM tags t
     JOIN game_tags gt ON gt.tag_id = t.id
-    JOIN game_editions ge ON ge.game_id = gt.game_id AND ge.owned = 1
+    JOIN game_editions ge ON ge.game_id = gt.game_id AND ge.owned = 1 AND ge.parent_edition_id IS NULL
     GROUP BY t.name ORDER BY count DESC
   `).all();
 
   const launchers = db.prepare(`
     SELECT l.name, l.display_name, COUNT(DISTINCT ge.id) as count
     FROM launchers l
-    JOIN game_editions ge ON ge.launcher_id = l.id AND ge.owned = 1
+    JOIN game_editions ge ON ge.launcher_id = l.id AND ge.owned = 1 AND ge.parent_edition_id IS NULL
     WHERE l.enabled = 1
     GROUP BY l.name ORDER BY l.priority ASC
   `).all();
@@ -36,13 +36,13 @@ router.get('/filters', (req, res) => {
   const yearRange = db.prepare(`
     SELECT MIN(g.release_year) as release_year_min, MAX(g.release_year) as release_year_max
     FROM games g
-    JOIN game_editions ge ON ge.game_id = g.id AND ge.owned = 1
+    JOIN game_editions ge ON ge.game_id = g.id AND ge.owned = 1 AND ge.parent_edition_id IS NULL
     WHERE g.release_year IS NOT NULL
   `).get();
 
   const playtimeMax = db.prepare(`
     SELECT MAX(ge.playtime_minutes) as playtime_max_minutes
-    FROM game_editions ge WHERE ge.owned = 1
+    FROM game_editions ge WHERE ge.owned = 1 AND ge.parent_edition_id IS NULL
   `).get();
 
   res.json({
@@ -76,8 +76,18 @@ router.get('/:id', (req, res) => {
     FROM game_editions ge
     JOIN launchers l ON l.id = ge.launcher_id
     LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
-    WHERE ge.game_id = ?
+    WHERE ge.game_id = ? AND ge.parent_edition_id IS NULL
     ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, l.priority ASC
+  `).all(id);
+
+  // DLC items for this game
+  const dlc = db.prepare(`
+    SELECT ge.id, ge.title as edition_title, ge.playtime_minutes,
+           l.name as launcher_name, l.display_name as launcher_display_name
+    FROM game_editions ge
+    JOIN launchers l ON l.id = ge.launcher_id
+    WHERE ge.game_id = ? AND ge.parent_edition_id IS NOT NULL AND ge.owned = 1
+    ORDER BY ge.title ASC
   `).all(id);
 
   // Display edition is first row (sorted by override > tier > priority)
@@ -113,6 +123,7 @@ router.get('/:id', (req, res) => {
     genres,
     tags,
     editions: editionsWithTier,
+    dlc,
   });
 });
 
@@ -309,7 +320,7 @@ router.get('/', (req, res) => {
       JOIN launchers l ON l.id = ge.launcher_id
       LEFT JOIN games g ON g.id = ge.game_id
       LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
-      WHERE 1=1 ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
+      WHERE ge.parent_edition_id IS NULL ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `;
@@ -318,7 +329,7 @@ router.get('/', (req, res) => {
       FROM game_editions ge
       JOIN launchers l ON l.id = ge.launcher_id
       LEFT JOIN games g ON g.id = ge.game_id
-      WHERE 1=1 ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
+      WHERE ge.parent_edition_id IS NULL ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
     `;
     countParams = [...innerParams, ...outerParams, ...searchParams, ...startsWithParams];
     allParams = [...innerParams, ...outerParams, ...searchParams, ...startsWithParams, limitNum, offset];
@@ -337,7 +348,7 @@ router.get('/', (req, res) => {
         FROM game_editions ge
         JOIN launchers l ON l.id = ge.launcher_id
         LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
-        WHERE 1=1 ${innerWhere}
+        WHERE ge.parent_edition_id IS NULL ${innerWhere}
       )
       SELECT r.id as edition_id, r.launcher_game_id, r.playtime_minutes as r_playtime,
              r.owned, r.edition_title as r_title,
@@ -363,7 +374,7 @@ router.get('/', (req, res) => {
         FROM game_editions ge
         JOIN launchers l ON l.id = ge.launcher_id
         LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
-        WHERE 1=1 ${innerWhere}
+        WHERE ge.parent_edition_id IS NULL ${innerWhere}
       )
       SELECT COUNT(*) as total
       FROM ranked r
@@ -382,7 +393,7 @@ router.get('/', (req, res) => {
     SELECT DISTINCT l.name as launcher_name, l.display_name as launcher_display_name
     FROM game_editions ge
     JOIN launchers l ON l.id = ge.launcher_id
-    WHERE ge.game_id = ? AND ge.owned = 1
+    WHERE ge.game_id = ? AND ge.owned = 1 AND ge.parent_edition_id IS NULL
     ORDER BY l.priority ASC
   `);
   const genresStmt = db.prepare(`
@@ -393,6 +404,10 @@ router.get('/', (req, res) => {
     SELECT t.name FROM tags t
     JOIN game_tags gt ON gt.tag_id = t.id WHERE gt.game_id = ?
   `);
+
+  const dlcCountStmt = db.prepare(
+    'SELECT COUNT(*) as c FROM game_editions WHERE game_id = ? AND parent_edition_id IS NOT NULL AND owned = 1'
+  );
 
   const games = rows.map(row => {
     const gameId = row.id;
@@ -422,6 +437,7 @@ router.get('/', (req, res) => {
         launcher_name: row.launcher_name,
         launcher_display_name: row.launcher_display_name,
       }],
+      dlc_count: gameId ? (dlcCountStmt.get(gameId)?.c || 0) : 0,
     };
   });
 
