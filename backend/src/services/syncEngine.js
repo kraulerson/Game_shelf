@@ -76,6 +76,25 @@ async function syncLauncher(launcherName, db) {
     });
     upsertAll(games);
 
+    // Compute edition tiers for new/updated editions
+    const { detectEditionTier } = require('../utils/editionTier');
+    const untypedEditions = db.prepare(`
+      SELECT ge.id, ge.title FROM game_editions ge
+      WHERE ge.launcher_id = ? AND ge.title IS NOT NULL
+        AND ge.id NOT IN (SELECT game_edition_id FROM edition_tiers)
+    `).all(launcher.id);
+    if (untypedEditions.length > 0) {
+      const insertTier = db.prepare(
+        'INSERT OR IGNORE INTO edition_tiers (game_edition_id, tier) VALUES (?, ?)'
+      );
+      const tierTransaction = db.transaction((eds) => {
+        for (const ed of eds) {
+          insertTier.run(ed.id, detectEditionTier(ed.title));
+        }
+      });
+      tierTransaction(untypedEditions);
+    }
+
     // Mark missing games as owned=0 (soft removal).
     // Skip if no games returned — avoids accidentally marking everything as unowned
     // when the API returns empty due to an error or transient issue.

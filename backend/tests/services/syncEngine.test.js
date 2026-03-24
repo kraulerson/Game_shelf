@@ -154,6 +154,27 @@ describe('Sync engine', () => {
     }
   });
 
+  it('syncLauncher should create edition_tiers for synced games', async () => {
+    const axios = require('axios');
+    const originalGet = axios.get;
+    axios.get = async () => ({
+      data: { response: { games: [
+        { appid: 999, name: 'Fallout NV GOTY', playtime_forever: 100 },
+      ]}}
+    });
+
+    try {
+      await syncLauncher('steam', db);
+      const ed = db.prepare('SELECT id FROM game_editions WHERE launcher_game_id = ?').get('999');
+      assert.ok(ed, 'Edition should exist');
+      const tier = db.prepare('SELECT tier FROM edition_tiers WHERE game_edition_id = ?').get(ed.id);
+      assert.ok(tier, 'Tier row should exist');
+      assert.equal(tier.tier, 4); // GOTY = tier 4
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+
   it('syncLauncher should update launchers.last_sync_at on success', async () => {
     const axios = require('axios');
     const originalGet = axios.get;
