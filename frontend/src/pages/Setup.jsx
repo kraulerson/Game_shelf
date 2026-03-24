@@ -109,7 +109,7 @@ export default function Setup() {
           <p className="text-gray-400 mb-6">Choose which game stores you use.</p>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
-            {availableLaunchers.map((launcher) => {
+            {availableLaunchers.filter(l => l.implemented).map((launcher) => {
               const isSelected = selectedLaunchers.some((l) => l.id === launcher.id);
               return (
                 <button
@@ -123,7 +123,7 @@ export default function Setup() {
                 >
                   <div className="text-white font-medium">{launcher.display_name}</div>
                   <div className="text-xs text-gray-400 mt-1">
-                    {launcher.auth_type === 'api_key' ? 'API Key' : 'Username/Password'}
+                    {launcher.auth_type === 'api_key' ? 'API Key' : launcher.auth_type === 'auth_code' ? 'Browser Login' : 'Username/Password'}
                     {launcher.otp_supported && ' + 2FA'}
                   </div>
                 </button>
@@ -270,6 +270,33 @@ export default function Setup() {
                         type="password"
                         value={creds.api_key || ''}
                         onChange={(e) => updateField(launcher.id, 'api_key', e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
+
+                  {launcher.auth_type === 'auth_code' && (
+                    <div className="mb-3">
+                      <p className="text-sm text-gray-400 mb-2">
+                        1. Click the link below and log in to your Epic Games account
+                      </p>
+                      <a
+                        href="https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect%3FclientId%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3"
+                      >
+                        Open Epic Games Login
+                      </a>
+                      <p className="text-sm text-gray-400 mb-2">
+                        2. After logging in, copy the &quot;authorizationCode&quot; value and paste it below
+                      </p>
+                      <label className="block text-sm text-gray-300 mb-1">Authorization Code</label>
+                      <input
+                        type="text"
+                        value={creds.auth_code || ''}
+                        onChange={(e) => updateField(launcher.id, 'auth_code', e.target.value)}
+                        placeholder="Paste code here..."
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
