@@ -90,6 +90,39 @@ function runMigrations(dbPath) {
     db.exec('ALTER TABLE games ADD COLUMN last_enrichment_at TEXT');
   }
 
+  // Phase 11 migration: edition_tiers table
+  const hasEditionTiers = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='edition_tiers'"
+  ).get();
+  if (!hasEditionTiers) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS edition_tiers (
+        id INTEGER PRIMARY KEY,
+        game_edition_id INTEGER NOT NULL REFERENCES game_editions(id) ON DELETE CASCADE,
+        tier INTEGER NOT NULL DEFAULT 0,
+        is_display_edition INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(game_edition_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_edition_tiers_lookup
+        ON edition_tiers(game_edition_id, tier, is_display_edition);
+    `);
+
+    // Initial population: detect tiers for all existing editions
+    const { detectEditionTier } = require('../utils/editionTier');
+    const editions = db.prepare('SELECT id, title FROM game_editions WHERE title IS NOT NULL').all();
+    const insertTier = db.prepare(
+      'INSERT OR IGNORE INTO edition_tiers (game_edition_id, tier) VALUES (?, ?)'
+    );
+    const populateAll = db.transaction((eds) => {
+      for (const ed of eds) {
+        insertTier.run(ed.id, detectEditionTier(ed.title));
+      }
+    });
+    populateAll(editions);
+    console.log(`[Migration] Phase 11: Created edition_tiers, populated ${editions.length} rows`);
+  }
+
   return db;
 }
 

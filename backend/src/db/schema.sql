@@ -92,6 +92,18 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_sync_jobs_launcher_id ON sync_jobs(launcher_id);
 
+-- Phase 11: edition tier tracking
+CREATE TABLE IF NOT EXISTS edition_tiers (
+  id INTEGER PRIMARY KEY,
+  game_edition_id INTEGER NOT NULL REFERENCES game_editions(id) ON DELETE CASCADE,
+  tier INTEGER NOT NULL DEFAULT 0,
+  is_display_edition INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(game_edition_id)
+);
+CREATE INDEX IF NOT EXISTS idx_edition_tiers_lookup
+  ON edition_tiers(game_edition_id, tier, is_display_edition);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
