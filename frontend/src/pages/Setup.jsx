@@ -281,7 +281,7 @@ export default function Setup() {
                         1. Click the link below and log in to your Epic Games account
                       </p>
                       <a
-                        href="https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect%3FclientId%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode"
+                        href="https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fexchange%2Fgenerate"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3"
@@ -289,7 +289,7 @@ export default function Setup() {
                         Open Epic Games Login
                       </a>
                       <p className="text-sm text-gray-400 mb-2">
-                        2. After logging in, copy the &quot;authorizationCode&quot; value and paste it below
+                        2. After logging in, you&apos;ll see a JSON page. Copy the &quot;code&quot; value and paste it below
                       </p>
                       <label className="block text-sm text-gray-300 mb-1">Authorization Code</label>
                       <input

@@ -33,8 +33,8 @@ class EpicLauncher extends BaseLauncher {
     const { auth_code } = credentials;
 
     const res = await axios.post(EPIC_TOKEN_URL, new URLSearchParams({
-      grant_type: 'authorization_code',
-      code: auth_code,
+      grant_type: 'exchange_code',
+      exchange_code: auth_code,
       token_type: 'eg1',
     }).toString(), {
       headers: {
