@@ -13,7 +13,7 @@ const BaseLauncher = require('./base');
  */
 
 const EPIC_CLIENT_ID = '34a02cf8f4414e29b15921876da36f9a';
-const EPIC_CLIENT_SECRET = '9209d4a5e25a457fb9b07489d313b41a';
+const EPIC_CLIENT_SECRET = 'daafbccc737745039dffe53d94fc76cf';
 const EPIC_TOKEN_URL = 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token';
 const EPIC_LIBRARY_URL = 'https://library-service.live.use1a.on.epicgames.com/library/api/public/items';
 const EPIC_PLAYTIME_URL = 'https://library-service.live.use1a.on.epicgames.com/library/api/public/playtime/account';
