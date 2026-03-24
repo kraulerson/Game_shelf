@@ -32,7 +32,16 @@ async function syncLauncher(launcherName, db) {
     const instance = new LauncherClass(launcherName, db);
 
     // Authenticate and fetch games
-    const session = await instance.refreshIfNeeded(credentials);
+    let session = await instance.refreshIfNeeded(credentials);
+
+    // If launcher returned updated credentials (e.g. Epic token refresh), persist them
+    if (session && session.updatedCredentials) {
+      const { encrypt } = require('../utils/encrypt');
+      const encrypted = encrypt(JSON.stringify(session.updatedCredentials));
+      db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(encrypted, launcherName);
+      session = session.session;
+    }
+
     const games = await instance.fetchOwnedGames(session);
 
     // Upsert game_editions
