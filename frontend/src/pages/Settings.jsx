@@ -1,13 +1,36 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw, GripVertical } from 'lucide-react';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import LauncherBadge from '../components/LauncherBadge';
+
+function SortableLauncher({ launcher }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: launcher.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center gap-3 bg-gray-800 rounded-lg p-3">
+      <span {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing text-gray-500"><GripVertical size={16} /></span>
+      <LauncherBadge launcherName={launcher.id} displayName={launcher.display_name} primary />
+      <span className="text-sm text-white">{launcher.display_name}</span>
+    </div>
+  );
+}
 
 function LaunchersTab() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [confirmRemove, setConfirmRemove] = useState(null);
+  const [reordering, setReordering] = useState(false);
+  const [orderedLaunchers, setOrderedLaunchers] = useState([]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   const { data: launchers } = useQuery({
     queryKey: ['launchersAvailable'],
@@ -35,8 +58,71 @@ function LaunchersTab() {
     queryClient.invalidateQueries({ queryKey: ['games'] });
   }
 
+  function startReorder() {
+    const configured = (launchers || []).filter(l => l.configured).sort((a, b) => a.priority - b.priority);
+    setOrderedLaunchers(configured);
+    setReordering(true);
+  }
+
+  function handleDragEnd(event) {
+    const { active, over } = event;
+    if (active.id !== over?.id) {
+      setOrderedLaunchers(items => {
+        const oldIndex = items.findIndex(i => i.id === active.id);
+        const newIndex = items.findIndex(i => i.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  }
+
+  async function savePriorities() {
+    const priorities = orderedLaunchers.map((l, i) => ({ name: l.id, priority: i + 1 }));
+    await fetch('/api/launchers/priority', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(priorities),
+    });
+    setReordering(false);
+    queryClient.invalidateQueries({ queryKey: ['launchersAvailable'] });
+    queryClient.invalidateQueries({ queryKey: ['games'] });
+  }
+
+  if (reordering) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-white font-medium">Launcher Priority</h3>
+          <div className="flex gap-2">
+            <button onClick={() => setReordering(false)} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded">Cancel</button>
+            <button onClick={savePriorities} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded">Save Order</button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mb-2">Drag to reorder. The top launcher wins when the same game appears in multiple stores.</p>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={orderedLaunchers.map(l => l.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+              {orderedLaunchers.map(launcher => (
+                <SortableLauncher key={launcher.id} launcher={launcher} />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      </div>
+    );
+  }
+
+  const hasConfigured = (launchers || []).some(l => l.configured);
+
   return (
     <div className="space-y-3">
+      {hasConfigured && (
+        <div className="flex justify-end">
+          <button onClick={startReorder} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors">
+            Reorder Priority
+          </button>
+        </div>
+      )}
       {(launchers || []).map(l => {
         const status = statusMap[l.id];
         return (

@@ -25,14 +25,15 @@ const LAUNCHER_MAP = Object.fromEntries(AVAILABLE_LAUNCHERS.map(l => [l.id, l]))
 // GET /api/launchers/available
 router.get('/available', (req, res) => {
   const db = req.app.locals.db;
-  const configured = db.prepare(
-    'SELECT name FROM launchers WHERE credentials_json IS NOT NULL'
+  const dbLaunchers = db.prepare(
+    'SELECT name, credentials_json IS NOT NULL as configured, priority FROM launchers'
   ).all();
-  const configuredSet = new Set(configured.map(r => r.name));
+  const dbMap = Object.fromEntries(dbLaunchers.map(r => [r.name, r]));
 
   const result = AVAILABLE_LAUNCHERS.map(l => ({
     ...l,
-    configured: configuredSet.has(l.id),
+    configured: !!(dbMap[l.id]?.configured),
+    priority: dbMap[l.id]?.priority ?? 99,
   }));
 
   res.json(result);
