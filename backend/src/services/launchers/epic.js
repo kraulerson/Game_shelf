@@ -134,6 +134,10 @@ class EpicLauncher extends BaseLauncher {
         const records = res.data?.records || [];
 
         if (Array.isArray(records)) {
+          if (allItems.length === 0 && records.length > 0) {
+            console.log('[Epic] Sample library item keys:', Object.keys(records[0]));
+            console.log('[Epic] Sample library item:', JSON.stringify(records[0]).substring(0, 500));
+          }
           allItems.push(...records);
         }
 
