@@ -179,6 +179,8 @@ function runMigrations(dbPath) {
   // e.g., "deus-ex-human-revolution" and "deus-ex-human-revolution-directors-cut"
   const allGames = db.prepare('SELECT id, title, slug, description FROM games ORDER BY length(slug) ASC').all();
   let prefixMerged = 0;
+  // Temporarily disable FK checks — parent_edition_id references can block cascade deletes
+  db.pragma('foreign_keys = OFF');
   const mergePrefix = db.transaction(() => {
     const processed = new Set();
     for (let i = 0; i < allGames.length; i++) {
@@ -194,6 +196,8 @@ function runMigrations(dbPath) {
           const keep = longer.description ? longer : (shorter.description ? shorter : longer);
           const discard = keep.id === longer.id ? shorter : longer;
 
+          // Clear parent_edition_id refs pointing to discard's editions
+          db.prepare('UPDATE game_editions SET parent_edition_id = NULL WHERE parent_edition_id IN (SELECT id FROM game_editions WHERE game_id = ?)').run(discard.id);
           db.prepare('UPDATE game_editions SET game_id = ? WHERE game_id = ?').run(keep.id, discard.id);
           db.prepare('INSERT OR IGNORE INTO game_genres (game_id, genre_id) SELECT ?, genre_id FROM game_genres WHERE game_id = ?').run(keep.id, discard.id);
           db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(discard.id);
@@ -207,6 +211,7 @@ function runMigrations(dbPath) {
     }
   });
   mergePrefix();
+  db.pragma('foreign_keys = ON');
   if (prefixMerged > 0) {
     console.log(`[Migration] Phase 12b: Merged ${prefixMerged} edition-variant game rows by slug prefix`);
   }

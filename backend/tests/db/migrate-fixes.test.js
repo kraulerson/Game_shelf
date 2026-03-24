@@ -85,6 +85,66 @@ describe('Edition variant merge (prefix consolidation)', () => {
   });
 });
 
+describe('Prefix merge with parent_edition_id FK (REGRESSION)', () => {
+  it('should not crash when merging games with DLC parent references', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    db.exec(`
+      CREATE TABLE games (id INTEGER PRIMARY KEY, title TEXT, slug TEXT UNIQUE, description TEXT);
+      CREATE TABLE game_editions (
+        id INTEGER PRIMARY KEY, game_id INTEGER REFERENCES games(id) ON DELETE CASCADE,
+        launcher_id INTEGER, launcher_game_id TEXT, title TEXT,
+        parent_edition_id INTEGER REFERENCES game_editions(id)
+      );
+      CREATE TABLE game_genres (game_id INTEGER, genre_id INTEGER, PRIMARY KEY(game_id, genre_id));
+      CREATE TABLE game_tags (game_id INTEGER, tag_id INTEGER, PRIMARY KEY(game_id, tag_id));
+
+      INSERT INTO games (id, title, slug, description) VALUES
+        (1, 'Fortnite', 'fortnite', NULL),
+        (2, 'Fortnite Battle Royale', 'fortnite-battle-royale', 'A battle royale game');
+      INSERT INTO game_editions (id, game_id, launcher_id, launcher_game_id, title, parent_edition_id) VALUES
+        (10, 1, 1, 'fn-base', 'Fortnite', NULL),
+        (11, 1, 1, 'fn-dlc', 'Fortnite DLC', 10),
+        (20, 2, 1, 'fn-br', 'Fortnite Battle Royale', NULL);
+    `);
+
+    // Run the same merge logic as migration 12b (with FK fix)
+    db.pragma('foreign_keys = OFF');
+    const allGames = db.prepare('SELECT id, title, slug, description FROM games ORDER BY length(slug) ASC').all();
+    const processed = new Set();
+    let merged = 0;
+    const mergeAll = db.transaction(() => {
+      for (let i = 0; i < allGames.length; i++) {
+        if (processed.has(allGames[i].id)) continue;
+        const shorter = allGames[i];
+        for (let j = i + 1; j < allGames.length; j++) {
+          if (processed.has(allGames[j].id)) continue;
+          const longer = allGames[j];
+          if (longer.slug.startsWith(shorter.slug) &&
+              (longer.slug.length === shorter.slug.length || longer.slug[shorter.slug.length] === '-')) {
+            const keep = longer.description ? longer : (shorter.description ? shorter : longer);
+            const discard = keep.id === longer.id ? shorter : longer;
+            db.prepare('UPDATE game_editions SET parent_edition_id = NULL WHERE parent_edition_id IN (SELECT id FROM game_editions WHERE game_id = ?)').run(discard.id);
+            db.prepare('UPDATE game_editions SET game_id = ? WHERE game_id = ?').run(keep.id, discard.id);
+            db.prepare('DELETE FROM games WHERE id = ?').run(discard.id);
+            processed.add(discard.id);
+            merged++;
+          }
+        }
+      }
+    });
+    // REGRESSION: this must not throw SQLITE_CONSTRAINT_FOREIGNKEY
+    mergeAll();
+    db.pragma('foreign_keys = ON');
+
+    assert.equal(merged, 1);
+    const remaining = db.prepare('SELECT COUNT(*) as c FROM games').get();
+    assert.equal(remaining.c, 1, 'Should have one game left');
+
+    db.close();
+  });
+});
+
 describe('Demo/Beta/Test filter', () => {
   it('should filter demo/beta/test from query WHERE clause', () => {
     const title1 = 'Some Game Demo';
