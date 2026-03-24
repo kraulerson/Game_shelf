@@ -117,6 +117,7 @@ class EpicLauncher extends BaseLauncher {
     const { access_token, token_type, account_id } = session;
     const authType = token_type || 'eg1';
     const headers = { Authorization: `${authType} ${access_token}` };
+    console.log('[Epic] fetchOwnedGames auth:', JSON.stringify({ authType, account_id, tokenPrefix: access_token?.substring(0, 20) + '...' }));
 
     // Fetch library items (paginated)
     let allItems = [];
@@ -124,8 +125,9 @@ class EpicLauncher extends BaseLauncher {
     let hasMore = true;
 
     while (hasMore) {
-      const params = { includeMetadata: true, platform: 'Windows' };
+      const params = { includeMetadata: true };
       if (cursor) params.cursor = cursor;
+      console.log('[Epic] Library request:', EPIC_LIBRARY_URL, JSON.stringify(params));
 
       try {
         const res = await axios.get(EPIC_LIBRARY_URL, { headers, params });
@@ -138,7 +140,7 @@ class EpicLauncher extends BaseLauncher {
         cursor = res.data?.responseMetadata?.nextCursor || null;
         hasMore = !!cursor;
       } catch (err) {
-        console.error('[Epic] Library fetch failed:', err.message);
+        console.error('[Epic] Library fetch failed:', err.message, err.response?.status, JSON.stringify(err.response?.data));
         hasMore = false;
       }
 
@@ -156,7 +158,7 @@ class EpicLauncher extends BaseLauncher {
         }
       }
     } catch (err) {
-      console.warn('[Epic] Playtime fetch failed:', err.message);
+      console.warn('[Epic] Playtime fetch failed:', err.message, err.response?.status, JSON.stringify(err.response?.data));
     }
 
     // Map to game format
