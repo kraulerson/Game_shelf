@@ -123,7 +123,7 @@ export default function GameDetail() {
     );
   }
 
-  const primaryEdition = game.editions?.find(e => e.is_primary);
+  const primaryEdition = game.editions?.find(e => e.is_display_edition);
   const heroUrl = game.hero_url || game.cover_url;
 
   return (
@@ -268,44 +268,68 @@ export default function GameDetail() {
           </div>
         )}
 
-        {/* Owned On section */}
+        {/* Versions & Editions */}
         {game.editions?.length > 0 && (
           <div>
-            <h2 className="text-lg font-semibold mb-3">Owned On</h2>
+            <h2 className="text-lg font-semibold mb-3">Versions & Editions</h2>
             <div className="space-y-2">
               {game.editions.map(edition => (
                 <div
                   key={edition.id}
-                  className={`bg-gray-800 rounded-lg p-4 flex items-center justify-between ${
-                    !edition.is_primary ? 'opacity-50' : ''
+                  className={`flex items-center justify-between p-3 rounded-lg ${
+                    edition.is_display_edition
+                      ? 'bg-blue-900/30 border border-blue-700'
+                      : 'bg-gray-800'
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <LauncherBadge
                       launcherName={edition.launcher_name}
                       displayName={edition.launcher_display_name}
-                      primary={edition.is_primary}
+                      primary={edition.is_display_edition}
                     />
                     <div>
-                      <div className="text-sm text-gray-300">{formatPlaytime(edition.playtime_minutes)}</div>
-                      {!edition.is_primary && primaryEdition && (
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          Secondary copy — {primaryEdition.launcher_display_name} is preferred
-                        </div>
+                      <span className="text-white text-sm">{edition.edition_title || game.title}</span>
+                      {edition.tier > 0 && (
+                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-purple-800 text-purple-200">
+                          {edition.tier_label}
+                        </span>
                       )}
                     </div>
                   </div>
-                  {edition.launcher_url && (
-                    <a
-                      href={edition.launcher_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      className="text-xs text-blue-400 hover:text-blue-300"
-                    >
-                      View in store
-                    </a>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {edition.playtime_minutes > 0 && (
+                      <span className="text-gray-400 text-sm">{formatPlaytime(edition.playtime_minutes)}</span>
+                    )}
+                    {edition.launcher_url && (
+                      <a
+                        href={edition.launcher_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        className="text-xs text-blue-400 hover:text-blue-300"
+                      >
+                        View in store
+                      </a>
+                    )}
+                    {!edition.is_display_edition && (
+                      <button
+                        onClick={async () => {
+                          await fetch(`/api/games/${game.id}/display-edition`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ edition_id: edition.id }),
+                          });
+                          queryClient.invalidateQueries({ queryKey: ['game', id] });
+                          queryClient.invalidateQueries({ queryKey: ['games'] });
+                        }}
+                        className="text-xs text-gray-500 hover:text-blue-400"
+                      >
+                        Set as display
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
