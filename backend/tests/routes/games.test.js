@@ -122,10 +122,11 @@ describe('Games routes', () => {
     assert.equal(body.editions.length, 2, 'Should have 2 editions');
     assert.ok(Array.isArray(body.genres), 'Should have genres array');
 
-    // Check is_primary
-    const primary = body.editions.find(e => e.is_primary);
-    assert.ok(primary, 'Should have a primary edition');
-    assert.equal(primary.launcher_name, 'steam');
+    // Check is_display_edition
+    const display = body.editions.find(e => e.is_display_edition);
+    assert.ok(display, 'Should have a display edition');
+    assert.ok(display.tier !== undefined, 'Should have tier');
+    assert.ok(display.tier_label, 'Should have tier_label');
   });
 
   it('GET /api/games/filters should return filter options', async () => {

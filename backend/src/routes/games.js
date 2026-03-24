@@ -65,27 +65,35 @@ router.get('/:id', (req, res) => {
     return res.status(404).json({ error: 'Game not found' });
   }
 
-  // Get all editions with launcher info
+  // Get all editions with launcher and tier info
+  const { getTierLabel } = require('../utils/editionTier');
   const editions = db.prepare(`
     SELECT ge.id, ge.launcher_game_id, ge.launcher_url, ge.playtime_minutes, ge.owned,
-           l.name as launcher_name, l.display_name as launcher_display_name, l.priority
+           ge.title as edition_title,
+           l.name as launcher_name, l.display_name as launcher_display_name, l.priority,
+           COALESCE(et.tier, 0) as tier,
+           COALESCE(et.is_display_edition, 0) as is_display_override
     FROM game_editions ge
     JOIN launchers l ON l.id = ge.launcher_id
+    LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
     WHERE ge.game_id = ?
-    ORDER BY l.priority ASC
+    ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, l.priority ASC
   `).all(id);
 
-  // Compute is_primary (lowest priority = primary)
-  const minPriority = editions.length > 0 ? Math.min(...editions.map(e => e.priority)) : null;
-  const editionsWithPrimary = editions.map(e => ({
+  // Display edition is first row (sorted by override > tier > priority)
+  const displayEdition = editions[0];
+  const editionsWithTier = editions.map(e => ({
     id: e.id,
     launcher_name: e.launcher_name,
     launcher_display_name: e.launcher_display_name,
     launcher_game_id: e.launcher_game_id,
     launcher_url: e.launcher_url,
+    edition_title: e.edition_title,
     playtime_minutes: e.playtime_minutes,
     owned: e.owned,
-    is_primary: e.priority === minPriority,
+    tier: e.tier,
+    tier_label: getTierLabel(e.tier),
+    is_display_edition: displayEdition ? e.id === displayEdition.id : false,
   }));
 
   const genres = db.prepare(`
@@ -104,7 +112,7 @@ router.get('/:id', (req, res) => {
     ...game,
     genres,
     tags,
-    editions: editionsWithPrimary,
+    editions: editionsWithTier,
   });
 });
 
@@ -128,6 +136,36 @@ router.patch('/:id', (req, res) => {
   ).run(title.trim(), require('../services/metadata/titleMatcher').slugify(title.trim()), id);
 
   res.json({ updated: true });
+});
+
+// POST /api/games/:id/display-edition — set manual display edition override
+router.post('/:id/display-edition', (req, res) => {
+  const db = req.app.locals.db;
+  const { id } = req.params;
+  const { edition_id } = req.body || {};
+
+  const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+
+  if (!edition_id) return res.status(400).json({ error: 'edition_id is required' });
+
+  const edition = db.prepare(
+    'SELECT id FROM game_editions WHERE id = ? AND game_id = ?'
+  ).get(edition_id, id);
+  if (!edition) return res.status(400).json({ error: 'Edition does not belong to this game' });
+
+  const setDisplay = db.transaction((gameId, editionId) => {
+    db.prepare(`
+      UPDATE edition_tiers SET is_display_edition = 0
+      WHERE game_edition_id IN (SELECT id FROM game_editions WHERE game_id = ?)
+    `).run(gameId);
+    db.prepare(
+      'UPDATE edition_tiers SET is_display_edition = 1 WHERE game_edition_id = ?'
+    ).run(editionId);
+  });
+  setDisplay(id, edition_id);
+
+  res.json({ ok: true });
 });
 
 // PUT /api/games/:id/tags — set user-created tags for a game
