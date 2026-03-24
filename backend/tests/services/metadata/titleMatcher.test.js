@@ -71,5 +71,36 @@ describe('Title matcher', () => {
       assert.equal(findBestMatch('test', []), null);
       assert.equal(findBestMatch('test', null), null);
     });
+
+    it('should match when search title is a prefix of IGDB title (word boundary)', () => {
+      const results = [
+        { name: 'MechWarrior 5: Mercenaries', id: 1 },
+        { name: 'MechWarrior Online', id: 2 },
+      ];
+      // REGRESSION: "MechWarrior 5" has 0.52 Levenshtein similarity to
+      // "MechWarrior 5: Mercenaries" — below 0.75 threshold without prefix boost
+      const match = findBestMatch('MechWarrior 5', results);
+      assert.ok(match, 'Should match via prefix boost');
+      assert.equal(match.id, 1);
+    });
+
+    it('should match when IGDB title is a prefix of search title', () => {
+      const results = [
+        { name: 'The Witcher 3', id: 1 },
+      ];
+      const match = findBestMatch('The Witcher 3: Wild Hunt', results);
+      assert.ok(match, 'Should match when IGDB title is shorter');
+      assert.equal(match.id, 1);
+    });
+
+    it('should not prefix-boost without word boundary', () => {
+      const results = [
+        { name: 'MechWarrior 50: Future Edition', id: 1 },
+      ];
+      // "mechwarrior-5" is NOT a valid prefix of "mechwarrior-50-future-edition"
+      // because the char after "mechwarrior-5" is "0", not "-"
+      const match = findBestMatch('MechWarrior 5', results);
+      assert.equal(match, null, 'Should not boost without word boundary');
+    });
   });
 });

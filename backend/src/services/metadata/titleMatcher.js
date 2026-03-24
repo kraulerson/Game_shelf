@@ -85,7 +85,15 @@ function findBestMatch(searchTitle, igdbResults) {
 
   for (const result of igdbResults) {
     const resultSlug = slugify(result.name);
-    const similarity = levenshteinSimilarity(searchSlug, resultSlug);
+    let similarity = levenshteinSimilarity(searchSlug, resultSlug);
+
+    // Boost prefix matches: launcher titles often lack subtitles present in IGDB
+    const shorter = searchSlug.length <= resultSlug.length ? searchSlug : resultSlug;
+    const longer = searchSlug.length <= resultSlug.length ? resultSlug : searchSlug;
+    if (longer.startsWith(shorter) && (longer.length === shorter.length || longer[shorter.length] === '-')) {
+      similarity = Math.max(similarity, 0.80);
+    }
+
     if (similarity > bestSimilarity) {
       bestSimilarity = similarity;
       bestMatch = result;

@@ -131,6 +131,28 @@ async function enrichGame(gameEditionId, db) {
 
   if (!match) {
     console.log(`[Gameshelf Metadata] No IGDB match for: ${title}`);
+
+    // Cross-launcher: check if another launcher already has this game enriched
+    const crossMatch = db.prepare(`
+      SELECT g.id, g.title, g.slug FROM games g
+      WHERE g.description IS NOT NULL
+        AND (g.slug LIKE ? || '%' OR ? LIKE g.slug || '%')
+      ORDER BY length(g.slug) DESC LIMIT 5
+    `).all(slug, slug);
+
+    // Verify prefix match on word boundary
+    const validCross = crossMatch.find(g => {
+      const shorter = slug.length <= g.slug.length ? slug : g.slug;
+      const longer = slug.length <= g.slug.length ? g.slug : slug;
+      return longer.startsWith(shorter) && (longer.length === shorter.length || longer[shorter.length] === '-');
+    });
+
+    if (validCross) {
+      console.log(`[Gameshelf Metadata] Cross-launcher match: "${title}" → existing "${validCross.title}"`);
+      db.prepare('UPDATE game_editions SET game_id = ? WHERE id = ?').run(validCross.id, gameEditionId);
+      return { status: 'cross-launcher', gameId: validCross.id };
+    }
+
     // Create minimal games row
     db.prepare(`
       INSERT INTO games (title, slug) VALUES (?, ?)
