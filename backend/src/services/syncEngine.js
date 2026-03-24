@@ -49,11 +49,15 @@ async function syncLauncher(launcherName, db) {
 
     // Upsert game_editions
     const upsert = db.prepare(`
-      INSERT INTO game_editions (launcher_id, launcher_game_id, title, playtime_minutes, owned)
-      VALUES (?, ?, ?, ?, 1)
+      INSERT INTO game_editions (launcher_id, launcher_game_id, title, playtime_minutes, owned,
+                                  epic_namespace, epic_catalog_id, sandbox_type)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?)
       ON CONFLICT(launcher_id, launcher_game_id) DO UPDATE SET
         title = excluded.title,
         playtime_minutes = excluded.playtime_minutes,
+        epic_namespace = excluded.epic_namespace,
+        epic_catalog_id = excluded.epic_catalog_id,
+        sandbox_type = excluded.sandbox_type,
         owned = 1
     `);
 
@@ -69,7 +73,10 @@ async function syncLauncher(launcherName, db) {
           launcher.id,
           game.launcher_game_id,
           game.title,
-          game.playtime_minutes
+          game.playtime_minutes,
+          game.epic_namespace || null,
+          game.epic_catalog_id || null,
+          game.sandbox_type || null
         );
         if (result.changes > 0) gamesUpdated++;
       }
@@ -125,6 +132,20 @@ async function syncLauncher(launcherName, db) {
 
     // Update launcher last_sync_at
     db.prepare('UPDATE launchers SET last_sync_at = ? WHERE id = ?').run(completedAt, launcher.id);
+
+    // Epic-specific post-sync: DLC nesting + codename resolution
+    if (launcherName === 'epic') {
+      const { nestDLC, resolveCodenames } = require('./launchers/epicCatalog');
+      nestDLC(db, launcher.id);
+
+      if (session && session.access_token) {
+        try {
+          await resolveCodenames(db, launcher.id, session);
+        } catch (err) {
+          console.warn('[Epic Catalog] Codename resolution failed:', err.message);
+        }
+      }
+    }
 
     // Fire-and-forget enrichment pass
     console.log(`[Gameshelf Metadata] Starting enrichment pass after sync for ${launcherName}`);
