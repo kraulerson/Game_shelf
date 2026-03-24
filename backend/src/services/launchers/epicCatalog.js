@@ -109,10 +109,16 @@ async function resolveCodenames(db, launcherId, session) {
       for (const edition of editions) {
         const catalogItem = items[edition.epic_catalog_id];
         if (!catalogItem?.title) continue;
+        if (edition.title === catalogItem.title) continue;
 
-        // Update if catalog returns a different title AND current title is single-word
+        // Update if: single-word title, OR titles share no words (multi-word codename)
         const isSingleWord = !/\s/.test(edition.title) && !/-/.test(edition.title);
-        if (!isSingleWord || edition.title === catalogItem.title) continue;
+        const currentWords = new Set(edition.title.toLowerCase().split(/[\s-]+/));
+        const catalogWords = new Set(catalogItem.title.toLowerCase().split(/[\s-]+/));
+        const sharedWords = [...currentWords].filter(w => catalogWords.has(w) && w.length > 2);
+        const noSharedWords = sharedWords.length === 0;
+
+        if (!isSingleWord && !noSharedWords) continue;
 
         updateTitle.run(catalogItem.title, edition.epic_catalog_id, launcherId);
         updateGameTitle.run(catalogItem.title, edition.epic_catalog_id, launcherId);

@@ -186,5 +186,41 @@ describe('epicCatalog', () => {
         db.close();
       }
     });
+
+    it('should resolve multi-word codenames like "beaublue production" (REGRESSION)', async () => {
+      // REGRESSION: multi-word codenames like "beaublue production" were missed
+      // because the single-word check skipped them. Now also catches titles that
+      // share no words with the catalog title.
+      const axios = require('axios');
+      const originalGet = axios.get;
+      const { resolveCodenames } = require('../../../src/services/launchers/epicCatalog');
+
+      const db = createTestDb();
+      db.exec(`
+        INSERT INTO game_editions (id, launcher_id, launcher_game_id, title, epic_namespace, epic_catalog_id)
+          VALUES
+            (1, 1, 'abc1', 'beaublue production', 'ns-bb', 'cat-bb1'),
+            (2, 1, 'abc2', 'The Witcher 3', 'ns-witcher', 'cat-w1');
+      `);
+
+      axios.get = async (url, opts) => {
+        const ns = opts?.params?.namespace;
+        if (ns === 'ns-bb') return { data: { 'cat-bb1': { title: 'Spirit of the North' } } };
+        if (ns === 'ns-witcher') return { data: { 'cat-w1': { title: 'The Witcher 3: Wild Hunt' } } };
+        return { data: {} };
+      };
+
+      try {
+        await resolveCodenames(db, 1, { access_token: 'test', token_type: 'bearer' });
+
+        // Multi-word codename with no shared words → resolved
+        assert.equal(db.prepare('SELECT title FROM game_editions WHERE id = 1').get().title, 'Spirit of the North');
+        // Real title with shared words → NOT changed
+        assert.equal(db.prepare('SELECT title FROM game_editions WHERE id = 2').get().title, 'The Witcher 3');
+      } finally {
+        axios.get = originalGet;
+        db.close();
+      }
+    });
   });
 });
