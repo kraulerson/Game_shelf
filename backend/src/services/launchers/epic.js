@@ -172,7 +172,7 @@ class EpicLauncher extends BaseLauncher {
         const id = item.appName || item.catalogItemId;
         return {
           launcher_game_id: id,
-          title: item.appTitle || item.catalogItemTitle || id,
+          title: item.sandboxName || item.appName || id,
           playtime_minutes: playtimeMap[id] || 0,
         };
       });

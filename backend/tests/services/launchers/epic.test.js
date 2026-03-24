@@ -48,4 +48,42 @@ describe('EpicLauncher', () => {
       axios.post = originalPost;
     }
   });
+
+  it('fetchOwnedGames() should use sandboxName for game titles', async () => {
+    const axios = require('axios');
+    const originalGet = axios.get;
+    axios.get = async (url) => {
+      if (url.includes('/playtime/')) {
+        return { data: [] };
+      }
+      return {
+        data: {
+          records: [
+            { appName: 'Peony', catalogItemId: 'abc123', sandboxName: 'The Escapists' },
+            { appName: 'Hoki', catalogItemId: 'def456' },
+          ],
+          responseMetadata: {},
+        }
+      };
+    };
+
+    try {
+      const EpicLauncher = require('../../../src/services/launchers/epic');
+      const launcher = new EpicLauncher('epic', {});
+      const games = await launcher.fetchOwnedGames({
+        access_token: 'test', token_type: 'bearer', account_id: 'test123'
+      });
+
+      // REGRESSION: must use sandboxName for title, not appTitle/catalogItemTitle
+      assert.equal(games[0].title, 'The Escapists',
+        'Should use sandboxName as title when available');
+      assert.equal(games[0].launcher_game_id, 'Peony');
+
+      // Falls back to appName when sandboxName is missing
+      assert.equal(games[1].title, 'Hoki',
+        'Should fall back to appName when sandboxName is missing');
+    } finally {
+      axios.get = originalGet;
+    }
+  });
 });
