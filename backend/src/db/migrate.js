@@ -175,6 +175,42 @@ function runMigrations(dbPath) {
     console.log('[Migration] Phase 12: Added parent_edition_id column');
   }
 
+  // Phase 12b: merge games where one slug is a prefix of another (edition variants)
+  // e.g., "deus-ex-human-revolution" and "deus-ex-human-revolution-directors-cut"
+  const allGames = db.prepare('SELECT id, title, slug, description FROM games ORDER BY length(slug) ASC').all();
+  let prefixMerged = 0;
+  const mergePrefix = db.transaction(() => {
+    const processed = new Set();
+    for (let i = 0; i < allGames.length; i++) {
+      if (processed.has(allGames[i].id)) continue;
+      const shorter = allGames[i];
+      for (let j = i + 1; j < allGames.length; j++) {
+        if (processed.has(allGames[j].id)) continue;
+        const longer = allGames[j];
+        // Check if shorter.slug is a prefix of longer.slug on word boundary
+        if (longer.slug.startsWith(shorter.slug) &&
+            (longer.slug.length === shorter.slug.length || longer.slug[shorter.slug.length] === '-')) {
+          // Keep the one with better metadata (description), or the longer slug (more specific edition)
+          const keep = longer.description ? longer : (shorter.description ? shorter : longer);
+          const discard = keep.id === longer.id ? shorter : longer;
+
+          db.prepare('UPDATE game_editions SET game_id = ? WHERE game_id = ?').run(keep.id, discard.id);
+          db.prepare('INSERT OR IGNORE INTO game_genres (game_id, genre_id) SELECT ?, genre_id FROM game_genres WHERE game_id = ?').run(keep.id, discard.id);
+          db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(discard.id);
+          db.prepare('INSERT OR IGNORE INTO game_tags (game_id, tag_id) SELECT ?, tag_id FROM game_tags WHERE game_id = ?').run(keep.id, discard.id);
+          db.prepare('DELETE FROM game_tags WHERE game_id = ?').run(discard.id);
+          db.prepare('DELETE FROM games WHERE id = ?').run(discard.id);
+          processed.add(discard.id);
+          prefixMerged++;
+        }
+      }
+    }
+  });
+  mergePrefix();
+  if (prefixMerged > 0) {
+    console.log(`[Migration] Phase 12b: Merged ${prefixMerged} edition-variant game rows by slug prefix`);
+  }
+
   return db;
 }
 

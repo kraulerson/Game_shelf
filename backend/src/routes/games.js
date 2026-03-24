@@ -320,7 +320,7 @@ router.get('/', (req, res) => {
       JOIN launchers l ON l.id = ge.launcher_id
       LEFT JOIN games g ON g.id = ge.game_id
       LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
-      WHERE ge.parent_edition_id IS NULL ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
+      WHERE ge.parent_edition_id IS NULL AND ge.title NOT LIKE '%Demo%' AND ge.title NOT LIKE '%Beta%' AND ge.title NOT LIKE '% Test' AND ge.title NOT LIKE '%Test %' ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `;
@@ -329,7 +329,7 @@ router.get('/', (req, res) => {
       FROM game_editions ge
       JOIN launchers l ON l.id = ge.launcher_id
       LEFT JOIN games g ON g.id = ge.game_id
-      WHERE ge.parent_edition_id IS NULL ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
+      WHERE ge.parent_edition_id IS NULL AND ge.title NOT LIKE '%Demo%' AND ge.title NOT LIKE '%Beta%' AND ge.title NOT LIKE '% Test' AND ge.title NOT LIKE '%Test %' ${innerWhere} ${outerWhere} ${searchWhereDup} ${startsWithDup}
     `;
     countParams = [...innerParams, ...outerParams, ...searchParams, ...startsWithParams];
     allParams = [...innerParams, ...outerParams, ...searchParams, ...startsWithParams, limitNum, offset];
@@ -348,7 +348,7 @@ router.get('/', (req, res) => {
         FROM game_editions ge
         JOIN launchers l ON l.id = ge.launcher_id
         LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
-        WHERE ge.parent_edition_id IS NULL ${innerWhere}
+        WHERE ge.parent_edition_id IS NULL AND ge.title NOT LIKE '%Demo%' AND ge.title NOT LIKE '%Beta%' AND ge.title NOT LIKE '% Test' AND ge.title NOT LIKE '%Test %' ${innerWhere}
       )
       SELECT r.id as edition_id, r.launcher_game_id, r.playtime_minutes as r_playtime,
              r.owned, r.edition_title as r_title,
@@ -374,7 +374,7 @@ router.get('/', (req, res) => {
         FROM game_editions ge
         JOIN launchers l ON l.id = ge.launcher_id
         LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
-        WHERE ge.parent_edition_id IS NULL ${innerWhere}
+        WHERE ge.parent_edition_id IS NULL AND ge.title NOT LIKE '%Demo%' AND ge.title NOT LIKE '%Beta%' AND ge.title NOT LIKE '% Test' AND ge.title NOT LIKE '%Test %' ${innerWhere}
       )
       SELECT COUNT(*) as total
       FROM ranked r

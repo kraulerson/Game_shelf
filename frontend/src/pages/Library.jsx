@@ -54,6 +54,7 @@ export default function Library() {
     const newParams = new URLSearchParams(searchParams);
     newParams.set('page', String(p));
     setSearchParams(newParams);
+    window.scrollTo(0, 0);
   }
 
   async function handleSync() {
