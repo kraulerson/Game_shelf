@@ -167,10 +167,11 @@ describe('epicCatalog', () => {
             (3, 1, 'abc3', 'Celeste', 'ns-celeste', 'cat-c1');
       `);
 
-      axios.get = async (url) => {
-        if (url.includes('ns-risotto')) return { data: { 'cat-r1': { title: 'Cooking Simulator' } } };
-        if (url.includes('ns-amethyst')) return { data: { 'cat-a1': { title: 'Dying Light 2' } } };
-        if (url.includes('ns-celeste')) return { data: { 'cat-c1': { title: 'Celeste' } } };
+      axios.get = async (url, opts) => {
+        const ns = opts?.params?.namespace;
+        if (ns === 'ns-risotto') return { data: { 'cat-r1': { title: 'Cooking Simulator' } } };
+        if (ns === 'ns-amethyst') return { data: { 'cat-a1': { title: 'Dying Light 2' } } };
+        if (ns === 'ns-celeste') return { data: { 'cat-c1': { title: 'Celeste' } } };
         return { data: {} };
       };
 

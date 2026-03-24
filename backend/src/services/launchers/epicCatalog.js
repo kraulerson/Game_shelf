@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { isLikelyCodename } = require('../../utils/codenameDetector');
 
-const CATALOG_URL = 'https://catalog-public-service-prod06.ol.epicgames.com/catalog/api/shared/namespace';
+const CATALOG_URL = 'https://catalog-public-service-prod06.ol.epicgames.com/catalog/api/shared/bulk/items';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -65,57 +65,70 @@ function nestDLC(db, launcherId) {
  * Queries bulk items endpoint per namespace, updates edition + game titles.
  */
 async function resolveCodenames(db, launcherId, session) {
-  const candidates = db.prepare(`
+  // Get all editions grouped by namespace for batched API calls
+  const namespaces = db.prepare(`
     SELECT DISTINCT epic_namespace FROM game_editions
     WHERE launcher_id = ? AND epic_namespace IS NOT NULL AND epic_catalog_id IS NOT NULL
   `).all(launcherId);
 
-  const namespacesToResolve = candidates.map(c => c.epic_namespace);
-  if (namespacesToResolve.length === 0) return;
+  if (namespaces.length === 0) return;
 
   const authHeader = `${session.token_type || 'bearer'} ${session.access_token}`;
   let resolved = 0;
 
-  for (const ns of namespacesToResolve) {
+  const updateTitle = db.prepare('UPDATE game_editions SET title = ? WHERE epic_catalog_id = ? AND launcher_id = ?');
+  const updateGameTitle = db.prepare(`
+    UPDATE games SET title = ? WHERE id = (
+      SELECT game_id FROM game_editions WHERE epic_catalog_id = ? AND launcher_id = ?
+    )
+  `);
+
+  for (const { epic_namespace } of namespaces) {
+    // Get all catalog IDs in this namespace
+    const editions = db.prepare(
+      'SELECT epic_catalog_id, title, launcher_game_id FROM game_editions WHERE launcher_id = ? AND epic_namespace = ? AND epic_catalog_id IS NOT NULL'
+    ).all(launcherId, epic_namespace);
+
+    if (editions.length === 0) continue;
+
     try {
-      const res = await axios.get(`${CATALOG_URL}/${ns}/bulk/items`, {
+      // Query catalog API with id + namespace params
+      const catalogIds = editions.map(e => e.epic_catalog_id);
+      const res = await axios.get(CATALOG_URL, {
         headers: { Authorization: authHeader },
-        params: { includeMainGameDetails: true, country: 'US', locale: 'en-US' },
+        params: {
+          id: catalogIds.join(','),
+          namespace: epic_namespace,
+          country: 'US',
+          locale: 'en-US',
+        },
       });
 
       const items = res.data || {};
-      const updateTitle = db.prepare('UPDATE game_editions SET title = ? WHERE epic_catalog_id = ? AND launcher_id = ?');
-      const updateGameTitle = db.prepare(`
-        UPDATE games SET title = ? WHERE id = (
-          SELECT game_id FROM game_editions WHERE epic_catalog_id = ? AND launcher_id = ?
-        )
-      `);
 
-      for (const [catalogId, item] of Object.entries(items)) {
-        if (!item.title) continue;
-        const edition = db.prepare(
-          'SELECT id, title, launcher_game_id FROM game_editions WHERE epic_catalog_id = ? AND launcher_id = ?'
-        ).get(catalogId, launcherId);
-        if (!edition) continue;
+      for (const edition of editions) {
+        const catalogItem = items[edition.epic_catalog_id];
+        if (!catalogItem?.title) continue;
 
         // Update if catalog returns a different title AND current title is single-word
-        // This catches codenames (Capsicum→Pepper Grinder) without a fragile heuristic
-        // Multi-word titles are already real names; same-title means no change needed
         const isSingleWord = !/\s/.test(edition.title) && !/-/.test(edition.title);
-        if (!isSingleWord || edition.title === item.title) continue;
+        if (!isSingleWord || edition.title === catalogItem.title) continue;
 
-        updateTitle.run(item.title, catalogId, launcherId);
-        updateGameTitle.run(item.title, catalogId, launcherId);
+        updateTitle.run(catalogItem.title, edition.epic_catalog_id, launcherId);
+        updateGameTitle.run(catalogItem.title, edition.epic_catalog_id, launcherId);
         resolved++;
       }
     } catch (err) {
-      console.warn(`[Epic Catalog] Failed to resolve namespace ${ns}: ${err.message}`);
+      // 404 for some namespaces is expected (delisted games, etc.)
+      if (err.response?.status !== 404) {
+        console.warn(`[Epic Catalog] Failed to resolve namespace ${epic_namespace}: ${err.message}`);
+      }
     }
 
     await sleep(500);
   }
 
-  console.log(`[Epic Catalog] Resolved ${resolved} codename titles across ${namespacesToResolve.length} namespaces`);
+  console.log(`[Epic Catalog] Resolved ${resolved} codename titles across ${namespaces.length} namespaces`);
 }
 
 module.exports = { nestDLC, resolveCodenames };
