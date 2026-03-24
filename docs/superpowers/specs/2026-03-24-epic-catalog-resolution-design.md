@@ -12,70 +12,93 @@
 
 ### Part 1: Store Epic metadata during sync
 
-Add two nullable columns to `game_editions`:
+Add three nullable columns to `game_editions`:
 
 ```sql
 ALTER TABLE game_editions ADD COLUMN epic_namespace TEXT;
 ALTER TABLE game_editions ADD COLUMN epic_catalog_id TEXT;
+ALTER TABLE game_editions ADD COLUMN sandbox_type TEXT;
 ```
 
-During Epic sync in `fetchOwnedGames()`, populate these from the library API response fields `namespace` and `catalogItemId`. These fields are already returned by the API but currently discarded.
+Update `schema.sql` to include these columns in the `CREATE TABLE` definition.
 
-The `game_editions` mapping changes from:
+**Remove namespace dedup from `fetchOwnedGames()`.** The current `seenNamespaces` filter (added in Phase 10 fix) keeps only one item per namespace, discarding DLC items. This must be removed so all items are returned for DLC nesting. Instead, DLC items are handled in Part 3 via `parent_edition_id`.
+
+During Epic sync in `fetchOwnedGames()`, return all items with the new fields:
+
 ```js
-{ launcher_game_id: id, title: item.sandboxName || item.appName || id, playtime_minutes: ... }
+{
+  launcher_game_id: item.appName || item.catalogItemId,
+  title: item.sandboxName || item.appName || id,
+  playtime_minutes: playtimeMap[id] || 0,
+  epic_namespace: item.namespace,
+  epic_catalog_id: item.catalogItemId,
+  sandbox_type: item.sandboxType,
+}
 ```
-To:
-```js
-{ launcher_game_id: id, title: item.sandboxName || item.appName || id, playtime_minutes: ...,
-  epic_namespace: item.namespace, epic_catalog_id: item.catalogItemId }
-```
 
-The sync engine's upsert statement for `game_editions` must be updated to include the two new columns.
+The sync engine's `game_editions` upsert must include the three new columns, and the `ON CONFLICT DO UPDATE SET` clause must also update them (for backfill on re-sync).
 
-### Part 2: Resolve titles via Epic catalog API
+### Part 2: DLC nesting by namespace
 
-New module: `backend/src/services/launchers/epicCatalog.js`
+**Runs before catalog resolution** so the catalog API can resolve titles for all items in a namespace at once.
 
-After Epic sync completes and editions are upserted, a post-sync step:
-
-1. Collects all unique `epic_namespace` values from editions with codename-looking titles or title "Live"
-2. For each namespace, queries:
-   ```
-   GET https://catalog-public-service-prod06.ol.epicgames.com/catalog/api/shared/namespace/{namespace}/bulk/items?includeMainGameDetails=true&country=US&locale=en-US
-   ```
-   Using the same Bearer token from the Epic sync session.
-3. Maps `catalogItemId` → published `title` from the response
-4. Updates `game_editions.title` for matched editions
-
-**Codename detection heuristic:** A title is likely a codename if it's a single token (no spaces, no colons, no digits-only) AND has no IGDB match (description IS NULL on the linked game). This avoids touching real single-word titles like "Celeste" or "DEATHLOOP" that have successful enrichment.
-
-**Rate limiting:** Batch namespaces and add 500ms delay between API calls. Each namespace returns all items in one call, so ~200 unique namespaces means ~200 API calls over ~100 seconds.
-
-### Part 3: DLC nesting by namespace
-
-After catalog resolution, group editions by `epic_namespace`:
-
-1. For each namespace with multiple editions, identify the **base game**: the edition where `sandboxType = 'PUBLIC'` or (if ambiguous) the edition with the highest tier from `edition_tiers`
-2. All other editions in the same namespace are DLC/content
-3. DLC editions get a new column: `parent_edition_id INTEGER REFERENCES game_editions(id)`
-4. DLC editions link to the same `game_id` as the base game edition
-
+Add column:
 ```sql
 ALTER TABLE game_editions ADD COLUMN parent_edition_id INTEGER REFERENCES game_editions(id);
 ```
 
-Editions with `parent_edition_id IS NOT NULL` are DLC and excluded from the main library dedup CTE (add `AND ge.parent_edition_id IS NULL` to the WHERE clause).
+Post-sync step `epicCatalog.nestDLC(db, launcherId)`:
+
+1. Query all Epic editions grouped by `epic_namespace`
+2. For each namespace with multiple editions, identify the **base game**: the edition where `sandbox_type = 'PUBLIC'`, or if ambiguous, the edition with the highest tier from `edition_tiers`, or the edition with the longest title
+3. All other editions in that namespace → `parent_edition_id` set to the base game edition's ID
+4. **Copy `game_id` from parent to children**: `UPDATE game_editions SET game_id = (SELECT game_id FROM game_editions WHERE id = parent_edition_id) WHERE parent_edition_id IS NOT NULL AND game_id IS NULL`
+5. Namespaces with only one edition are left as-is (no parent)
+
+### Part 3: Resolve titles via Epic catalog API
+
+New module: `backend/src/services/launchers/epicCatalog.js`
+
+Post-sync step `epicCatalog.resolveCodenames(db, credentials, launcherInstance)`:
+
+**Token handling:** Receives the full `credentials` object and `launcherInstance` (EpicLauncher), so it can call `launcherInstance.refreshIfNeeded(credentials)` to get a fresh token if the current one nears expiry. This prevents token expiration during the ~200 API calls.
+
+1. Collects all unique `epic_namespace` values from editions needing resolution
+2. For each namespace, queries:
+   ```
+   GET https://catalog-public-service-prod06.ol.epicgames.com/catalog/api/shared/namespace/{namespace}/bulk/items?includeMainGameDetails=true&country=US&locale=en-US
+   ```
+3. Maps `catalogItemId` → published `title` from the response
+4. Updates `game_editions.title` and linked `games.title` for matched editions
+
+**Codename detection heuristic (structural only, no enrichment dependency):**
+A title needs resolution if:
+- `title === 'Live'` (exact match), OR
+- Title is a single token with no spaces AND matches codename patterns: PascalCase (`CadmiumRed`), single lowercase word (`lisbon`), or `title === launcher_game_id` (meaning no human-readable name was available), OR
+- Title is a hex GUID pattern
+
+This avoids false-positiving on real single-word ALL-CAPS titles like "DEATHLOOP" or "SUPERHOT", or real proper nouns like "Celeste" or "Subnautica" (which have enrichment data, but the heuristic doesn't depend on that).
+
+**Rate limiting:** 500ms delay between namespace API calls. Each namespace returns all items in one call.
 
 ### Part 4: API changes
 
 **GET /api/games (list view):**
 - Dedup CTE adds `AND ge.parent_edition_id IS NULL` to exclude DLC from main list
-- Response adds `dlc_count` per game (count of child editions)
+- Response adds `dlc_count` per game: `(SELECT COUNT(*) FROM game_editions WHERE game_id = r.game_id AND parent_edition_id IS NOT NULL AND owned = 1)` — counts DLC per game, not per edition
 
 **GET /api/games/:id (detail view):**
-- Response adds `dlc` array: child editions with their titles, launcher info, and tier labels
+- `editions` query adds `AND ge.parent_edition_id IS NULL` to show only base editions
+- New `dlc` array: separate query for `ge.parent_edition_id IS NOT NULL AND ge.game_id = ?`, returning title, launcher badge, tier label
 - DLC items sorted by title
+
+**Queries needing `parent_edition_id IS NULL` filter:**
+- Dedup data CTE (both branches: dedup and duplicates=show)
+- Count CTE
+- `/api/games/filters` endpoint (launcher count, genre count, tag count, year range, playtime max)
+- `platformsStmt` subquery
+- `enrichAll()` in enrichGame.js (`WHERE game_id IS NULL` → add `AND parent_edition_id IS NULL`)
 
 ### Part 5: Frontend changes
 
@@ -89,37 +112,43 @@ Editions with `parent_edition_id IS NOT NULL` are DLC and excluded from the main
 
 ### Migration
 
-1. Add `epic_namespace`, `epic_catalog_id` columns to `game_editions` (ALTER TABLE, nullable)
+1. Add `epic_namespace`, `epic_catalog_id`, `sandbox_type` columns to `game_editions` (ALTER TABLE, nullable)
 2. Add `parent_edition_id` column to `game_editions` (ALTER TABLE, nullable)
-3. Backfill: re-sync Epic to populate namespace/catalogId for existing editions (or run a one-time population from a fresh library fetch)
+3. Update `schema.sql` with all four new columns
+4. Backfill: first Epic sync after migration populates all new columns
 
 ### Sync Flow (updated)
 
-1. Epic `fetchOwnedGames()` returns items with `epic_namespace` and `epic_catalog_id`
-2. `syncEngine` upserts editions (now including new columns)
-3. Post-sync: `epicCatalog.resolveCodenames(db, session)` resolves titles
-4. Post-sync: `epicCatalog.nestDLC(db)` groups DLC under parent editions
-5. Existing enrichment runs (IGDB, SteamGridDB, etc.)
+1. Epic `fetchOwnedGames()` returns ALL items (no namespace dedup) with `epic_namespace`, `epic_catalog_id`, `sandbox_type`
+2. `syncEngine` upserts editions (including new columns, ON CONFLICT updates them)
+3. Post-sync: `epicCatalog.nestDLC(db, launcherId)` — group by namespace, set parent_edition_id, copy game_id to children
+4. Post-sync: `epicCatalog.resolveCodenames(db, credentials, launcherInstance)` — fix titles via catalog API
+5. Existing enrichment runs — but skips editions where `parent_edition_id IS NOT NULL`
+
+### Cleanup
+
+Remove debug logging from `epic.js` (sample item logs, auth debug logs) now that Epic integration is stable.
 
 ### Testing
 
 **Unit tests:**
-- Codename detection heuristic (single-word, no IGDB match)
-- Catalog API response parsing
-- DLC nesting logic (identify base game vs DLC by sandboxType)
+- Codename detection heuristic (PascalCase, single word, GUID, "Live")
+- Codename heuristic does NOT flag "DEATHLOOP", "Celeste", "SUPERHOT"
+- DLC nesting logic (identify base game vs DLC by sandbox_type)
 
 **API tests:**
 - DLC excluded from main game list
 - `dlc_count` returned correctly
-- Detail endpoint includes `dlc` array
+- Detail endpoint includes `dlc` array separate from `editions`
+- Filters endpoint not inflated by DLC items
 
 **Integration:**
-- Full Epic sync → catalog resolution → DLC nesting flow
+- Full Epic sync → DLC nesting → catalog resolution → enrichment flow
 
 ### What stays the same
 
 - Epic auth flow (authorization_code, token refresh)
-- Library fetch (same API, just store more fields)
+- Library fetch endpoint (same API, just store more fields and return all items)
 - Edition tier detection and display
 - All non-Epic launchers unaffected
-- Enrichment pipeline (IGDB, SteamGridDB, Steam CDN)
+- Enrichment pipeline (IGDB, SteamGridDB, Steam CDN) — just skips DLC items
