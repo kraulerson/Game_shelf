@@ -78,6 +78,8 @@ describe('EpicLauncher', () => {
       assert.equal(games[0].title, 'The Escapists',
         'Should use sandboxName as title when available');
       assert.equal(games[0].launcher_game_id, 'Peony');
+      assert.equal(games[0].epic_namespace, 'ns1');
+      assert.equal(games[0].epic_catalog_id, 'abc123');
 
       // Falls back to appName when sandboxName is missing
       assert.equal(games[1].title, 'Hoki',
@@ -87,7 +89,7 @@ describe('EpicLauncher', () => {
     }
   });
 
-  it('fetchOwnedGames() should deduplicate items by namespace', async () => {
+  it('fetchOwnedGames() should return ALL items (no namespace dedup)', async () => {
     const axios = require('axios');
     const originalGet = axios.get;
     axios.get = async (url) => {
@@ -97,11 +99,10 @@ describe('EpicLauncher', () => {
       return {
         data: {
           records: [
-            { appName: 'Game1', namespace: 'ns-fortnite', sandboxName: 'Live' },
-            { appName: 'Game2', namespace: 'ns-fortnite', sandboxName: 'Live' },
-            { appName: 'Game3', namespace: 'ns-fortnite', sandboxName: 'Live' },
-            { appName: 'Peony', namespace: 'ns-escapists', sandboxName: 'The Escapists' },
-            { appName: 'Hoki', namespace: 'ns-other', sandboxName: 'Some Game' },
+            { appName: 'Game1', namespace: 'ns-fortnite', sandboxName: 'Live', sandboxType: 'LIVE' },
+            { appName: 'Game2', namespace: 'ns-fortnite', sandboxName: 'Live', sandboxType: 'LIVE' },
+            { appName: 'Game3', namespace: 'ns-fortnite', sandboxName: 'Fortnite', sandboxType: 'PUBLIC' },
+            { appName: 'Peony', namespace: 'ns-escapists', sandboxName: 'The Escapists', sandboxType: 'PUBLIC' },
           ],
           responseMetadata: {},
         }
@@ -115,11 +116,10 @@ describe('EpicLauncher', () => {
         access_token: 'test', token_type: 'bearer', account_id: 'test123'
       });
 
-      // REGRESSION: must deduplicate by namespace — 3 Fortnite items become 1
-      assert.equal(games.length, 3,
-        'Should deduplicate: 5 items across 3 namespaces = 3 games');
-      const titles = games.map(g => g.title).sort();
-      assert.deepEqual(titles, ['Live', 'Some Game', 'The Escapists']);
+      // Phase 12: return ALL items, DLC nesting handled post-sync
+      assert.equal(games.length, 4, 'Should return all 4 items without dedup');
+      assert.equal(games[2].sandbox_type, 'PUBLIC');
+      assert.equal(games[0].sandbox_type, 'LIVE');
     } finally {
       axios.get = originalGet;
     }

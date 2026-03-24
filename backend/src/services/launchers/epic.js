@@ -117,7 +117,6 @@ class EpicLauncher extends BaseLauncher {
     const { access_token, token_type, account_id } = session;
     const authType = token_type || 'eg1';
     const headers = { Authorization: `${authType} ${access_token}` };
-    console.log('[Epic] fetchOwnedGames auth:', JSON.stringify({ authType, account_id, tokenPrefix: access_token?.substring(0, 20) + '...' }));
 
     // Fetch library items (paginated)
     let allItems = [];
@@ -127,28 +126,19 @@ class EpicLauncher extends BaseLauncher {
     while (hasMore) {
       const params = { includeMetadata: true };
       if (cursor) params.cursor = cursor;
-      console.log('[Epic] Library request:', EPIC_LIBRARY_URL, JSON.stringify(params));
 
       try {
         const res = await axios.get(EPIC_LIBRARY_URL, { headers, params });
         const records = res.data?.records || [];
 
         if (Array.isArray(records)) {
-          if (allItems.length === 0 && records.length > 0) {
-            console.log('[Epic] Sample library item keys:', Object.keys(records[0]));
-            console.log('[Epic] Sample library item:', JSON.stringify(records[0]).substring(0, 500));
-            // Log recordType distribution from first page
-            const types = {};
-            records.forEach(r => { types[r.recordType] = (types[r.recordType] || 0) + 1; });
-            console.log('[Epic] recordType distribution (page 1):', JSON.stringify(types));
-          }
           allItems.push(...records);
         }
 
         cursor = res.data?.responseMetadata?.nextCursor || null;
         hasMore = !!cursor;
       } catch (err) {
-        console.error('[Epic] Library fetch failed:', err.message, err.response?.status, JSON.stringify(err.response?.data));
+        console.error('[Epic] Library fetch failed:', err.message);
         hasMore = false;
       }
 
@@ -166,34 +156,21 @@ class EpicLauncher extends BaseLauncher {
         }
       }
     } catch (err) {
-      console.warn('[Epic] Playtime fetch failed:', err.message, err.response?.status, JSON.stringify(err.response?.data));
+      console.warn('[Epic] Playtime fetch failed:', err.message);
     }
 
-    // Log namespace distribution for "Live" items vs real games
-    const nsCount = {};
-    allItems.forEach(item => {
-      const key = `${item.sandboxName}|${item.namespace}`;
-      nsCount[key] = (nsCount[key] || 0) + 1;
-    });
-    const topEntries = Object.entries(nsCount).sort((a, b) => b[1] - a[1]).slice(0, 10);
-    console.log('[Epic] Top sandboxName|namespace groups:', JSON.stringify(topEntries));
-    console.log('[Epic] Unique namespaces:', new Set(allItems.map(i => i.namespace)).size, 'Total items:', allItems.length);
-
-    // Map to game format — deduplicate by namespace (one entry per game)
-    const seenNamespaces = new Set();
+    // Return all items with Epic metadata (DLC nesting handled post-sync)
     return allItems
-      .filter(item => {
-        if (!item.appName && !item.catalogItemId) return false;
-        if (seenNamespaces.has(item.namespace)) return false;
-        seenNamespaces.add(item.namespace);
-        return true;
-      })
+      .filter(item => item.appName || item.catalogItemId)
       .map(item => {
         const id = item.appName || item.catalogItemId;
         return {
           launcher_game_id: id,
           title: item.sandboxName || item.appName || id,
           playtime_minutes: playtimeMap[id] || 0,
+          epic_namespace: item.namespace || null,
+          epic_catalog_id: item.catalogItemId || null,
+          sandbox_type: item.sandboxType || null,
         };
       });
   }
