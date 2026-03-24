@@ -39,6 +39,9 @@ async function syncLauncher(launcherName, db) {
       const { encrypt } = require('../utils/encrypt');
       const encrypted = encrypt(JSON.stringify(session.updatedCredentials));
       db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(encrypted, launcherName);
+    }
+    // Always unwrap: refreshIfNeeded returns { session, updatedCredentials }
+    if (session && session.session) {
       session = session.session;
     }
 

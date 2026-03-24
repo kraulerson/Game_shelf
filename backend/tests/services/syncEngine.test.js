@@ -112,6 +112,48 @@ describe('Sync engine', () => {
     }
   });
 
+  it('syncLauncher should unwrap session even when credentials are not refreshed', async () => {
+    // REGRESSION: syncEngine must unwrap { session, updatedCredentials: null }
+    // so fetchOwnedGames receives { access_token, ... } not the wrapper object.
+    const { encrypt } = require('../../src/utils/encrypt');
+    const epicCreds = encrypt(JSON.stringify({
+      access_token: 'test_epic_token',
+      token_type: 'bearer',
+      refresh_token: 'test_refresh',
+      expires_at: new Date(Date.now() + 3600000).toISOString(),
+      refresh_expires_at: new Date(Date.now() + 86400000).toISOString(),
+      account_id: 'test_account',
+    }));
+    db.prepare(
+      'INSERT OR REPLACE INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
+    ).run('epic', 'Epic Games', epicCreds);
+
+    const axios = require('axios');
+    const originalGet = axios.get;
+    let capturedHeaders = null;
+    axios.get = async (url, opts) => {
+      if (!capturedHeaders && opts?.headers?.Authorization) {
+        capturedHeaders = opts.headers;
+      }
+      return { data: { records: [], responseMetadata: {} } };
+    };
+
+    try {
+      await syncLauncher('epic', db);
+      assert.ok(capturedHeaders, 'Should have made an API call with headers');
+      assert.ok(
+        capturedHeaders.Authorization.includes('test_epic_token'),
+        `Authorization header must contain the actual token, got: ${capturedHeaders.Authorization}`
+      );
+      assert.ok(
+        !capturedHeaders.Authorization.includes('undefined'),
+        'Authorization header must not contain "undefined"'
+      );
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+
   it('syncLauncher should update launchers.last_sync_at on success', async () => {
     const axios = require('axios');
     const originalGet = axios.get;
