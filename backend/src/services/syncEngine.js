@@ -21,6 +21,11 @@ async function syncLauncher(launcherName, db, otpCode) {
   const jobId = Number(jobResult.lastInsertRowid);
 
   try {
+    // Check sync lock
+    if (launcher.sync_locked) {
+      throw new Error('Launcher is sync-locked. Unlock it in Settings before syncing.');
+    }
+
     // Decrypt credentials
     const credentials = JSON.parse(decrypt(launcher.credentials_json));
     if (otpCode) credentials.otp_code = otpCode;

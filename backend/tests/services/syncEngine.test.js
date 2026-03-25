@@ -237,6 +237,21 @@ describe('Sync engine', () => {
     }
   });
 
+  it('syncLauncher should fail when launcher is sync-locked', async () => {
+    // Lock the launcher
+    db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('steam');
+
+    try {
+      const jobId = await syncLauncher('steam', db);
+      const job = db.prepare('SELECT * FROM sync_jobs WHERE id = ?').get(jobId);
+      assert.equal(job.status, 'failed');
+      assert.ok(job.error_message.includes('sync-locked'), 'Error should mention sync-locked');
+    } finally {
+      // Unlock for subsequent tests
+      db.prepare('UPDATE launchers SET sync_locked = 0 WHERE name = ?').run('steam');
+    }
+  });
+
   it('syncLauncher should update launchers.last_sync_at on success', async () => {
     const axios = require('axios');
     const originalGet = axios.get;
