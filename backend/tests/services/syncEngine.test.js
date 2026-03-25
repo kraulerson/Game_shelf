@@ -252,6 +252,21 @@ describe('Sync engine', () => {
     }
   });
 
+  it('syncAll should skip sync-locked launchers and report them', async () => {
+    // Lock steam
+    db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('steam');
+
+    try {
+      const result = await syncAll(db);
+      assert.ok(Array.isArray(result.locked), 'Should have a locked array');
+      assert.ok(result.locked.includes('steam'), 'steam should be in locked list');
+      assert.ok(!result.succeeded.includes('steam'), 'steam should not be in succeeded');
+      assert.ok(!result.failed.includes('steam'), 'steam should not be in failed');
+    } finally {
+      db.prepare('UPDATE launchers SET sync_locked = 0 WHERE name = ?').run('steam');
+    }
+  });
+
   it('syncLauncher should update launchers.last_sync_at on success', async () => {
     const axios = require('axios');
     const originalGet = axios.get;

@@ -183,14 +183,20 @@ async function syncLauncher(launcherName, db, otpCode) {
 
 async function syncAll(db) {
   const launchers = db.prepare(
-    'SELECT name FROM launchers WHERE enabled = 1 AND credentials_json IS NOT NULL'
+    'SELECT name, sync_locked FROM launchers WHERE enabled = 1 AND credentials_json IS NOT NULL'
   ).all();
 
   const succeeded = [];
   const failed = [];
   const skipped = [];
+  const locked = [];
 
   for (const launcher of launchers) {
+    if (launcher.sync_locked) {
+      locked.push(launcher.name);
+      continue;
+    }
+
     const jobId = await syncLauncher(launcher.name, db);
     const job = db.prepare('SELECT status, games_found FROM sync_jobs WHERE id = ?').get(jobId);
 
@@ -206,7 +212,7 @@ async function syncAll(db) {
     }
   }
 
-  return { succeeded, failed, skipped };
+  return { succeeded, failed, skipped, locked };
 }
 
 module.exports = { syncLauncher, syncAll };
