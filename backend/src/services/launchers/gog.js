@@ -38,8 +38,10 @@ class GOGLauncher extends BaseLauncher {
     const authPageRes = await client.get(GOG_AUTH_URL);
     const authHtml = authPageRes.data;
 
+    console.log('[GOG] Auth page status:', authPageRes.status, 'url:', authPageRes.request?.res?.responseUrl || '(unknown)');
     const tokenMatch = authHtml.match(/name="login\[_token\]"[^>]*value="([^"]+)"/);
     if (!tokenMatch) {
+      console.log('[GOG] Auth page HTML (first 500 chars):', authHtml.substring(0, 500));
       throw new Error('GOG: Could not extract login CSRF token');
     }
     const csrfToken = tokenMatch[1];
@@ -72,6 +74,7 @@ class GOGLauncher extends BaseLauncher {
 
     // Step 3: Check where we ended up
     const redirectUrl = loginRes.headers?.location || loginRes.request?.res?.responseUrl || '';
+    console.log('[GOG] Login response status:', loginRes.status, 'redirect:', redirectUrl || '(none)');
 
     // Success — extract code from redirect URL
     if (redirectUrl.includes('on_login_success')) {
@@ -152,6 +155,7 @@ class GOGLauncher extends BaseLauncher {
     }
 
     // If we got HTML back (login page again), credentials were wrong
+    console.log('[GOG] Unexpected state — no matching redirect. Status:', loginRes.status, 'Headers:', JSON.stringify(loginRes.headers || {}));
     throw new Error('GOG login failed — check username and password');
   }
 
