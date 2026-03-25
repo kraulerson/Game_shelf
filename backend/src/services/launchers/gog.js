@@ -32,7 +32,11 @@ class GOGLauncher extends BaseLauncher {
     const { username, password, otp_code } = credentials;
 
     const jar = new CookieJar();
-    const client = wrapper(axios.create({ jar, maxRedirects: 5 }));
+    const client = wrapper(axios.create({
+      jar,
+      maxRedirects: 5,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+    }));
 
     // Step 1: GET auth page to obtain login form and CSRF token
     const authPageRes = await client.get(GOG_AUTH_URL);
@@ -45,6 +49,8 @@ class GOGLauncher extends BaseLauncher {
       throw new Error('GOG: Could not extract login CSRF token');
     }
     const csrfToken = tokenMatch[1];
+    const cookiesForLogin = await jar.getCookies('https://login.gog.com');
+    console.log('[GOG] Cookies for login.gog.com:', cookiesForLogin.map(c => c.key).join(', ') || '(none)');
 
     // Step 2: POST credentials to login_check
     let loginRes;
