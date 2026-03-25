@@ -103,10 +103,10 @@ describe('epicCatalog', () => {
           VALUES (1, 1, 'Capsicum', 'Capsicum', 'ns-pepper', 'cat-123');
       `);
 
-      axios.get = async () => ({
-        data: {
+      axios.get = async (url) => ({
+        data: url.includes('ns-pepper') ? {
           'cat-123': { id: 'cat-123', title: 'Pepper Grinder', namespace: 'ns-pepper' }
-        }
+        } : {}
       });
 
       try {
@@ -132,10 +132,10 @@ describe('epicCatalog', () => {
           VALUES (1, 1, '12345', 'Celeste', 'ns-celeste', 'cat-456');
       `);
 
-      axios.get = async () => ({
-        data: {
+      axios.get = async (url) => ({
+        data: url.includes('ns-celeste') ? {
           'cat-456': { id: 'cat-456', title: 'Celeste', namespace: 'ns-celeste' }
-        }
+        } : {}
       });
 
       try {
@@ -167,11 +167,10 @@ describe('epicCatalog', () => {
             (3, 1, 'abc3', 'Celeste', 'ns-celeste', 'cat-c1');
       `);
 
-      axios.get = async (url, opts) => {
-        const ns = opts?.params?.namespace;
-        if (ns === 'ns-risotto') return { data: { 'cat-r1': { title: 'Cooking Simulator' } } };
-        if (ns === 'ns-amethyst') return { data: { 'cat-a1': { title: 'Dying Light 2' } } };
-        if (ns === 'ns-celeste') return { data: { 'cat-c1': { title: 'Celeste' } } };
+      axios.get = async (url) => {
+        if (url.includes('ns-risotto')) return { data: { 'cat-r1': { title: 'Cooking Simulator' } } };
+        if (url.includes('ns-amethyst')) return { data: { 'cat-a1': { title: 'Dying Light 2' } } };
+        if (url.includes('ns-celeste')) return { data: { 'cat-c1': { title: 'Celeste' } } };
         return { data: {} };
       };
 
@@ -203,10 +202,9 @@ describe('epicCatalog', () => {
             (2, 1, 'abc2', 'The Witcher 3', 'ns-witcher', 'cat-w1');
       `);
 
-      axios.get = async (url, opts) => {
-        const ns = opts?.params?.namespace;
-        if (ns === 'ns-bb') return { data: { 'cat-bb1': { title: 'Spirit of the North' } } };
-        if (ns === 'ns-witcher') return { data: { 'cat-w1': { title: 'The Witcher 3: Wild Hunt' } } };
+      axios.get = async (url) => {
+        if (url.includes('ns-bb')) return { data: { 'cat-bb1': { title: 'Spirit of the North' } } };
+        if (url.includes('ns-witcher')) return { data: { 'cat-w1': { title: 'The Witcher 3: Wild Hunt' } } };
         return { data: {} };
       };
 

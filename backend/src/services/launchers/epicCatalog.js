@@ -100,15 +100,15 @@ async function resolveCodenames(db, launcherId, session) {
     try {
       // Query catalog API with id + namespace params
       const catalogIds = editions.map(e => e.epic_catalog_id);
-      const res = await axios.get(CATALOG_URL, {
+      const params = new URLSearchParams();
+      catalogIds.forEach(id => params.append('id', id));
+      params.append('namespace', epic_namespace);
+      params.append('country', 'US');
+      params.append('locale', 'en-US');
+
+      const res = await axios.get(`${CATALOG_URL}?${params.toString()}`, {
         headers: { Authorization: authHeader },
         timeout: 10000,
-        params: {
-          id: catalogIds.join(','),
-          namespace: epic_namespace,
-          country: 'US',
-          locale: 'en-US',
-        },
       });
 
       const items = res.data || {};
