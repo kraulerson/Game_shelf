@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Loader2, RefreshCw, GripVertical } from 'lucide-react';
+import { Loader2, RefreshCw, GripVertical, Lock } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -85,6 +85,11 @@ function LaunchersTab() {
     setOtpPrompt(null);
     setOtpCode('');
     queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
+  }
+
+  async function unlockSync(name) {
+    await fetch(`/api/launchers/${name}/unlock-sync`, { method: 'POST', credentials: 'same-origin' });
+    queryClient.invalidateQueries({ queryKey: ['launchersAvailable'] });
   }
 
   async function removeLauncher(name) {
@@ -200,7 +205,19 @@ function LaunchersTab() {
                     Approve
                   </button>
                 )}
-                {isAwaitingOtp(l.id) ? (
+                {l.sync_locked ? (
+                  <>
+                    <span className="flex items-center gap-1 px-3 py-1.5 bg-yellow-900/30 text-yellow-400 text-sm rounded">
+                      <Lock size={14} /> Locked
+                    </span>
+                    <button
+                      onClick={() => unlockSync(l.id)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+                    >
+                      Unlock
+                    </button>
+                  </>
+                ) : isAwaitingOtp(l.id) ? (
                   <button
                     onClick={() => handleSyncClick(l)}
                     className="flex items-center gap-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors"
