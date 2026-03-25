@@ -240,6 +240,86 @@ describe('Launcher routes', () => {
       db.prepare('UPDATE launchers SET sync_locked = 0 WHERE name = ?').run('steam');
     }
   });
+
+  // REGRESSION: XboxApproval confirmation dialog said "re-sync to recover"
+  // which was misleading after adding sync lock — user must unlock first.
+  it('regression: XboxApproval confirmation text should mention unlock step', () => {
+    const fs = require('node:fs');
+    const approvalSource = fs.readFileSync(
+      require('node:path').join(__dirname, '../../../frontend/src/pages/XboxApproval.jsx'),
+      'utf8'
+    );
+    assert.ok(
+      approvalSource.includes('unlock and re-sync to recover'),
+      'Confirmation text should mention unlock step, not just "re-sync"'
+    );
+    assert.ok(
+      !approvalSource.includes('(re-sync to recover)'),
+      'Old text "(re-sync to recover)" should be replaced'
+    );
+  });
+
+  // REGRESSION: Xbox games reappeared after approval because approval
+  // hard-deleted rejected games, then sync re-inserted them from the API.
+  // Fix: approval now locks the launcher so sync is blocked until unlocked.
+  it('regression: approve should lock sync, preventing games from reappearing', async () => {
+    const db = app.locals.db;
+
+    // Ensure xbox is unlocked and has credentials
+    const { encrypt } = require('../../src/utils/encrypt');
+    const creds = encrypt(JSON.stringify({ api_key: 'test-xbox-key' }));
+    db.prepare(
+      'INSERT OR REPLACE INTO launchers (name, display_name, enabled, credentials_json, sync_locked) VALUES (?, ?, 1, ?, 0)'
+    ).run('xbox', 'Xbox / Microsoft', creds);
+
+    const launcher = db.prepare('SELECT id FROM launchers WHERE name = ?').get('xbox');
+
+    // Clean up any leftover editions from previous tests
+    db.prepare('DELETE FROM game_editions WHERE launcher_id = ?').run(launcher.id);
+
+    // Simulate: user has 3 games from Xbox API sync
+    const ins = db.prepare(
+      'INSERT INTO game_editions (launcher_id, launcher_game_id, title, owned) VALUES (?, ?, ?, 1)'
+    );
+    ins.run(launcher.id, 'reg-game-1', 'Owned Game');
+    ins.run(launcher.id, 'reg-game-2', 'Game Pass Game');
+    ins.run(launcher.id, 'reg-game-3', 'Another GP Game');
+
+    const ownedEdition = db.prepare(
+      "SELECT id FROM game_editions WHERE launcher_id = ? AND launcher_game_id = 'reg-game-1'"
+    ).get(launcher.id);
+
+    // Step 1: Approve only the owned game (delete the Game Pass games)
+    const approveRes = await makeFetch(app, '/api/launchers/xbox/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ approved_edition_ids: [ownedEdition.id] }),
+    });
+    assert.equal(approveRes.status, 200);
+
+    // Verify: rejected games are deleted
+    const remaining = db.prepare(
+      'SELECT COUNT(*) as c FROM game_editions WHERE launcher_id = ? AND owned = 1'
+    ).get(launcher.id);
+    assert.equal(remaining.c, 1, 'Only approved game should remain');
+
+    // Verify: launcher is now locked
+    const lockedRow = db.prepare('SELECT sync_locked FROM launchers WHERE name = ?').get('xbox');
+    assert.equal(lockedRow.sync_locked, 1, 'Launcher should be locked after approval');
+
+    // Step 2: Attempt to sync — should be blocked
+    const syncRes = await makeFetch(app, '/api/sync/xbox', {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+    assert.equal(syncRes.status, 409, 'Sync should be blocked with 409');
+
+    // Verify: games did NOT reappear
+    const afterSync = db.prepare(
+      'SELECT COUNT(*) as c FROM game_editions WHERE launcher_id = ? AND owned = 1'
+    ).get(launcher.id);
+    assert.equal(afterSync.c, 1, 'Rejected games must not reappear after blocked sync');
+  });
 });
 
 function makeFetch(app, urlPath, options = {}) {

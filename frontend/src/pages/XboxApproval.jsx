@@ -172,7 +172,7 @@ export default function XboxApproval() {
           <div className="bg-gray-800 rounded-lg p-6 max-w-sm mx-4">
             <h3 className="text-white font-medium mb-2">Confirm Deletion</h3>
             <p className="text-gray-400 text-sm mb-4">
-              Delete {deleteCount} Xbox game{deleteCount !== 1 ? 's' : ''}? This cannot be undone (re-sync to recover).
+              Delete {deleteCount} Xbox game{deleteCount !== 1 ? 's' : ''}? This cannot be undone (unlock and re-sync to recover).
             </p>
             <div className="flex gap-2 justify-end">
               <button
