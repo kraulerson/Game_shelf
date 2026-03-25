@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS launchers (
   priority INTEGER NOT NULL DEFAULT 0,
   credentials_json TEXT,
   last_sync_at TEXT,
+  sync_locked INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

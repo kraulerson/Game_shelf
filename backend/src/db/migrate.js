@@ -216,6 +216,13 @@ function runMigrations(dbPath) {
     console.log(`[Migration] Phase 12b: Merged ${prefixMerged} edition-variant game rows by slug prefix`);
   }
 
+  // Sync lock migration: add sync_locked to launchers
+  const launcherCols = db.pragma('table_info(launchers)');
+  if (!launcherCols.some(c => c.name === 'sync_locked')) {
+    db.exec('ALTER TABLE launchers ADD COLUMN sync_locked INTEGER NOT NULL DEFAULT 0');
+    console.log('[Migration] Added sync_locked column to launchers');
+  }
+
   return db;
 }
 

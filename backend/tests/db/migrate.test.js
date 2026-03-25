@@ -101,4 +101,15 @@ describe('migration runner', () => {
       db3.close();
     });
   });
+
+  it('should add sync_locked column to launchers table', () => {
+    delete require.cache[require.resolve('../../src/db/migrate')];
+    const { runMigrations } = require('../../src/db/migrate');
+    const testDb = runMigrations(testDbPath);
+    const cols = testDb.pragma('table_info(launchers)');
+    const syncLockedCol = cols.find(c => c.name === 'sync_locked');
+    assert.ok(syncLockedCol, 'sync_locked column should exist');
+    assert.equal(syncLockedCol.dflt_value, '0', 'default should be 0');
+    testDb.close();
+  });
 });
