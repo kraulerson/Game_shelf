@@ -35,8 +35,9 @@ router.get('/status', (req, res) => {
 router.post('/:launcherName', (req, res) => {
   const db = req.app.locals.db;
   const { launcherName } = req.params;
+  const { otp_code } = req.body || {};
   // Fire and forget
-  syncLauncher(launcherName, db).catch(err =>
+  syncLauncher(launcherName, db, otp_code).catch(err =>
     console.error(`[Sync] ${launcherName} sync error:`, err.message)
   );
   res.json({ message: `Sync started for ${launcherName}` });

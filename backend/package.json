@@ -1,6 +1,6 @@
 {
   "name": "gameshelf-backend",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Gameshelf backend API",
   "main": "src/server.js",
   "scripts": {
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "axios": "^1.13.6",
+    "axios-cookiejar-support": "^5.0.5",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.8.0",
     "cookie-parser": "^1.4.7",
@@ -19,6 +20,7 @@
     "node-cron": "^3.0.3",
     "otpauth": "^9.5.0",
     "steam-totp": "^2.1.2",
-    "steamgriddb": "^2.2.1"
+    "steamgriddb": "^2.2.1",
+    "tough-cookie": "^5.1.2"
   }
 }

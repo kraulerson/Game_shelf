@@ -29,6 +29,8 @@ function LaunchersTab() {
   useEffect(() => {
     if (location.state?.flash) window.history.replaceState({}, '');
   }, []);
+  const [otpPrompt, setOtpPrompt] = useState(null); // launcher object or null
+  const [otpCode, setOtpCode] = useState('');
   const [reordering, setReordering] = useState(false);
   const [orderedLaunchers, setOrderedLaunchers] = useState([]);
 
@@ -50,9 +52,30 @@ function LaunchersTab() {
   const statusMap = {};
   (syncStatus || []).forEach(j => { statusMap[j.launcher_name] = j; });
 
-  async function syncLauncher(name) {
-    await fetch(`/api/sync/${name}`, { method: 'POST', credentials: 'same-origin' });
+  function handleSyncClick(launcher) {
+    if (launcher.otp_supported && launcher.configured) {
+      setOtpPrompt(launcher);
+      setOtpCode('');
+    } else {
+      fireSyncRequest(launcher.id);
+    }
+  }
+
+  async function fireSyncRequest(name, code) {
+    const opts = { method: 'POST', credentials: 'same-origin' };
+    if (code) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify({ otp_code: code });
+    }
+    await fetch(`/api/sync/${name}`, opts);
     queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
+  }
+
+  function submitOtp() {
+    if (!otpPrompt || !otpCode.trim()) return;
+    fireSyncRequest(otpPrompt.id, otpCode.trim());
+    setOtpPrompt(null);
+    setOtpCode('');
   }
 
   async function removeLauncher(name) {
@@ -169,7 +192,7 @@ function LaunchersTab() {
                   </button>
                 )}
                 <button
-                  onClick={() => syncLauncher(l.id)}
+                  onClick={() => handleSyncClick(l)}
                   className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
                 >
                   <RefreshCw size={14} /> Sync
@@ -213,6 +236,42 @@ function LaunchersTab() {
                 className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors"
               >
                 Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2FA code prompt */}
+      {otpPrompt && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-sm mx-4">
+            <h3 className="text-white font-medium mb-2">{otpPrompt.display_name} — Verification Code</h3>
+            <p className="text-gray-400 text-sm mb-4">
+              {otpPrompt.otp_instruction || 'Enter your verification code'}
+            </p>
+            <input
+              type="text"
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submitOtp()}
+              placeholder="Enter code"
+              autoFocus
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm mb-4 focus:outline-none focus:border-blue-500"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => { setOtpPrompt(null); setOtpCode(''); }}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitOtp}
+                disabled={!otpCode.trim()}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm rounded transition-colors"
+              >
+                Sync
               </button>
             </div>
           </div>

@@ -2,7 +2,7 @@ const { decrypt } = require('../utils/encrypt');
 const { LAUNCHER_CLASSES } = require('./launchers');
 const { enrichAll } = require('./metadata/enrichGame');
 
-async function syncLauncher(launcherName, db) {
+async function syncLauncher(launcherName, db, otpCode) {
   const launcher = db.prepare('SELECT * FROM launchers WHERE name = ?').get(launcherName);
 
   if (!launcher) {
@@ -23,6 +23,7 @@ async function syncLauncher(launcherName, db) {
   try {
     // Decrypt credentials
     const credentials = JSON.parse(decrypt(launcher.credentials_json));
+    if (otpCode) credentials.otp_code = otpCode;
 
     // Instantiate launcher class
     const LauncherClass = LAUNCHER_CLASSES[launcherName];

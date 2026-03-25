@@ -4,31 +4,70 @@ const BaseLauncher = require('./base');
 /**
  * Humble Bundle integration using unofficial session-based web API.
  *
- * TODO: Humble's API is unofficial and undocumented. This integration may break
- * if Humble Bundle changes their API or login flow. Monitor for 401/403 errors
- * and update accordingly.
+ * 2FA: Humble emails a verification code ("Humble Guard") on new logins.
+ * The code is passed via credentials.otp_code at sync time.
  *
- * Credentials shape: { username: string, password: string }
+ * Credentials shape: { username: string, password: string, otp_code?: string }
  */
 class HumbleLauncher extends BaseLauncher {
   async authenticate(credentials) {
-    const { username, password } = credentials;
+    const { username, password, otp_code } = credentials;
 
+    // First attempt: login with empty guard field
     const res = await axios.post(
       'https://www.humblebundle.com/processlogin',
-      new URLSearchParams({ username, password }),
+      new URLSearchParams({ username, password, guard: '' }),
       {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         maxRedirects: 0,
-        validateStatus: (status) => status < 400 || status === 302,
+        validateStatus: (status) => status < 500,
       }
     );
 
+    const data = res.data;
+
+    // Check if 2FA is required
+    if (data && data.humble_guard_required && !data.success) {
+      if (!otp_code) {
+        throw new Error('Humble Bundle requires a verification code. Sync this launcher individually with the code emailed to you.');
+      }
+
+      // Re-POST with the guard code
+      const guardRes = await axios.post(
+        'https://www.humblebundle.com/processlogin',
+        new URLSearchParams({ username, password, guard: otp_code }),
+        {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          maxRedirects: 0,
+          validateStatus: (status) => status < 500,
+        }
+      );
+
+      const guardData = guardRes.data;
+      if (!guardData || !guardData.success) {
+        const errMsg = guardData?.errors ? JSON.stringify(guardData.errors) : 'Invalid verification code';
+        throw new Error(`Humble Bundle 2FA failed: ${errMsg}`);
+      }
+
+      return this._extractSession(guardRes);
+    }
+
+    // No 2FA needed — check for direct success
+    if (data && data.success) {
+      return this._extractSession(res);
+    }
+
+    // Login failed for other reasons
+    const errMsg = data?.errors ? JSON.stringify(data.errors) : 'Login failed';
+    throw new Error(`Humble Bundle login failed: ${errMsg}`);
+  }
+
+  _extractSession(res) {
     const cookies = res.headers['set-cookie'] || [];
     const sessionCookie = cookies.find(c => c.includes('_simpleauth_sess'));
 
     if (!sessionCookie) {
-      throw new Error('Humble Bundle login failed: no session cookie received');
+      throw new Error('Humble Bundle login succeeded but no session cookie received');
     }
 
     return sessionCookie.split(';')[0]; // "_simpleauth_sess=value"
