@@ -174,6 +174,46 @@ describe('Launcher routes', () => {
     assert.equal(updated.sync_locked, 1, 'sync_locked should be 1 even when all approved');
   });
 
+  it('POST /api/launchers/:id/unlock-sync should clear sync_locked', async () => {
+    const db = app.locals.db;
+    db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('xbox');
+
+    const res = await makeFetch(app, '/api/launchers/xbox/unlock-sync', {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+
+    const row = db.prepare('SELECT sync_locked FROM launchers WHERE name = ?').get('xbox');
+    assert.equal(row.sync_locked, 0, 'sync_locked should be 0 after unlock');
+  });
+
+  it('POST /api/launchers/:id/unlock-sync should return 400 for unknown launcher', async () => {
+    const res = await makeFetch(app, '/api/launchers/fakeLauncher/unlock-sync', {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('DELETE /api/launchers/:id/credentials should reset sync_locked', async () => {
+    const db = app.locals.db;
+    db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('xbox');
+
+    const res = await makeFetch(app, '/api/launchers/xbox/credentials', {
+      method: 'DELETE',
+      headers: { Cookie: authCookie() },
+    });
+
+    assert.equal(res.status, 200);
+
+    const row = db.prepare('SELECT sync_locked FROM launchers WHERE name = ?').get('xbox');
+    assert.equal(row.sync_locked, 0, 'sync_locked should be reset when credentials removed');
+  });
+
   it('POST /api/sync/:launcherName should return 409 when sync-locked', async () => {
     const db = app.locals.db;
     db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('steam');

@@ -152,7 +152,7 @@ router.delete('/:id/credentials', (req, res) => {
   }
 
   db.prepare(
-    'UPDATE launchers SET credentials_json = NULL, enabled = 0, last_sync_at = NULL WHERE name = ?'
+    'UPDATE launchers SET credentials_json = NULL, enabled = 0, last_sync_at = NULL, sync_locked = 0 WHERE name = ?'
   ).run(id);
 
   const result = db.prepare(
@@ -283,6 +283,26 @@ router.post('/:id/approve', (req, res) => {
   db.prepare('UPDATE launchers SET sync_locked = 1 WHERE id = ?').run(launcherId);
 
   res.json({ deleted_editions: deletedEditions, deleted_games: deletedGames });
+});
+
+// POST /api/launchers/:id/unlock-sync
+router.post('/:id/unlock-sync', (req, res) => {
+  const { id } = req.params;
+  const launcher = LAUNCHER_MAP[id];
+
+  if (!launcher) {
+    return res.status(400).json({ error: `Unknown launcher: ${id}` });
+  }
+
+  const db = req.app.locals.db;
+  const row = db.prepare('SELECT id FROM launchers WHERE name = ?').get(id);
+
+  if (!row) {
+    return res.status(404).json({ error: 'Launcher not configured' });
+  }
+
+  db.prepare('UPDATE launchers SET sync_locked = 0 WHERE name = ?').run(id);
+  res.json({ success: true });
 });
 
 module.exports = router;
