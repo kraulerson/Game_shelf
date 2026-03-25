@@ -47,6 +47,7 @@ class HumbleLauncher extends BaseLauncher {
     );
 
     const data = res.data;
+    console.log(`[Humble] Login response: status=${res.status}, success=${data?.success}, guard_required=${data?.humble_guard_required}, keys=${data ? Object.keys(data).join(',') : 'null'}`);
 
     // 2FA required — Humble has sent the email, signal the sync engine
     if (data && data.humble_guard_required && !data.success) {
@@ -59,7 +60,8 @@ class HumbleLauncher extends BaseLauncher {
     }
 
     // Login failed for other reasons
-    const errMsg = data?.errors ? JSON.stringify(data.errors) : 'Login failed';
+    const errMsg = data?.errors ? JSON.stringify(data.errors) : (typeof data === 'string' ? data.substring(0, 200) : 'Login failed');
+    console.error(`[Humble] Login failed. Full response data:`, JSON.stringify(data).substring(0, 500));
     throw new Error(`Humble Bundle login failed: ${errMsg}`);
   }
 
