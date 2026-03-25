@@ -231,6 +231,25 @@ function MetadataTab() {
           {enriching ? 'Enriching...' : 'Re-enrich All'}
         </button>
       </div>
+      {status?.unenrichedList?.length > 0 && (
+        <div className="bg-gray-800 rounded-lg p-4">
+          <h3 className="text-white font-medium mb-2">Games Needing Enrichment</h3>
+          <div className="max-h-60 overflow-y-auto space-y-1">
+            {status.unenrichedList.map(g => (
+              <div key={g.id} className="flex items-center justify-between text-sm py-1 px-2 rounded hover:bg-gray-700">
+                <span className="text-gray-300">{g.title}</span>
+                <a
+                  href={`/library/game/${g.id}`}
+                  className="text-blue-400 hover:text-blue-300 text-xs"
+                  onClick={e => e.stopPropagation()}
+                >
+                  View
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="bg-gray-800 rounded-lg p-4">
         <h3 className="text-white font-medium mb-2">IGDB API Setup</h3>
         <p className="text-sm text-gray-400 mb-2">

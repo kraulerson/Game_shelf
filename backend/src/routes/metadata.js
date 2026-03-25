@@ -69,7 +69,14 @@ router.get('/status', (req, res) => {
     "AND EXISTS (SELECT 1 FROM game_editions ge WHERE ge.game_id = g.id)"
   ).get().count;
 
-  res.json({ unenriched, total });
+  const unenrichedList = db.prepare(
+    "SELECT g.id, g.title FROM games g " +
+    "WHERE g.cover_url IS NULL " +
+    "AND EXISTS (SELECT 1 FROM game_editions ge WHERE ge.game_id = g.id AND ge.parent_edition_id IS NULL) " +
+    "ORDER BY g.title ASC LIMIT 50"
+  ).all();
+
+  res.json({ unenriched, total, unenrichedList });
 });
 
 module.exports = router;
