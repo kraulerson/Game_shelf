@@ -79,6 +79,15 @@ router.post('/:launcherName/otp', (req, res) => {
 router.post('/:launcherName', (req, res) => {
   const db = req.app.locals.db;
   const { launcherName } = req.params;
+
+  // Check sync lock before firing sync
+  const launcher = db.prepare('SELECT sync_locked, display_name FROM launchers WHERE name = ?').get(launcherName);
+  if (launcher && launcher.sync_locked) {
+    return res.status(409).json({
+      error: `${launcher.display_name || launcherName} is locked. Unlock it in Settings before syncing.`
+    });
+  }
+
   const { otp_code } = req.body || {};
   // Fire and forget
   syncLauncher(launcherName, db, otp_code).catch(err =>

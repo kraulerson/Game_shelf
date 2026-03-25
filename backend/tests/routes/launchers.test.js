@@ -93,7 +93,7 @@ describe('Launcher routes', () => {
     await makeFetch(app, '/api/launchers/gog/credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
-      body: JSON.stringify({ username: 'goguser', password: 'gogpass' }),
+      body: JSON.stringify({ auth_code: 'gog-test-code' }),
     });
 
     const res = await makeFetch(app, '/api/launchers/priority', {
@@ -107,6 +107,23 @@ describe('Launcher routes', () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.deepEqual(body, { ok: true });
+  });
+
+  it('POST /api/sync/:launcherName should return 409 when sync-locked', async () => {
+    const db = app.locals.db;
+    db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('steam');
+
+    try {
+      const res = await makeFetch(app, '/api/sync/steam', {
+        method: 'POST',
+        headers: { Cookie: authCookie() },
+      });
+      assert.equal(res.status, 409);
+      const body = await res.json();
+      assert.ok(body.error.includes('locked'), 'Error should mention locked');
+    } finally {
+      db.prepare('UPDATE launchers SET sync_locked = 0 WHERE name = ?').run('steam');
+    }
   });
 });
 
