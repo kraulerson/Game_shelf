@@ -214,6 +214,16 @@ describe('Launcher routes', () => {
     assert.equal(row.sync_locked, 0, 'sync_locked should be reset when credentials removed');
   });
 
+  it('GET /api/launchers/available should include sync_locked field', async () => {
+    const res = await makeFetch(app, '/api/launchers/available', {
+      headers: { Cookie: authCookie() },
+    });
+    const body = await res.json();
+    const xbox = body.find(l => l.id === 'xbox');
+    assert.ok(xbox, 'Xbox should be in the list');
+    assert.ok('sync_locked' in xbox, 'sync_locked field should be present');
+  });
+
   it('POST /api/sync/:launcherName should return 409 when sync-locked', async () => {
     const db = app.locals.db;
     db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('steam');
