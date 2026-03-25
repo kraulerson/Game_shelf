@@ -98,17 +98,24 @@ describe('Sync engine', () => {
       'INSERT OR IGNORE INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
     ).run('gog', 'GOG', creds);
 
+    // GOG uses axios.create() + wrapper — mock axios.create to return a
+    // client that throws on get() (the initial auth page fetch)
     const axios = require('axios');
-    const originalPost = axios.post;
-    axios.post = async () => { throw new Error('Auth failed'); };
+    const originalCreate = axios.create;
+    axios.create = () => {
+      const failClient = async () => { throw new Error('Auth failed'); };
+      failClient.get = failClient;
+      failClient.post = failClient;
+      return failClient;
+    };
 
     try {
       const jobId = await syncLauncher('gog', db);
       const job = db.prepare('SELECT * FROM sync_jobs WHERE id = ?').get(jobId);
       assert.equal(job.status, 'failed');
-      assert.ok(job.error_message.includes('Auth failed'));
+      assert.ok(job.error_message, `error_message should be set, got: ${job.error_message}`);
     } finally {
-      axios.post = originalPost;
+      axios.create = originalCreate;
     }
   });
 
@@ -171,6 +178,68 @@ describe('Sync engine', () => {
       assert.ok(tier, 'Tier row should exist');
       assert.equal(tier.tier, 4); // GOTY = tier 4
     } finally {
+      axios.get = originalGet;
+    }
+  });
+
+  it('syncLauncher should mark job as awaiting_otp when launcher throws OTP_REQUIRED', async () => {
+    // REGRESSION: OTP_REQUIRED errors must not be treated as failures.
+    // They indicate the launcher needs a 2FA code — the job should park
+    // as awaiting_otp with the instruction text in error_message.
+    const { encrypt } = require('../../src/utils/encrypt');
+    const creds = encrypt(JSON.stringify({ username: 'u', password: 'p' }));
+    db.prepare(
+      'INSERT OR REPLACE INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
+    ).run('humble', 'Humble Bundle', creds);
+
+    const axios = require('axios');
+    const originalPost = axios.post;
+    axios.post = async () => ({
+      data: { humble_guard_required: true, success: false },
+      headers: {},
+    });
+
+    try {
+      const jobId = await syncLauncher('humble', db);
+      const job = db.prepare('SELECT * FROM sync_jobs WHERE id = ?').get(jobId);
+      assert.equal(job.status, 'awaiting_otp', 'Job should be awaiting_otp, not failed');
+      assert.ok(job.error_message.includes('code emailed'), `Instruction text should mention email, got: ${job.error_message}`);
+      assert.equal(job.completed_at, null, 'completed_at should remain null while awaiting OTP');
+    } finally {
+      axios.post = originalPost;
+    }
+  });
+
+  it('syncLauncher should complete sync when OTP code is provided (Phase 2)', async () => {
+    // REGRESSION: When called with an otpCode, Humble should skip the
+    // initial guard-less POST and submit the code directly.
+    const axios = require('axios');
+    const originalPost = axios.post;
+    const originalGet = axios.get;
+    const postCalls = [];
+
+    axios.post = async (url, data) => {
+      const params = Object.fromEntries(data.entries());
+      postCalls.push(params);
+      if (params.guard && params.guard !== '') {
+        return {
+          data: { success: true },
+          headers: { 'set-cookie': ['_simpleauth_sess=test123; Path=/'] },
+        };
+      }
+      return { data: { humble_guard_required: true, success: false }, headers: {} };
+    };
+    axios.get = async () => ({ data: [] }); // empty orders
+
+    try {
+      const jobId = await syncLauncher('humble', db, 'ABC123');
+      const job = db.prepare('SELECT * FROM sync_jobs WHERE id = ?').get(jobId);
+      assert.equal(job.status, 'success', 'Job should succeed with OTP code');
+      // Phase 2 should only make ONE POST (with the guard code), not two
+      assert.equal(postCalls.length, 1, 'Should skip initial guard-less POST');
+      assert.equal(postCalls[0].guard, 'ABC123', 'Should submit the OTP code as guard');
+    } finally {
+      axios.post = originalPost;
       axios.get = originalGet;
     }
   });

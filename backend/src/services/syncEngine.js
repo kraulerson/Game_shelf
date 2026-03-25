@@ -157,6 +157,16 @@ async function syncLauncher(launcherName, db, otpCode) {
 
     return jobId;
   } catch (err) {
+    if (err.message && err.message.startsWith('OTP_REQUIRED:')) {
+      // Two-phase 2FA: launcher needs a code — park the job
+      const instruction = err.message.substring('OTP_REQUIRED:'.length);
+      db.prepare(
+        'UPDATE sync_jobs SET status = ?, error_message = ? WHERE id = ?'
+      ).run('awaiting_otp', instruction, jobId);
+      console.log(`[Sync] ${launcherName} awaiting OTP code`);
+      return jobId;
+    }
+
     const completedAt = new Date().toISOString();
     db.prepare(
       'UPDATE sync_jobs SET status = ?, completed_at = ?, error_message = ? WHERE id = ?'
@@ -181,6 +191,9 @@ async function syncAll(db) {
 
     if (job.status === 'failed') {
       failed.push(launcher.name);
+    } else if (job.status === 'awaiting_otp') {
+      // 2FA launchers park here — not a failure or skip, just waiting for user input
+      continue;
     } else if (job.games_found === 0) {
       skipped.push(launcher.name);
     } else {

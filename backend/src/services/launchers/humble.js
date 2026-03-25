@@ -13,26 +13,9 @@ class HumbleLauncher extends BaseLauncher {
   async authenticate(credentials) {
     const { username, password, otp_code } = credentials;
 
-    // First attempt: login with empty guard field
-    const res = await axios.post(
-      'https://www.humblebundle.com/processlogin',
-      new URLSearchParams({ username, password, guard: '' }),
-      {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        maxRedirects: 0,
-        validateStatus: (status) => status < 500,
-      }
-    );
-
-    const data = res.data;
-
-    // Check if 2FA is required
-    if (data && data.humble_guard_required && !data.success) {
-      if (!otp_code) {
-        throw new Error('Humble Bundle requires a verification code. Sync this launcher individually with the code emailed to you.');
-      }
-
-      // Re-POST with the guard code
+    // Phase 2: if we already have a code, submit it directly
+    // (skip the guard-less POST to avoid triggering a second email)
+    if (otp_code) {
       const guardRes = await axios.post(
         'https://www.humblebundle.com/processlogin',
         new URLSearchParams({ username, password, guard: otp_code }),
@@ -50,6 +33,24 @@ class HumbleLauncher extends BaseLauncher {
       }
 
       return this._extractSession(guardRes);
+    }
+
+    // Phase 1: attempt login without guard — triggers email if 2FA enabled
+    const res = await axios.post(
+      'https://www.humblebundle.com/processlogin',
+      new URLSearchParams({ username, password, guard: '' }),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        maxRedirects: 0,
+        validateStatus: (status) => status < 500,
+      }
+    );
+
+    const data = res.data;
+
+    // 2FA required — Humble has sent the email, signal the sync engine
+    if (data && data.humble_guard_required && !data.success) {
+      throw new Error('OTP_REQUIRED:Enter the code emailed to you');
     }
 
     // No 2FA needed — check for direct success

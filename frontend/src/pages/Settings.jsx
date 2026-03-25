@@ -43,39 +43,48 @@ function LaunchersTab() {
     queryKey: ['launchersAvailable'],
     queryFn: () => fetch('/api/launchers/available', { credentials: 'same-origin' }).then(r => r.json()),
   });
-  const { data: syncStatus } = useQuery({
+  const { data: syncStatusData } = useQuery({
     queryKey: ['syncStatus'],
     queryFn: () => fetch('/api/sync/status', { credentials: 'same-origin' }).then(r => r.json()),
     refetchInterval: 10000,
   });
 
-  const statusMap = {};
-  (syncStatus || []).forEach(j => { statusMap[j.launcher_name] = j; });
+  const syncJobs = syncStatusData?.jobs || syncStatusData || [];
+  const otpWindowMs = syncStatusData?.otp_window_ms || 300000;
 
-  function handleSyncClick(launcher) {
-    if (launcher.otp_supported && launcher.configured) {
-      setOtpPrompt(launcher);
-      setOtpCode('');
-    } else {
-      fireSyncRequest(launcher.id);
-    }
+  const statusMap = {};
+  syncJobs.forEach(j => { statusMap[j.launcher_name] = j; });
+
+  function isAwaitingOtp(launcherName) {
+    const status = statusMap[launcherName];
+    if (!status || status.status !== 'awaiting_otp') return false;
+    const elapsed = Date.now() - new Date(status.started_at).getTime();
+    return elapsed < otpWindowMs;
   }
 
-  async function fireSyncRequest(name, code) {
-    const opts = { method: 'POST', credentials: 'same-origin' };
-    if (code) {
-      opts.headers = { 'Content-Type': 'application/json' };
-      opts.body = JSON.stringify({ otp_code: code });
+  function handleSyncClick(launcher) {
+    // If already awaiting OTP, show the code modal instead of starting a new sync
+    if (isAwaitingOtp(launcher.id)) {
+      setOtpPrompt({ ...launcher, otp_instruction: statusMap[launcher.id]?.error_message });
+      setOtpCode('');
+      return;
     }
-    await fetch(`/api/sync/${name}`, opts);
+    // Always fire sync immediately — backend handles 2FA detection
+    fetch(`/api/sync/${launcher.id}`, { method: 'POST', credentials: 'same-origin' });
     queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
   }
 
-  function submitOtp() {
+  async function submitOtp() {
     if (!otpPrompt || !otpCode.trim()) return;
-    fireSyncRequest(otpPrompt.id, otpCode.trim());
+    await fetch(`/api/sync/${otpPrompt.id}/otp`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ otp_code: otpCode.trim() }),
+    });
     setOtpPrompt(null);
     setOtpCode('');
+    queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
   }
 
   async function removeLauncher(name) {
@@ -173,7 +182,7 @@ function LaunchersTab() {
                       : 'Not configured'}
                   {status?.status && l.configured && l.implemented && (
                     <span className={`ml-2 ${status.status === 'success' ? 'text-green-400' : status.status === 'failed' ? 'text-red-400' : 'text-yellow-400'}`}>
-                      ({status.status})
+                      ({status.status === 'awaiting_otp' ? 'waiting for code' : status.status})
                     </span>
                   )}
                 </div>
@@ -191,12 +200,21 @@ function LaunchersTab() {
                     Approve
                   </button>
                 )}
-                <button
-                  onClick={() => handleSyncClick(l)}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
-                >
-                  <RefreshCw size={14} /> Sync
-                </button>
+                {isAwaitingOtp(l.id) ? (
+                  <button
+                    onClick={() => handleSyncClick(l)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors"
+                  >
+                    Enter Code
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleSyncClick(l)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+                  >
+                    <RefreshCw size={14} /> Sync
+                  </button>
+                )}
                 <button
                   onClick={() => setConfirmRemove(l.id)}
                   className="flex items-center gap-1 px-3 py-1.5 bg-red-900/50 hover:bg-red-800/50 text-red-400 text-sm rounded transition-colors"

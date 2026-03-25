@@ -83,7 +83,7 @@ class GOGLauncher extends BaseLauncher {
     // 2FA required — check for totp or two_step in redirect
     if (redirectUrl.includes('two_step') || redirectUrl.includes('totp')) {
       if (!otp_code) {
-        throw new Error('GOG requires an authenticator code. Sync this launcher individually with the code from your authenticator app.');
+        throw new Error('OTP_REQUIRED:Enter the code from your authenticator app');
       }
 
       // Step 4: GET the 2FA page to extract its CSRF token

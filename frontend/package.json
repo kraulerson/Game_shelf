@@ -1,6 +1,6 @@
 {
   "name": "gameshelf-frontend",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Gameshelf frontend",
   "type": "module",
   "scripts": {
