@@ -43,6 +43,16 @@ class GOGLauncher extends BaseLauncher {
     const authHtml = authPageRes.data;
 
     console.log('[GOG] Auth page status:', authPageRes.status, 'url:', authPageRes.request?.res?.responseUrl || '(unknown)');
+
+    // Log all hidden form fields to detect missing fields or CAPTCHAs
+    const hiddenFields = [...authHtml.matchAll(/<input[^>]*type="hidden"[^>]*>/gi)].map(m => m[0]);
+    console.log('[GOG] Hidden form fields:', hiddenFields.join(' | ') || '(none)');
+
+    // Check for CAPTCHA
+    if (authHtml.includes('recaptcha') || authHtml.includes('captcha') || authHtml.includes('g-recaptcha')) {
+      console.log('[GOG] WARNING: CAPTCHA detected on login page');
+    }
+
     const tokenMatch = authHtml.match(/name="login\[_token\]"[^>]*value="([^"]+)"/);
     if (!tokenMatch) {
       console.log('[GOG] Auth page HTML (first 500 chars):', authHtml.substring(0, 500));
@@ -161,7 +171,8 @@ class GOGLauncher extends BaseLauncher {
     }
 
     // If we got HTML back (login page again), credentials were wrong
-    console.log('[GOG] Unexpected state — no matching redirect. Status:', loginRes.status, 'Headers:', JSON.stringify(loginRes.headers || {}));
+    console.log('[GOG] Unexpected state — no matching redirect. Status:', loginRes.status);
+    console.log('[GOG] Login response body:', typeof loginRes.data === 'string' ? loginRes.data.substring(0, 500) : JSON.stringify(loginRes.data));
     throw new Error('GOG login failed — check username and password');
   }
 
