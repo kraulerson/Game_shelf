@@ -13,7 +13,7 @@ const AVAILABLE_LAUNCHERS = [
   { id: 'ea', display_name: 'EA App', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
   { id: 'ubisoft', display_name: 'Ubisoft Connect', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
   { id: 'epic', display_name: 'Epic Games', auth_type: 'auth_code', otp_supported: false, qr_supported: false, implemented: true },
-  { id: 'humble', display_name: 'Humble Bundle', auth_type: 'credentials', otp_supported: false, qr_supported: false, implemented: true },
+  { id: 'humble', display_name: 'Humble Bundle', auth_type: 'session_cookie', otp_supported: false, qr_supported: false, implemented: true, cookie_name: '_simpleauth_sess' },
   { id: 'itchio', display_name: 'itch.io', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'gog', display_name: 'GOG', auth_type: 'auth_code', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'battlenet', display_name: 'Battle.net', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
@@ -53,7 +53,7 @@ router.post('/:id/credentials', async (req, res) => {
     return res.status(400).json({ error: 'This launcher is not yet implemented' });
   }
 
-  const { username, password, api_key, steamid64, totp_secret, auth_code } = req.body || {};
+  const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie } = req.body || {};
 
   // Validate required fields by auth_type
   if (launcher.auth_type === 'api_key') {
@@ -63,6 +63,10 @@ router.post('/:id/credentials', async (req, res) => {
   } else if (launcher.auth_type === 'auth_code') {
     if (!auth_code) {
       return res.status(400).json({ error: 'auth_code is required for this launcher' });
+    }
+  } else if (launcher.auth_type === 'session_cookie') {
+    if (!session_cookie) {
+      return res.status(400).json({ error: 'session_cookie is required for this launcher' });
     }
   } else {
     // credentials or credentials+totp
@@ -88,6 +92,8 @@ router.post('/:id/credentials', async (req, res) => {
     } catch (err) {
       return res.status(400).json({ error: `Authentication failed: ${err.message}` });
     }
+  } else if (launcher.auth_type === 'session_cookie') {
+    payload = { session_cookie };
   } else {
     payload = {};
     if (username) payload.username = username;

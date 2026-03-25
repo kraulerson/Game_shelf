@@ -320,6 +320,25 @@ export default function Setup() {
                     );
                   })()}
 
+                  {launcher.auth_type === 'session_cookie' && (
+                    <div className="mb-3">
+                      <div className="text-sm text-gray-400 mb-3 space-y-1">
+                        <p>1. Log into <a href="https://www.humblebundle.com/login" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">humblebundle.com</a> in your browser</p>
+                        <p>2. Press F12 to open DevTools</p>
+                        <p>3. Go to Application → Cookies → humblebundle.com</p>
+                        <p>4. Find <code className="bg-gray-700 px-1 rounded text-xs">_simpleauth_sess</code> and copy its value</p>
+                      </div>
+                      <label className="block text-sm text-gray-300 mb-1">Session Cookie</label>
+                      <input
+                        type="password"
+                        value={creds.session_cookie || ''}
+                        onChange={(e) => updateField(launcher.id, 'session_cookie', e.target.value)}
+                        placeholder="Paste _simpleauth_sess value here..."
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
+
                   {launcher.id === 'steam' && (
                     <div className="mb-3">
                       <label className="block text-sm text-gray-300 mb-1">Steam ID (64-bit)</label>
