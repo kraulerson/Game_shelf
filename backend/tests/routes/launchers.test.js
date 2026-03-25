@@ -109,6 +109,71 @@ describe('Launcher routes', () => {
     assert.deepEqual(body, { ok: true });
   });
 
+  it('POST /api/launchers/:id/approve should set sync_locked on the launcher', async () => {
+    const db = app.locals.db;
+
+    // Setup: ensure xbox launcher exists with credentials and editions
+    const { encrypt } = require('../../src/utils/encrypt');
+    const creds = encrypt(JSON.stringify({ api_key: 'test-xbox-key' }));
+    db.prepare(
+      'INSERT OR REPLACE INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
+    ).run('xbox', 'Xbox / Microsoft', creds);
+
+    const launcher = db.prepare('SELECT id FROM launchers WHERE name = ?').get('xbox');
+    // Insert two editions
+    const ins = db.prepare(
+      'INSERT INTO game_editions (launcher_id, launcher_game_id, title, owned) VALUES (?, ?, ?, 1)'
+    );
+    ins.run(launcher.id, 'xbox-game-1', 'Halo Infinite');
+    ins.run(launcher.id, 'xbox-game-2', 'Forza Horizon 5');
+
+    const editions = db.prepare(
+      'SELECT id FROM game_editions WHERE launcher_id = ? AND owned = 1'
+    ).all(launcher.id);
+
+    // Approve only the first edition
+    const res = await makeFetch(app, '/api/launchers/xbox/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ approved_edition_ids: [editions[0].id] }),
+    });
+
+    assert.equal(res.status, 200);
+
+    // Verify sync_locked is set
+    const updated = db.prepare('SELECT sync_locked FROM launchers WHERE name = ?').get('xbox');
+    assert.equal(updated.sync_locked, 1, 'sync_locked should be 1 after approval');
+  });
+
+  it('POST /api/launchers/:id/approve should lock even when all games approved', async () => {
+    const db = app.locals.db;
+
+    // Unlock from previous test
+    db.prepare('UPDATE launchers SET sync_locked = 0 WHERE name = ?').run('xbox');
+
+    // Re-add an edition since previous test deleted some
+    const launcher = db.prepare('SELECT id FROM launchers WHERE name = ?').get('xbox');
+    db.prepare(
+      'INSERT OR IGNORE INTO game_editions (launcher_id, launcher_game_id, title, owned) VALUES (?, ?, ?, 1)'
+    ).run(launcher.id, 'xbox-game-3', 'Sea of Thieves');
+
+    const editions = db.prepare(
+      'SELECT id FROM game_editions WHERE launcher_id = ? AND owned = 1 AND parent_edition_id IS NULL'
+    ).all(launcher.id);
+
+    // Approve ALL editions
+    const res = await makeFetch(app, '/api/launchers/xbox/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ approved_edition_ids: editions.map(e => e.id) }),
+    });
+
+    assert.equal(res.status, 200);
+
+    const updated = db.prepare('SELECT sync_locked FROM launchers WHERE name = ?').get('xbox');
+    assert.equal(updated.sync_locked, 1, 'sync_locked should be 1 even when all approved');
+  });
+
   it('POST /api/sync/:launcherName should return 409 when sync-locked', async () => {
     const db = app.locals.db;
     db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('steam');

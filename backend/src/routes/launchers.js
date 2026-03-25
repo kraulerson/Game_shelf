@@ -244,6 +244,7 @@ router.post('/:id/approve', (req, res) => {
   const toDelete = allEditions.filter(e => !approvedSet.has(e.id));
 
   if (toDelete.length === 0) {
+    db.prepare('UPDATE launchers SET sync_locked = 1 WHERE id = ?').run(launcherId);
     return res.json({ deleted_editions: 0, deleted_games: 0 });
   }
 
@@ -278,6 +279,8 @@ router.post('/:id/approve', (req, res) => {
   });
 
   runApproval();
+
+  db.prepare('UPDATE launchers SET sync_locked = 1 WHERE id = ?').run(launcherId);
 
   res.json({ deleted_editions: deletedEditions, deleted_games: deletedGames });
 });
