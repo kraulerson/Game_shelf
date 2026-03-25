@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, RefreshCw, GripVertical } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
@@ -24,6 +24,11 @@ function LaunchersTab() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [confirmRemove, setConfirmRemove] = useState(null);
+  const location = useLocation();
+  const [flash, setFlash] = useState(location.state?.flash || null);
+  useEffect(() => {
+    if (location.state?.flash) window.history.replaceState({}, '');
+  }, []);
   const [reordering, setReordering] = useState(false);
   const [orderedLaunchers, setOrderedLaunchers] = useState([]);
 
@@ -116,6 +121,12 @@ function LaunchersTab() {
 
   return (
     <div className="space-y-3">
+      {flash && (
+        <div className="bg-green-900/50 border border-green-700 text-green-300 text-sm rounded-lg p-3 flex items-center justify-between">
+          <span>{flash}</span>
+          <button onClick={() => setFlash(null)} className="text-green-400 hover:text-white ml-2">&times;</button>
+        </div>
+      )}
       {hasConfigured && (
         <div className="flex justify-end">
           <button onClick={startReorder} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors">
@@ -149,6 +160,14 @@ function LaunchersTab() {
               <span className="text-xs text-gray-500 bg-gray-700 px-2.5 py-1 rounded-full">Coming Soon</span>
             ) : l.configured ? (
               <div className="flex items-center gap-2">
+                {l.id === 'xbox' && (
+                  <button
+                    onClick={() => navigate('/settings/xbox/approve')}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+                  >
+                    Approve
+                  </button>
+                )}
                 <button
                   onClick={() => syncLauncher(l.id)}
                   className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"

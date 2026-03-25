@@ -7,6 +7,7 @@ import Setup from './pages/Setup';
 import Library from './pages/Library';
 import GameDetail from './pages/GameDetail';
 import Settings from './pages/Settings';
+import XboxApproval from './pages/XboxApproval';
 
 function AuthenticatedLayout() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
 
           <Route element={<AuthenticatedLayout />}>
             <Route path="/settings" element={<Settings />} />
+            <Route path="/settings/xbox/approve" element={<XboxApproval />} />
 
             <Route element={<RequireSetup />}>
               <Route path="/library" element={<Library />} />

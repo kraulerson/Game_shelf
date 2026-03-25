@@ -184,4 +184,102 @@ router.post('/priority', (req, res) => {
   res.json({ ok: true });
 });
 
+// GET /api/launchers/:id/editions — lightweight list for approval page
+router.get('/:id/editions', (req, res) => {
+  const { id } = req.params;
+  const launcher = LAUNCHER_MAP[id];
+
+  if (!launcher) {
+    return res.status(400).json({ error: `Unknown launcher: ${id}` });
+  }
+
+  const db = req.app.locals.db;
+  const launcherRow = db.prepare('SELECT id FROM launchers WHERE name = ?').get(id);
+
+  if (!launcherRow) {
+    return res.status(404).json({ error: 'Launcher not configured' });
+  }
+
+  const editions = db.prepare(`
+    SELECT ge.id as edition_id, ge.title, g.cover_url
+    FROM game_editions ge
+    LEFT JOIN games g ON g.id = ge.game_id
+    WHERE ge.launcher_id = ? AND ge.owned = 1 AND ge.parent_edition_id IS NULL
+    ORDER BY ge.title ASC
+  `).all(launcherRow.id);
+
+  res.json({ editions });
+});
+
+// POST /api/launchers/:id/approve
+router.post('/:id/approve', (req, res) => {
+  const { id } = req.params;
+  const launcher = LAUNCHER_MAP[id];
+
+  if (!launcher) {
+    return res.status(400).json({ error: `Unknown launcher: ${id}` });
+  }
+
+  const { approved_edition_ids } = req.body || {};
+
+  if (!Array.isArray(approved_edition_ids) || approved_edition_ids.length === 0) {
+    return res.status(400).json({ error: 'approved_edition_ids must be a non-empty array' });
+  }
+
+  const db = req.app.locals.db;
+  const launcherRow = db.prepare('SELECT id FROM launchers WHERE name = ?').get(id);
+
+  if (!launcherRow) {
+    return res.status(404).json({ error: 'Launcher not configured' });
+  }
+
+  const launcherId = launcherRow.id;
+
+  // Find all owned editions for this launcher (excluding DLC children)
+  const allEditions = db.prepare(
+    'SELECT id, game_id FROM game_editions WHERE launcher_id = ? AND owned = 1 AND parent_edition_id IS NULL'
+  ).all(launcherId);
+
+  const approvedSet = new Set(approved_edition_ids.map(Number));
+  const toDelete = allEditions.filter(e => !approvedSet.has(e.id));
+
+  if (toDelete.length === 0) {
+    return res.json({ deleted_editions: 0, deleted_games: 0 });
+  }
+
+  const deleteDlcChildren = db.prepare('DELETE FROM game_editions WHERE parent_edition_id = ?');
+  const deleteEdition = db.prepare('DELETE FROM game_editions WHERE id = ?');
+  const countRemainingEditions = db.prepare(
+    'SELECT COUNT(*) as c FROM game_editions WHERE game_id = ?'
+  );
+  const deleteGame = db.prepare('DELETE FROM games WHERE id = ?');
+
+  let deletedEditions = 0;
+  let deletedGames = 0;
+
+  const runApproval = db.transaction(() => {
+    for (const edition of toDelete) {
+      // Delete DLC children first (parent_edition_id FK has no CASCADE)
+      const dlcResult = deleteDlcChildren.run(edition.id);
+      deletedEditions += dlcResult.changes;
+      // Delete the edition itself
+      deleteEdition.run(edition.id);
+      deletedEditions++;
+
+      // If game has no remaining editions, delete the game too
+      if (edition.game_id) {
+        const remaining = countRemainingEditions.get(edition.game_id);
+        if (remaining.c === 0) {
+          deleteGame.run(edition.game_id);
+          deletedGames++;
+        }
+      }
+    }
+  });
+
+  runApproval();
+
+  res.json({ deleted_editions: deletedEditions, deleted_games: deletedGames });
+});
+
 module.exports = router;
