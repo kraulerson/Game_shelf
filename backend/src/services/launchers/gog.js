@@ -75,7 +75,7 @@ class GOGLauncher extends BaseLauncher {
 
     // Success — extract code from redirect URL
     if (redirectUrl.includes('on_login_success')) {
-      const code = new URL(redirectUrl).searchParams.get('code');
+      const code = new URL(redirectUrl, 'https://auth.gog.com').searchParams.get('code');
       if (!code) throw new Error('GOG: Login succeeded but no OAuth code in redirect');
       return this._exchangeCode(code, credentials);
     }
@@ -146,7 +146,7 @@ class GOGLauncher extends BaseLauncher {
         throw new Error('GOG: 2FA submission failed — invalid code or unexpected response');
       }
 
-      const code = new URL(finalUrl).searchParams.get('code');
+      const code = new URL(finalUrl, 'https://auth.gog.com').searchParams.get('code');
       if (!code) throw new Error('GOG: 2FA succeeded but no OAuth code in redirect');
       return this._exchangeCode(code, credentials);
     }
