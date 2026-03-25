@@ -15,7 +15,7 @@ const AVAILABLE_LAUNCHERS = [
   { id: 'epic', display_name: 'Epic Games', auth_type: 'auth_code', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'humble', display_name: 'Humble Bundle', auth_type: 'credentials', otp_supported: true, qr_supported: false, implemented: true, otp_instruction: 'Enter the code emailed to you' },
   { id: 'itchio', display_name: 'itch.io', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
-  { id: 'gog', display_name: 'GOG', auth_type: 'credentials', otp_supported: true, qr_supported: false, implemented: true, otp_instruction: 'Enter the code from your authenticator app' },
+  { id: 'gog', display_name: 'GOG', auth_type: 'auth_code', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'battlenet', display_name: 'Battle.net', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
   { id: 'xbox', display_name: 'Xbox / Microsoft', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
 ];

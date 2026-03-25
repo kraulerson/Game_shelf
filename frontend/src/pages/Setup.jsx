@@ -275,32 +275,50 @@ export default function Setup() {
                     </div>
                   )}
 
-                  {launcher.auth_type === 'auth_code' && (
-                    <div className="mb-3">
-                      <p className="text-sm text-gray-400 mb-2">
-                        1. Click the link below and log in to your Epic Games account
-                      </p>
-                      <a
-                        href="https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect%3FclientId%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3"
-                      >
-                        Open Epic Games Login
-                      </a>
-                      <p className="text-sm text-gray-400 mb-2">
-                        2. After logging in, copy the &quot;authorizationCode&quot; value and paste it below
-                      </p>
-                      <label className="block text-sm text-gray-300 mb-1">Authorization Code</label>
-                      <input
-                        type="text"
-                        value={creds.auth_code || ''}
-                        onChange={(e) => updateField(launcher.id, 'auth_code', e.target.value)}
-                        placeholder="Paste code here..."
-                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  )}
+                  {launcher.auth_type === 'auth_code' && (() => {
+                    const authCodeConfig = {
+                      epic: {
+                        url: 'https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect%3FclientId%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode',
+                        linkText: 'Open Epic Games Login',
+                        step1: 'Click the link below and log in to your Epic Games account',
+                        step2: 'After logging in, copy the "authorizationCode" value and paste it below',
+                      },
+                      gog: {
+                        url: 'https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=client2',
+                        linkText: 'Open GOG Login',
+                        step1: 'Click the link below and log in to your GOG account',
+                        step2: 'After logging in, you will be redirected to a page that may appear blank. Copy the "code" value from your browser\'s address bar and paste it below',
+                      },
+                    };
+                    const config = authCodeConfig[launcher.id] || {
+                      url: '#',
+                      linkText: `Open ${launcher.display_name} Login`,
+                      step1: `Click the link below and log in to your ${launcher.display_name} account`,
+                      step2: 'After logging in, copy the authorization code and paste it below',
+                    };
+                    return (
+                      <div className="mb-3">
+                        <p className="text-sm text-gray-400 mb-2">1. {config.step1}</p>
+                        <a
+                          href={config.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3"
+                        >
+                          {config.linkText}
+                        </a>
+                        <p className="text-sm text-gray-400 mb-2">2. {config.step2}</p>
+                        <label className="block text-sm text-gray-300 mb-1">Authorization Code</label>
+                        <input
+                          type="text"
+                          value={creds.auth_code || ''}
+                          onChange={(e) => updateField(launcher.id, 'auth_code', e.target.value)}
+                          placeholder="Paste code here..."
+                          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    );
+                  })()}
 
                   {launcher.id === 'steam' && (
                     <div className="mb-3">

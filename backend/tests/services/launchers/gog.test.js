@@ -1,24 +1,34 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-describe('GOG URL parsing', () => {
-  // REGRESSION: GOG may return relative redirect URLs (e.g., /on_login_success?code=XXX)
-  // which caused "Invalid URL" when parsed with new URL() without a base.
+describe('GOG Launcher', () => {
+  it('refreshIfNeeded should throw clear error when no refresh_token exists', async () => {
+    // REGRESSION: Old username/password credentials have no refresh_token.
+    // refreshIfNeeded must throw a clear re-configure message, not a cryptic error.
+    const GOGLauncher = require('../../../src/services/launchers/gog');
+    const instance = new GOGLauncher('gog', null);
 
-  it('should parse OAuth code from relative redirect URL', () => {
-    const relativeUrl = '/on_login_success?origin=client&code=ABC123';
-    const code = new URL(relativeUrl, 'https://auth.gog.com').searchParams.get('code');
-    assert.equal(code, 'ABC123');
+    await assert.rejects(
+      () => instance.refreshIfNeeded({ username: 'old', password: 'creds' }),
+      { message: /reconfigured|re-add|Setup/i }
+    );
   });
 
-  it('should parse OAuth code from absolute redirect URL', () => {
-    const absoluteUrl = 'https://embed.gog.com/on_login_success?origin=client&code=DEF456';
-    const code = new URL(absoluteUrl, 'https://auth.gog.com').searchParams.get('code');
-    assert.equal(code, 'DEF456');
-  });
+  it('refreshIfNeeded should throw clear error when refresh token is expired', async () => {
+    const axios = require('axios');
+    const originalGet = axios.get;
+    axios.get = async () => { throw new Error('invalid_grant'); };
 
-  it('should throw without base URL on relative path (pre-fix behavior)', () => {
-    const relativeUrl = '/on_login_success?origin=client&code=ABC123';
-    assert.throws(() => new URL(relativeUrl), { code: 'ERR_INVALID_URL' });
+    try {
+      const GOGLauncher = require('../../../src/services/launchers/gog');
+      const instance = new GOGLauncher('gog', null);
+
+      await assert.rejects(
+        () => instance.refreshIfNeeded({ refresh_token: 'expired_token' }),
+        { message: /expired|re-add|Setup/i }
+      );
+    } finally {
+      axios.get = originalGet;
+    }
   });
 });

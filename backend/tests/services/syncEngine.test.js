@@ -93,29 +93,22 @@ describe('Sync engine', () => {
 
   it('syncLauncher should handle errors gracefully', async () => {
     const { encrypt } = require('../../src/utils/encrypt');
-    const creds = encrypt(JSON.stringify({ username: 'u', password: 'p' }));
+    const creds = encrypt(JSON.stringify({ access_token: 'old', refresh_token: 'expired' }));
     db.prepare(
-      'INSERT OR IGNORE INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
+      'INSERT OR REPLACE INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
     ).run('gog', 'GOG', creds);
 
-    // GOG uses axios.create() + wrapper — mock axios.create to return a
-    // client that throws on get() (the initial auth page fetch)
     const axios = require('axios');
-    const originalCreate = axios.create;
-    axios.create = () => {
-      const failClient = async () => { throw new Error('Auth failed'); };
-      failClient.get = failClient;
-      failClient.post = failClient;
-      return failClient;
-    };
+    const originalGet = axios.get;
+    axios.get = async () => { throw new Error('Token refresh failed'); };
 
     try {
       const jobId = await syncLauncher('gog', db);
       const job = db.prepare('SELECT * FROM sync_jobs WHERE id = ?').get(jobId);
       assert.equal(job.status, 'failed');
-      assert.ok(job.error_message, `error_message should be set, got: ${job.error_message}`);
+      assert.ok(job.error_message, 'error_message should be set');
     } finally {
-      axios.create = originalCreate;
+      axios.get = originalGet;
     }
   });
 
