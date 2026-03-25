@@ -20,6 +20,17 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const ROMAN_NUMERALS = new Set(['i','ii','iii','iv','v','vi','vii','viii','ix','x']);
+
+function humanizeSlug(slug) {
+  // Strip trailing _\d+ (product ID suffix)
+  const stripped = slug.replace(/_\d+$/, '');
+  return stripped
+    .split('_')
+    .map(w => ROMAN_NUMERALS.has(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 class GOGLauncher extends BaseLauncher {
   /**
    * Exchange a one-time authorization code for tokens.
@@ -92,9 +103,14 @@ class GOGLauncher extends BaseLauncher {
           params: { expand: 'description' },
         });
 
+        let title = productRes.data.title;
+        if (/^product_title_\d+$/.test(title) && productRes.data.slug) {
+          title = humanizeSlug(productRes.data.slug);
+        }
+
         games.push({
           launcher_game_id: id.toString(),
-          title: productRes.data.title,
+          title,
           playtime_minutes: 0,
         });
       } catch (err) {
@@ -110,3 +126,4 @@ class GOGLauncher extends BaseLauncher {
 }
 
 module.exports = GOGLauncher;
+module.exports.humanizeSlug = humanizeSlug;
