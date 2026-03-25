@@ -9,7 +9,7 @@ When the user approves Xbox games (selecting only owned titles), rejected games 
 
 ## Solution
 
-Add a `sync_locked` flag to the `launchers` table. After approval, the launcher is automatically locked. The sync engine and sync endpoints refuse to sync locked launchers. The user must explicitly unlock before syncing again.
+Add a `sync_locked` flag to the `launchers` table. After approval, the launcher is automatically locked. The sync engine refuses to sync locked launchers. The user must explicitly unlock before syncing again.
 
 ## Schema Change
 
@@ -19,33 +19,43 @@ Add column to `launchers` table:
 ALTER TABLE launchers ADD COLUMN sync_locked INTEGER NOT NULL DEFAULT 0;
 ```
 
-Applied as a migration in `backend/src/db/migrations/`.
+Applied inline in `backend/src/db/migrate.js` following the existing column-existence-check pattern (e.g., the `games_found` migration).
 
 ## Backend Changes
 
 ### 1. Approve Endpoint (`POST /api/launchers/:id/approve`)
 
-After deleting rejected editions, set `sync_locked = 1` on the launcher row. This automatically locks the launcher post-approval.
+Set `sync_locked = 1` on the launcher row after processing — including the early-return path where all games are approved (no deletions). The user has explicitly reviewed the list, so the lock should engage regardless.
 
-### 2. Sync Guard — Route Level (`POST /api/sync/:launcherName`)
+### 2. Sync Guard — Engine Level (`syncLauncher()` in `syncEngine.js`)
 
-Before calling `syncLauncher()`, check `sync_locked`. If locked, return HTTP 409:
+Add the lock check inside `syncLauncher()` itself, before authentication/fetch. This is the single source of truth for the guard, protecting both the HTTP endpoint and the cron-scheduled `syncAll()` path. Throw an error like `"Launcher is sync-locked"` so the sync job is recorded as failed with a clear message.
+
+### 3. Sync Guard — Route Level (`POST /api/sync/:launcherName`)
+
+Also check `sync_locked` at the route level before firing `syncLauncher()`. Return HTTP 409:
 
 ```json
 { "error": "Xbox is locked. Unlock it in Settings before syncing." }
 ```
 
-### 3. Sync Guard — `syncAll()` in `syncEngine.js`
+This provides a clean user-facing error without creating a failed sync job.
 
-Skip locked launchers. Add a `locked` array to the return value so callers know which launchers were skipped.
+### 4. Sync Guard — `syncAll()` in `syncEngine.js`
 
-### 4. Available Endpoint (`GET /api/launchers/available`)
+Skip locked launchers. Add a `locked` array to the return value (separate from `skipped`, which means "synced but found nothing").
 
-Include `sync_locked` in the response object so the frontend can reflect lock state.
+### 5. Available Endpoint (`GET /api/launchers/available`)
 
-### 5. New Unlock Endpoint (`POST /api/launchers/:id/unlock-sync`)
+Add `sync_locked` to the DB query in the `/available` handler (currently selects only `name`, `credentials_json`, `priority`). Merge it into the response object alongside `configured` and `priority`.
 
-Sets `sync_locked = 0` on the launcher. Returns `{ success: true }`.
+### 6. New Unlock Endpoint (`POST /api/launchers/:id/unlock-sync`)
+
+Sets `sync_locked = 0` on the launcher. Validates launcher ID against `LAUNCHER_MAP` and the DB row, returning 400/404 on invalid input. Returns `{ success: true }` on success. Idempotent — unlocking an already-unlocked launcher is a no-op success.
+
+### 7. Credential Deletion (`DELETE /api/launchers/:id/credentials`)
+
+Reset `sync_locked = 0` when credentials are removed. This prevents a stale lock persisting if the user removes and re-adds credentials.
 
 ## Frontend Changes
 
@@ -55,11 +65,11 @@ When a launcher has `sync_locked = true`:
 
 - Replace the Sync button with a locked indicator (Lock icon + "Locked" text)
 - Show an "Unlock" button that calls `POST /api/launchers/:id/unlock-sync`
-- Keep the "Approve" button visible for re-approval after unlock + sync
+- Keep the "Approve" button visible (works independently of lock state)
 
 ### XboxApproval Page
 
-No changes needed — it already works correctly on its own.
+Update the confirmation dialog text from "re-sync to recover" to "unlock and re-sync to recover" to reflect the new workflow.
 
 ## What Doesn't Change
 
@@ -69,6 +79,9 @@ No changes needed — it already works correctly on its own.
 
 ## Testing
 
-- Regression test: approve Xbox games, verify `sync_locked = 1`, attempt sync, verify it's blocked with 409
+- Regression test: approve Xbox games, verify `sync_locked = 1`, attempt sync via route, verify 409 response
+- Engine guard test: call `syncLauncher()` directly on a locked launcher, verify it throws/fails
 - Unlock test: unlock launcher, verify sync proceeds normally
-- syncAll test: verify locked launchers are skipped and reported
+- syncAll test: verify locked launchers are skipped and listed in `locked` array
+- Credential deletion test: lock a launcher, delete credentials, verify `sync_locked` is reset to 0
+- Approve-all test: approve all games (no deletions), verify lock is still set
