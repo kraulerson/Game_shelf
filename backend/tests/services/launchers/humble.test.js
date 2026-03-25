@@ -54,6 +54,44 @@ describe('Humble Launcher', () => {
     }
   });
 
+  // REGRESSION: Humble subproducts include soundtracks, artbooks, etc.
+  // fetchOwnedGames must filter these out based on title patterns.
+  it('fetchOwnedGames should filter out soundtracks and non-game items', async () => {
+    const axios = require('axios');
+    const originalGet = axios.get;
+
+    axios.get = async (url) => {
+      if (url.includes('/user/order')) {
+        return { status: 200, data: [{ gamekey: 'key1' }] };
+      }
+      if (url.includes('/order/key1')) {
+        return {
+          data: {
+            subproducts: [
+              { machine_name: 'game1', human_name: 'Cool Game', downloads: [{ platform: 'windows' }] },
+              { machine_name: 'ost1', human_name: 'Cool Game Soundtrack', downloads: [{ platform: 'audio' }] },
+              { machine_name: 'ost2', human_name: 'Cool Game OST', downloads: [{ platform: 'audio' }] },
+              { machine_name: 'ost3', human_name: 'Cool Game Original Score', downloads: [{ platform: 'audio' }] },
+              { machine_name: 'art1', human_name: 'Cool Game Artbook', downloads: [{ platform: 'ebook' }] },
+            ],
+          },
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    try {
+      const HumbleLauncher = require('../../../src/services/launchers/humble');
+      const instance = new HumbleLauncher('humble', null);
+      const games = await instance.fetchOwnedGames('_simpleauth_sess=test');
+
+      assert.equal(games.length, 1, 'Should only return the actual game');
+      assert.equal(games[0].title, 'Cool Game');
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+
   // REGRESSION: Humble returns redirect/non-JSON when session cookie is expired.
   // fetchOwnedGames must throw a clear error, not crash on invalid data.
   it('fetchOwnedGames should throw clear error on expired session', async () => {

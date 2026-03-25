@@ -10,6 +10,8 @@ const BaseLauncher = require('./base');
  *
  * Credentials shape: { session_cookie: string }
  */
+const NON_GAME_PATTERN = /\b(soundtrack|ost|original score|original sound|artbook|art book|comic|wallpaper|desktop theme)\b/i;
+
 class HumbleLauncher extends BaseLauncher {
   async refreshIfNeeded(credentials) {
     if (!credentials.session_cookie) {
@@ -55,8 +57,8 @@ class HumbleLauncher extends BaseLauncher {
 
         const subproducts = orderRes.data?.subproducts || [];
         for (const sub of subproducts) {
-          // Only include items with downloads (actual games, not coupons/etc)
-          if (sub.downloads && sub.downloads.length > 0 && !seen.has(sub.machine_name)) {
+          // Only include items with downloads (actual games, not coupons/soundtracks/etc)
+          if (sub.downloads && sub.downloads.length > 0 && !seen.has(sub.machine_name) && !NON_GAME_PATTERN.test(sub.human_name)) {
             seen.add(sub.machine_name);
             games.push({
               launcher_game_id: sub.machine_name,
