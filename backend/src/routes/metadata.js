@@ -58,15 +58,15 @@ router.post('/re-enrich/:gameId', async (req, res, next) => {
 router.get('/status', (req, res) => {
   const db = req.app.locals.db;
 
-  // Only count games that have at least one edition (exclude orphan rows)
+  // Only count games that have at least one non-DLC edition (exclude orphans and DLC-only)
   const total = db.prepare(
     "SELECT COUNT(*) as count FROM games g " +
-    "WHERE EXISTS (SELECT 1 FROM game_editions ge WHERE ge.game_id = g.id)"
+    "WHERE EXISTS (SELECT 1 FROM game_editions ge WHERE ge.game_id = g.id AND ge.parent_edition_id IS NULL)"
   ).get().count;
   const unenriched = db.prepare(
     "SELECT COUNT(*) as count FROM games g " +
     "WHERE g.cover_url IS NULL " +
-    "AND EXISTS (SELECT 1 FROM game_editions ge WHERE ge.game_id = g.id)"
+    "AND EXISTS (SELECT 1 FROM game_editions ge WHERE ge.game_id = g.id AND ge.parent_edition_id IS NULL)"
   ).get().count;
 
   const unenrichedList = db.prepare(
