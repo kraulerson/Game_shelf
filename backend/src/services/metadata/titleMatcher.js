@@ -94,6 +94,12 @@ function findBestMatch(searchTitle, igdbResults) {
       similarity = Math.max(similarity, 0.80);
     }
 
+    // Boost suffix matches: GOG uses short names, IGDB has franchise prefixes
+    // e.g. "Heroes of the Lance" vs "Advanced Dungeons & Dragons: Heroes of the Lance"
+    if (longer.endsWith(shorter) && (longer.length === shorter.length || longer[longer.length - shorter.length - 1] === '-')) {
+      similarity = Math.max(similarity, 0.80);
+    }
+
     if (similarity > bestSimilarity) {
       bestSimilarity = similarity;
       bestMatch = result;

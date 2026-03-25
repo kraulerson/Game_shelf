@@ -93,6 +93,36 @@ describe('Title matcher', () => {
       assert.equal(match.id, 1);
     });
 
+    // REGRESSION: GOG uses short names like "Heroes of the Lance" but IGDB
+    // has the full franchise title "Advanced Dungeons & Dragons: Heroes of the Lance".
+    // The suffix boost matches when the search slug appears at the END of the IGDB slug.
+    it('should match when search title is a suffix of IGDB title (franchise prefix)', () => {
+      const results = [
+        { name: 'Advanced Dungeons & Dragons: Heroes of the Lance', id: 1 },
+        { name: 'Some Other Game', id: 2 },
+      ];
+      const match = findBestMatch('Heroes of the Lance', results);
+      assert.ok(match, 'Should match via suffix boost');
+      assert.equal(match.id, 1);
+    });
+
+    it('should match Hillsfar with AD&D prefix', () => {
+      const results = [
+        { name: 'Advanced Dungeons & Dragons: Hillsfar', id: 1 },
+      ];
+      const match = findBestMatch('Hillsfar', results);
+      assert.ok(match, 'Should match via suffix boost');
+      assert.equal(match.id, 1);
+    });
+
+    it('should not suffix-boost without word boundary', () => {
+      const results = [
+        { name: 'SuperHillsfar', id: 1 },
+      ];
+      const match = findBestMatch('Hillsfar', results);
+      assert.equal(match, null, 'Should not boost without word boundary');
+    });
+
     it('should not prefix-boost without word boundary', () => {
       const results = [
         { name: 'MechWarrior 50: Future Edition', id: 1 },
