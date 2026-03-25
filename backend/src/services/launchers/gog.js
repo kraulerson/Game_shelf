@@ -103,6 +103,11 @@ class GOGLauncher extends BaseLauncher {
           params: { expand: 'description' },
         });
 
+        if (productRes.data.game_type !== 'game') {
+          console.log(`[GOG] Skipping non-game product: ${productRes.data.title} (type: ${productRes.data.game_type})`);
+          continue;
+        }
+
         let title = productRes.data.title;
         if (/^product_title_\d+$/.test(title) && productRes.data.slug) {
           title = humanizeSlug(productRes.data.slug);
