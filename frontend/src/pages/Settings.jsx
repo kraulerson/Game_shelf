@@ -197,6 +197,28 @@ function LaunchersTab() {
             </div>
             {!l.implemented ? (
               <span className="text-xs text-gray-500 bg-gray-700 px-2.5 py-1 rounded-full">Coming Soon</span>
+            ) : l.auth_type === 'file_import' ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigate(`/settings/${l.id}/approve`)}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+                >
+                  Import Database
+                </button>
+                {l.sync_locked && (
+                  <>
+                    <span className="flex items-center gap-1 px-3 py-1.5 bg-yellow-900/30 text-yellow-400 text-sm rounded">
+                      <Lock size={14} /> Locked
+                    </span>
+                    <button
+                      onClick={() => unlockSync(l.id)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+                    >
+                      Unlock
+                    </button>
+                  </>
+                )}
+              </div>
             ) : l.configured ? (
               <div className="flex items-center gap-2">
                 {l.id === 'xbox' && (
