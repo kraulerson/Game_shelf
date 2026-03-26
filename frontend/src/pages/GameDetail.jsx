@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, X, Plus, Pencil, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Loader2, X, Plus, Pencil, RefreshCw, Upload, RotateCcw } from 'lucide-react';
 import LauncherBadge from '../components/LauncherBadge';
 
 function formatPlaytime(minutes) {
@@ -22,6 +22,9 @@ export default function GameDetail() {
   const [titleInput, setTitleInput] = useState('');
   const [enriching, setEnriching] = useState(false);
   const [showDLC, setShowDLC] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [descriptionInput, setDescriptionInput] = useState('');
+  const [uploadingCover, setUploadingCover] = useState(false);
 
   const { data: game, isLoading, error } = useQuery({
     queryKey: ['game', id],
@@ -105,6 +108,45 @@ export default function GameDetail() {
     queryClient.invalidateQueries({ queryKey: ['games'] });
   }
 
+  async function saveDescription() {
+    const res = await fetch(`/api/games/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ description: descriptionInput }),
+    });
+    if (res.ok) {
+      setEditingDescription(false);
+      queryClient.invalidateQueries({ queryKey: ['game', id] });
+    }
+  }
+
+  async function uploadCover(file) {
+    setUploadingCover(true);
+    const formData = new FormData();
+    formData.append('cover', file);
+    const res = await fetch(`/api/games/${id}/cover`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData,
+    });
+    setUploadingCover(false);
+    if (res.ok) {
+      queryClient.invalidateQueries({ queryKey: ['game', id] });
+      queryClient.invalidateQueries({ queryKey: ['games'] });
+    }
+  }
+
+  async function resetOverride(field) {
+    await fetch(`/api/games/${id}/manual-override`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ field }),
+    });
+    queryClient.invalidateQueries({ queryKey: ['game', id] });
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -150,13 +192,41 @@ export default function GameDetail() {
 
         {/* Cover + title overlay */}
         <div className="absolute bottom-0 left-0 right-0 px-6 pb-4 flex items-end gap-4">
-          {game.cover_url && (
-            <img
-              src={game.cover_url}
-              alt={game.title}
-              className="w-24 md:w-32 rounded-lg shadow-lg border-2 border-gray-700 -mb-8 relative z-10"
-            />
-          )}
+          <div className="relative group -mb-8 z-10">
+            {game.cover_url ? (
+              <img
+                src={game.cover_url}
+                alt={game.title}
+                className="w-24 md:w-32 rounded-lg shadow-lg border-2 border-gray-700"
+              />
+            ) : (
+              <div className="w-24 md:w-32 h-32 md:h-44 rounded-lg border-2 border-dashed border-gray-600 flex items-center justify-center bg-gray-800">
+                <Upload size={20} className="text-gray-500" />
+              </div>
+            )}
+            <label className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 rounded-lg cursor-pointer transition-opacity">
+              {uploadingCover ? (
+                <Loader2 size={20} className="animate-spin text-white" />
+              ) : (
+                <Upload size={20} className="text-white" />
+              )}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={e => { if (e.target.files[0]) uploadCover(e.target.files[0]); }}
+              />
+            </label>
+            {game.manual_cover === 1 && (
+              <button
+                onClick={() => resetOverride('cover')}
+                className="absolute -top-2 -right-2 bg-gray-700 hover:bg-gray-600 rounded-full p-1 z-20"
+                title="Reset to auto-enriched cover"
+              >
+                <RotateCcw size={10} className="text-gray-300" />
+              </button>
+            )}
+          </div>
           <div className="pb-2">
             <div className="flex items-center gap-2">
               {editingTitle ? (
@@ -253,21 +323,64 @@ export default function GameDetail() {
         )}
 
         {/* Description */}
-        {game.description && (
-          <div className="mb-6">
-            <p className={`text-gray-300 text-sm leading-relaxed ${!showFullDesc ? 'line-clamp-4' : ''}`}>
-              {game.description}
-            </p>
-            {game.description.length > 200 && (
-              <button
-                onClick={() => setShowFullDesc(!showFullDesc)}
-                className="text-blue-400 text-sm mt-1 hover:text-blue-300"
-              >
-                {showFullDesc ? 'Show less' : 'Read more'}
-              </button>
-            )}
-          </div>
-        )}
+        <div className="mb-6">
+          {editingDescription ? (
+            <div>
+              <textarea
+                value={descriptionInput}
+                onChange={e => setDescriptionInput(e.target.value)}
+                rows={5}
+                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-gray-300 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                placeholder="Enter a description..."
+                autoFocus
+              />
+              <div className="flex gap-2 mt-2">
+                <button onClick={saveDescription} className="text-green-400 hover:text-green-300 text-sm">Save</button>
+                <button onClick={() => setEditingDescription(false)} className="text-gray-400 hover:text-white text-sm">Cancel</button>
+              </div>
+            </div>
+          ) : game.description ? (
+            <div>
+              <div className="flex items-start gap-2">
+                <p className={`text-gray-300 text-sm leading-relaxed flex-1 ${!showFullDesc ? 'line-clamp-4' : ''}`}>
+                  {game.description}
+                </p>
+                <button
+                  onClick={() => { setEditingDescription(true); setDescriptionInput(game.description); }}
+                  className="text-gray-500 hover:text-white flex-shrink-0 mt-0.5"
+                >
+                  <Pencil size={12} />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                {game.description.length > 200 && (
+                  <button
+                    onClick={() => setShowFullDesc(!showFullDesc)}
+                    className="text-blue-400 text-sm mt-1 hover:text-blue-300"
+                  >
+                    {showFullDesc ? 'Show less' : 'Read more'}
+                  </button>
+                )}
+                {game.manual_description === 1 && (
+                  <button
+                    onClick={() => resetOverride('description')}
+                    className="text-gray-500 hover:text-amber-400 text-xs mt-1 inline-flex items-center gap-1"
+                    title="Reset to auto-enriched description"
+                  >
+                    <RotateCcw size={10} /> Manual
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => { setEditingDescription(true); setDescriptionInput(''); }}
+              className="text-gray-500 hover:text-blue-400 text-sm inline-flex items-center gap-1"
+            >
+              <Plus size={14} /> Add description
+            </button>
+          )}
+        </div>
 
         {/* Versions & Editions */}
         {game.editions?.length > 0 && (
