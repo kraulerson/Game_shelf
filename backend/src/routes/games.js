@@ -158,7 +158,7 @@ router.patch('/:id', (req, res) => {
     return res.status(400).json({ error: 'title or description is required' });
   }
 
-  const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);
+  const game = db.prepare('SELECT id, title FROM games WHERE id = ?').get(id);
   if (!game) {
     return res.status(404).json({ error: 'Game not found' });
   }
@@ -183,6 +183,11 @@ router.patch('/:id', (req, res) => {
     db.prepare(
       "UPDATE games SET title = ?, slug = ?, manual_title = 1, updated_at = datetime('now') WHERE id = ?"
     ).run(title.trim(), slug, id);
+
+    // Update edition titles that match the old game title
+    db.prepare(
+      'UPDATE game_editions SET title = ? WHERE game_id = ? AND title = ?'
+    ).run(title.trim(), id, game.title);
   }
 
   if (hasDescription) {

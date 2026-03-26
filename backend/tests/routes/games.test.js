@@ -167,6 +167,34 @@ describe('Games routes', () => {
     assert.notEqual(updated.slug, 'existing-game', 'slug should have suffix to avoid collision');
   });
 
+  it('PATCH /api/games/:id should update edition titles that match old game title', async () => {
+    const db = app.locals.db;
+    db.prepare("INSERT OR IGNORE INTO games (title, slug) VALUES ('Old Name', 'old-name')").run();
+    const game = db.prepare("SELECT id FROM games WHERE slug = 'old-name'").get();
+    const launcherId = db.prepare('SELECT id FROM launchers LIMIT 1').get().id;
+
+    // Create two editions — one matching old title, one different
+    db.prepare('INSERT INTO game_editions (game_id, launcher_id, launcher_game_id, title, owned) VALUES (?, ?, ?, ?, 1)').run(
+      game.id, launcherId, 'ed-match', 'Old Name'
+    );
+    db.prepare('INSERT INTO game_editions (game_id, launcher_id, launcher_game_id, title, owned) VALUES (?, ?, ?, ?, 1)').run(
+      game.id, launcherId, 'ed-diff', 'Old Name Deluxe Edition'
+    );
+
+    const res = await makeFetch(app, `/api/games/${game.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ title: 'New Name' }),
+    });
+    assert.equal(res.status, 200);
+
+    const matchEd = db.prepare("SELECT title FROM game_editions WHERE launcher_game_id = 'ed-match'").get();
+    assert.equal(matchEd.title, 'New Name', 'edition with matching title should be updated');
+
+    const diffEd = db.prepare("SELECT title FROM game_editions WHERE launcher_game_id = 'ed-diff'").get();
+    assert.equal(diffEd.title, 'Old Name Deluxe Edition', 'edition with different title should be untouched');
+  });
+
   it('GET /api/games/filters should return filter options', async () => {
     const res = await makeFetch(app, '/api/games/filters', {
       headers: { Cookie: authCookie() },
