@@ -259,6 +259,67 @@ describe('Launcher routes', () => {
     );
   });
 
+  // REGRESSION: Ubisoft cache-imported games were removed when a subsequent
+  // GraphQL sync ran, because the sync engine marked API-missing games as
+  // unowned. Fix: cache import now locks the launcher like Xbox approval does.
+  it('regression: ubisoft cache import should set sync_locked', async () => {
+    const db = app.locals.db;
+    const { encrypt } = require('../../src/utils/encrypt');
+    const creds = encrypt(JSON.stringify({ email: 'test@test.com', password: 'test' }));
+
+    // Ensure ubisoft launcher exists and is unlocked
+    db.prepare(
+      'INSERT OR REPLACE INTO launchers (name, display_name, enabled, credentials_json, sync_locked) VALUES (?, ?, 1, ?, 0)'
+    ).run('ubisoft', 'Ubisoft Connect', creds);
+
+    const before = db.prepare('SELECT sync_locked FROM launchers WHERE name = ?').get('ubisoft');
+    assert.equal(before.sync_locked, 0, 'sync_locked should start at 0');
+
+    // Build minimal valid protobuf config buffer: one game (uid=100, name="Test Game")
+    const configYaml = Buffer.from('name: Test Game\nstart_game: yes');
+    const configInner = Buffer.concat([
+      Buffer.from([0x08, 0x64]),               // field 1, wire type 0, varint 100
+      Buffer.from([0x1A, configYaml.length]),   // field 3, wire type 2, length
+      configYaml,
+    ]);
+    const configBuf = Buffer.concat([
+      Buffer.from([0x0A, configInner.length]),  // field 1, wire type 2, length
+      configInner,
+    ]);
+
+    // Build minimal valid protobuf ownership buffer: 0x108 header + one entry (pid=100)
+    const ownerHeader = Buffer.alloc(0x108);
+    const ownerEntry = Buffer.concat([
+      Buffer.from([0x0A, 0x02]),  // field 1, wire type 2, length 2
+      Buffer.from([0x08, 0x64]),  // field 1, wire type 0, varint 100
+    ]);
+    const ownershipBuf = Buffer.concat([ownerHeader, ownerEntry]);
+
+    // Build multipart form body with binary buffers
+    const boundary = '----TestBoundary' + Date.now();
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="configurations"; filename="configurations"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+      configBuf,
+      Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="ownership"; filename="ownership"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+      ownershipBuf,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const res = await makeFetch(app, '/api/launchers/ubisoft/import-cache', {
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        Cookie: authCookie(),
+      },
+      body,
+    });
+
+    assert.equal(res.status, 200, 'Cache import should succeed');
+
+    const after = db.prepare('SELECT sync_locked FROM launchers WHERE name = ?').get('ubisoft');
+    assert.equal(after.sync_locked, 1, 'sync_locked should be 1 after cache import');
+  });
+
   // REGRESSION: Xbox games reappeared after approval because approval
   // hard-deleted rejected games, then sync re-inserted them from the API.
   // Fix: approval now locks the launcher so sync is blocked until unlocked.

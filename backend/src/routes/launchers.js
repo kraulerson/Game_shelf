@@ -92,6 +92,9 @@ router.post('/ubisoft/import-cache', uploadCache.fields([
 
   importGames(games);
 
+  // Lock sync to prevent API sync from removing cache-imported games
+  db.prepare('UPDATE launchers SET sync_locked = 1 WHERE id = ?').run(launcher.id);
+
   // Trigger enrichment
   const { enrichAll } = require('../services/metadata/enrichGame');
   enrichAll(db).catch(err => console.error('[Metadata] enrichAll error:', err.message));
