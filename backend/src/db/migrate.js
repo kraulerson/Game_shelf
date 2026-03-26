@@ -223,6 +223,14 @@ function runMigrations(dbPath) {
     console.log('[Migration] Added sync_locked column to launchers');
   }
 
+  // Phase 13: manual metadata override flags
+  const gamesColsP13 = db.pragma('table_info(games)');
+  if (!gamesColsP13.some(c => c.name === 'manual_description')) {
+    db.exec('ALTER TABLE games ADD COLUMN manual_description INTEGER DEFAULT 0');
+    db.exec('ALTER TABLE games ADD COLUMN manual_cover INTEGER DEFAULT 0');
+    console.log('[Migration] Phase 13: Added manual_description, manual_cover columns');
+  }
+
   return db;
 }
 
