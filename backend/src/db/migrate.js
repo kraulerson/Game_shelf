@@ -231,6 +231,13 @@ function runMigrations(dbPath) {
     console.log('[Migration] Phase 13: Added manual_description, manual_cover columns');
   }
 
+  // Phase 14: manual_title override flag
+  const gamesColsP14 = db.pragma('table_info(games)');
+  if (!gamesColsP14.some(c => c.name === 'manual_title')) {
+    db.exec('ALTER TABLE games ADD COLUMN manual_title INTEGER DEFAULT 0');
+    console.log('[Migration] Phase 14: Added manual_title column');
+  }
+
   return db;
 }
 

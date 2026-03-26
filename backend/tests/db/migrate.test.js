@@ -112,4 +112,15 @@ describe('migration runner', () => {
     assert.equal(syncLockedCol.dflt_value, '0', 'default should be 0');
     testDb.close();
   });
+
+  it('should add manual_title column to games table', () => {
+    delete require.cache[require.resolve('../../src/db/migrate')];
+    const { runMigrations } = require('../../src/db/migrate');
+    const testDb = runMigrations(testDbPath);
+    const cols = testDb.pragma('table_info(games)');
+    const manualTitleCol = cols.find(c => c.name === 'manual_title');
+    assert.ok(manualTitleCol, 'manual_title column should exist');
+    assert.equal(manualTitleCol.dflt_value, '0', 'default should be 0');
+    testDb.close();
+  });
 });
