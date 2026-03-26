@@ -289,6 +289,12 @@ export default function Setup() {
                         step1: 'Click the link below and log in to your GOG account',
                         step2: 'After logging in, you will be redirected to a page that may appear blank. Copy the "code" value from your browser\'s address bar and paste it below',
                       },
+                      ea: {
+                        url: 'https://accounts.ea.com/connect/auth?response_type=code&client_id=JUNO_PC_CLIENT&display=junoClient/login&redirect_uri=qrc%3A%2F%2F%2Fhtml%2Flogin_successful.html&locale=en_US',
+                        linkText: 'Open EA Login',
+                        step1: 'Click the link below and log in to your EA account',
+                        step2: 'After logging in, you will be redirected. Copy the "code" value from the URL and paste it below',
+                      },
                     };
                     const config = authCodeConfig[launcher.id] || {
                       url: '#',

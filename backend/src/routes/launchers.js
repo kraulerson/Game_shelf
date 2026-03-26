@@ -10,7 +10,7 @@ router.use(authMiddleware);
 // Static list of supported launchers
 const AVAILABLE_LAUNCHERS = [
   { id: 'steam', display_name: 'Steam', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
-  { id: 'ea', display_name: 'EA App', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
+  { id: 'ea', display_name: 'EA App', auth_type: 'auth_code', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'ubisoft', display_name: 'Ubisoft Connect', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
   { id: 'epic', display_name: 'Epic Games', auth_type: 'auth_code', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'humble', display_name: 'Humble Bundle', auth_type: 'session_cookie', otp_supported: false, qr_supported: false, implemented: true, cookie_name: '_simpleauth_sess' },
