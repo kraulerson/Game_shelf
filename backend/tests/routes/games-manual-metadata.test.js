@@ -201,6 +201,31 @@ describe('Manual metadata editing API', () => {
     assert.equal(game.manual_cover, 0);
   });
 
+  // REGRESSION: Re-enrich used the edition title ("Anno 7") instead of the manually
+  // edited game title ("Anno 2205"), causing IGDB search with the wrong title and
+  // creating a new games row that overwrote the manual edit.
+  it('POST /api/metadata/re-enrich/:gameId should preserve manual_title', async () => {
+    const db = app.locals.db;
+
+    // Set manual title on the game
+    db.prepare("UPDATE games SET title = 'Custom Title', slug = 'custom-title', manual_title = 1 WHERE id = ?").run(gameId);
+
+    const res = await makeFetch(app, `/api/metadata/re-enrich/${gameId}`, {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+    assert.equal(res.status, 200);
+
+    // Verify title was NOT overwritten
+    const game = db.prepare('SELECT title, slug, manual_title FROM games WHERE id = ?').get(gameId);
+    assert.equal(game.title, 'Custom Title', 'manual title should be preserved after re-enrich');
+    assert.equal(game.slug, 'custom-title', 'manual slug should be preserved after re-enrich');
+    assert.equal(game.manual_title, 1, 'manual_title flag should remain set');
+
+    // Restore for other tests
+    db.prepare("UPDATE games SET title = 'Earth Clicker', slug = 'earth-clicker', manual_title = 0 WHERE id = ?").run(gameId);
+  });
+
   it('DELETE /api/games/:id/manual-override with invalid field returns 400', async () => {
     const res = await makeFetch(app, `/api/games/${gameId}/manual-override`, {
       method: 'DELETE',

@@ -102,7 +102,17 @@ async function enrichGame(gameEditionId, db) {
     throw new Error(`game_edition not found: ${gameEditionId}`);
   }
 
-  const title = edition.title;
+  // If the game has a manually edited title, use that for IGDB search instead of edition title
+  let title = edition.title;
+  let manualTitleGameId = null;
+  if (edition.game_id) {
+    const linkedGame = db.prepare('SELECT id, title, slug, manual_title FROM games WHERE id = ?').get(edition.game_id);
+    if (linkedGame?.manual_title) {
+      title = linkedGame.title;
+      manualTitleGameId = linkedGame.id;
+    }
+  }
+
   if (!title) {
     console.warn(`[Gameshelf Metadata] game_edition ${gameEditionId} has no title, skipping`);
     return { status: 'skipped', reason: 'no title' };
@@ -153,23 +163,28 @@ async function enrichGame(gameEditionId, db) {
       return { status: 'cross-launcher', gameId: validCross.id };
     }
 
-    // Create minimal games row
-    db.prepare(`
-      INSERT INTO games (title, slug) VALUES (?, ?)
-      ON CONFLICT(slug) DO UPDATE SET updated_at = datetime('now')
-    `).run(title, slug);
-
-    const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(slug);
-    db.prepare('UPDATE game_editions SET game_id = ? WHERE id = ?').run(game.id, gameEditionId);
-
-    // Try SteamGridDB → Steam CDN for images (skip if manual cover set)
-    const existingFlags = db.prepare('SELECT manual_cover FROM games WHERE id = ?').get(game.id);
-    if (!existingFlags?.manual_cover) {
-      const { coverUrl, artworkUrl } = await getBestImages(null, title, edition.launcher_name, edition.launcher_game_id);
-      await cacheGameImages(coverUrl, artworkUrl, game.id, title, db);
+    // Create minimal games row (or reuse existing if manual title)
+    let noMatchGameId;
+    if (manualTitleGameId) {
+      noMatchGameId = manualTitleGameId;
+    } else {
+      db.prepare(`
+        INSERT INTO games (title, slug) VALUES (?, ?)
+        ON CONFLICT(slug) DO UPDATE SET updated_at = datetime('now')
+      `).run(title, slug);
+      const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(slug);
+      noMatchGameId = game.id;
+      db.prepare('UPDATE game_editions SET game_id = ? WHERE id = ?').run(noMatchGameId, gameEditionId);
     }
 
-    return { status: 'minimal', gameId: game.id };
+    // Try SteamGridDB → Steam CDN for images (skip if manual cover set)
+    const existingFlags = db.prepare('SELECT manual_cover FROM games WHERE id = ?').get(noMatchGameId);
+    if (!existingFlags?.manual_cover) {
+      const { coverUrl, artworkUrl } = await getBestImages(null, title, edition.launcher_name, edition.launcher_game_id);
+      await cacheGameImages(coverUrl, artworkUrl, noMatchGameId, title, db);
+    }
+
+    return { status: 'minimal', gameId: noMatchGameId };
   }
 
   // Extract metadata from IGDB match
@@ -186,21 +201,35 @@ async function enrichGame(gameEditionId, db) {
   const publisher = companies.find(c => c.publisher)?.company?.name || null;
 
   // Upsert games row (respect manual override flags)
-  db.prepare(`
-    INSERT INTO games (title, slug, description, release_year, developer, publisher, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(slug) DO UPDATE SET
-      title = CASE WHEN games.manual_title = 1 THEN games.title ELSE excluded.title END,
-      slug = CASE WHEN games.manual_title = 1 THEN games.slug ELSE excluded.slug END,
-      description = CASE WHEN games.manual_description = 1 THEN games.description ELSE excluded.description END,
-      release_year = excluded.release_year,
-      developer = excluded.developer,
-      publisher = excluded.publisher,
-      updated_at = datetime('now')
-  `).run(gameTitle, gameSlug, description, releaseYear, developer, publisher);
-
-  const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(gameSlug);
-  const gameId = game.id;
+  let gameId;
+  if (manualTitleGameId) {
+    // Game has manual title — update metadata by ID, preserve title/slug
+    db.prepare(`
+      UPDATE games SET
+        description = CASE WHEN manual_description = 1 THEN description ELSE COALESCE(?, description) END,
+        release_year = COALESCE(?, release_year),
+        developer = COALESCE(?, developer),
+        publisher = COALESCE(?, publisher),
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(description, releaseYear, developer, publisher, manualTitleGameId);
+    gameId = manualTitleGameId;
+  } else {
+    db.prepare(`
+      INSERT INTO games (title, slug, description, release_year, developer, publisher, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(slug) DO UPDATE SET
+        title = CASE WHEN games.manual_title = 1 THEN games.title ELSE excluded.title END,
+        slug = CASE WHEN games.manual_title = 1 THEN games.slug ELSE excluded.slug END,
+        description = CASE WHEN games.manual_description = 1 THEN games.description ELSE excluded.description END,
+        release_year = excluded.release_year,
+        developer = excluded.developer,
+        publisher = excluded.publisher,
+        updated_at = datetime('now')
+    `).run(gameTitle, gameSlug, description, releaseYear, developer, publisher);
+    const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(gameSlug);
+    gameId = game.id;
+  }
 
   // Download and cache images: IGDB → SteamGridDB → Steam CDN (skip if manual cover)
   const existingGame = db.prepare('SELECT manual_cover FROM games WHERE id = ?').get(gameId);
