@@ -8,7 +8,7 @@ const BaseLauncher = require('./base');
 function parseGamesJson(buffer) {
   let data;
   try {
-    data = JSON.parse(buffer.toString('utf8'));
+    data = JSON.parse(buffer.toString('utf8').replace(/^\uFEFF/, ''));
   } catch (err) {
     throw new Error('Failed to parse amazon-games.json: ' + err.message);
   }

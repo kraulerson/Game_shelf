@@ -30,6 +30,17 @@ describe('Amazon parseGamesJson', () => {
     assert.equal(games[0].title, 'Valid Game');
   });
 
+  // REGRESSION: PowerShell Out-File -Encoding utf8 writes BOM (0xEF 0xBB 0xBF)
+  it('should handle UTF-8 BOM from PowerShell export', () => {
+    const { parseGamesJson } = require('../../../src/services/launchers/amazon');
+    const json = JSON.stringify([{ productId: 'bom-test', title: 'BOM Game' }]);
+    const bom = Buffer.from([0xEF, 0xBB, 0xBF]);
+    const bufferWithBom = Buffer.concat([bom, Buffer.from(json)]);
+    const games = parseGamesJson(bufferWithBom);
+    assert.equal(games.length, 1);
+    assert.equal(games[0].title, 'BOM Game');
+  });
+
   it('should throw on invalid JSON', () => {
     const { parseGamesJson } = require('../../../src/services/launchers/amazon');
     assert.throws(() => parseGamesJson(Buffer.from('not json')), /Failed to parse/);
