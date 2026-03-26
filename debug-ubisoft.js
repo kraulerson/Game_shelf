@@ -5,182 +5,125 @@ const tls = require('tls');
 const protobuf = require('protobufjs');
 const path = require('path');
 const glob = require('glob');
+const fs = require('fs');
 
-// Load proto definitions with correct root path
+// Load proto definitions with correct root path resolution
 const protoDir = path.join(__dirname, 'node_modules/ubisoft-demux/dist/proto');
 const protoFiles = glob.sync(`${protoDir}/**/*.proto`);
 const root = new protobuf.Root();
 root.resolvePath = (origin, target) => {
-  // Resolve imports relative to the proto root directory, not the importing file
   const resolved = path.resolve(protoDir, target);
-  const fs = require('fs');
   if (fs.existsSync(resolved)) return resolved;
-  // Fall back to default resolution
   return path.resolve(path.dirname(origin), target);
 };
 root.loadSync(protoFiles);
 
 const demuxUpstream = root.lookupType('mg.protocol.demux.Upstream');
 const demuxDownstream = root.lookupType('mg.protocol.demux.Downstream');
-const ownershipUpstream = root.lookupType('mg.protocol.ownership.Upstream');
-const ownershipDownstream = root.lookupType('mg.protocol.ownership.Downstream');
 
 const db = new Database('/app/data/gameshelf.db');
 const launcher = db.prepare("SELECT * FROM launchers WHERE name = 'ubisoft'").get();
 const creds = JSON.parse(decrypt(launcher.credentials_json));
 
-let requestId = 0;
+const API_VERSION = 10931;
 
-function encodeDemux(data) {
+function encode(data) {
   const msg = demuxUpstream.create(data);
-  return demuxUpstream.encode(msg).finish();
+  const payload = demuxUpstream.encode(msg).finish();
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(payload.length, 0);
+  return Buffer.concat([header, payload]);
 }
 
-function decodeDemux(buffer) {
-  return demuxDownstream.decode(buffer);
-}
-
-function sendMessage(socket, data) {
+function readMessage(socket) {
   return new Promise((resolve, reject) => {
-    const payload = encodeDemux(data);
-    const header = Buffer.alloc(4);
-    header.writeUInt32BE(payload.length, 0);
-    socket.write(Buffer.concat([header, payload]));
-
-    let responseBuffer = Buffer.alloc(0);
-    const onData = (chunk) => {
-      responseBuffer = Buffer.concat([responseBuffer, chunk]);
-      // Try to parse: 4-byte length prefix + message
-      while (responseBuffer.length >= 4) {
-        const msgLen = responseBuffer.readUInt32BE(0);
-        if (responseBuffer.length < 4 + msgLen) break;
-        const msgBuf = responseBuffer.subarray(4, 4 + msgLen);
-        responseBuffer = responseBuffer.subarray(4 + msgLen);
-        socket.removeListener('data', onData);
-        try {
-          resolve(decodeDemux(msgBuf));
-        } catch (e) {
-          reject(e);
-        }
-        return;
-      }
-    };
-    socket.on('data', onData);
-    setTimeout(() => {
+    let buf = Buffer.alloc(0);
+    const timer = setTimeout(() => {
       socket.removeListener('data', onData);
-      reject(new Error('Timeout waiting for response'));
+      reject(new Error('Timeout'));
     }, 15000);
-  });
-}
-
-function sendOwnership(socket, connectionId, data) {
-  return new Promise((resolve, reject) => {
-    const serviceMsg = ownershipUpstream.create(data);
-    const servicePayload = ownershipUpstream.encode(serviceMsg).finish();
-
-    const demuxData = {
-      push: {
-        data: {
-          connectionId: connectionId,
-          data: servicePayload,
-        },
-      },
-    };
-    const payload = encodeDemux(demuxData);
-    const header = Buffer.alloc(4);
-    header.writeUInt32BE(payload.length, 0);
-    socket.write(Buffer.concat([header, payload]));
-
-    let responseBuffer = Buffer.alloc(0);
-    const onData = (chunk) => {
-      responseBuffer = Buffer.concat([responseBuffer, chunk]);
-      while (responseBuffer.length >= 4) {
-        const msgLen = responseBuffer.readUInt32BE(0);
-        if (responseBuffer.length < 4 + msgLen) break;
-        const msgBuf = responseBuffer.subarray(4, 4 + msgLen);
-        responseBuffer = responseBuffer.subarray(4 + msgLen);
-        socket.removeListener('data', onData);
-        try {
-          const demuxResp = decodeDemux(msgBuf);
-          const serviceData = demuxResp?.push?.data?.data;
-          if (serviceData) {
-            resolve(ownershipDownstream.decode(serviceData));
-          } else {
-            resolve(demuxResp);
-          }
-        } catch (e) {
-          reject(e);
+    function onData(chunk) {
+      buf = Buffer.concat([buf, chunk]);
+      if (buf.length >= 4) {
+        const len = buf.readUInt32BE(0);
+        if (buf.length >= 4 + len) {
+          clearTimeout(timer);
+          socket.removeListener('data', onData);
+          resolve(demuxDownstream.decode(buf.subarray(4, 4 + len)));
         }
-        return;
       }
-    };
+    }
     socket.on('data', onData);
-    setTimeout(() => {
-      socket.removeListener('data', onData);
-      reject(new Error('Timeout waiting for ownership response'));
-    }, 15000);
   });
 }
 
 async function run() {
-  console.log('Ticket exists:', !!creds.ticket);
-  console.log('Connecting to dmx.upc.ubisoft.com:443...');
+  console.log('Ticket:', creds.ticket ? creds.ticket.slice(0, 20) + '...' : 'MISSING');
 
-  const socket = tls.connect(443, 'dmx.upc.ubisoft.com', { rejectUnauthorized: true });
+  const socket = tls.connect(443, 'dmx.upc.ubisoft.com', {
+    servername: 'dmx.upc.ubisoft.com',
+    rejectUnauthorized: false,
+  });
 
   await new Promise((resolve, reject) => {
     socket.on('secureConnect', resolve);
     socket.on('error', reject);
-    setTimeout(() => reject(new Error('TLS connect timeout')), 10000);
+    setTimeout(() => reject(new Error('TLS timeout')), 10000);
   });
   console.log('TLS connected');
 
   try {
+    // Step 0: Send clientVersion push FIRST (required by protocol)
+    console.log('Sending clientVersion...');
+    socket.write(encode({ push: { clientVersion: { version: API_VERSION } } }));
+
+    // Small delay for server to process
+    await new Promise(r => setTimeout(r, 500));
+
     // Step 1: Authenticate
     console.log('Sending auth request...');
-    const authResp = await sendMessage(socket, {
+    socket.write(encode({
       request: {
-        requestId: ++requestId,
+        requestId: 1,
         authenticateReq: {
           clientId: 'uplay_pc',
           sendKeepAlive: false,
-          token: {
-            ubiTicket: creds.ticket,
-          },
+          token: { ubiTicket: creds.ticket },
         },
       },
-    });
-    console.log('Auth response:', JSON.stringify(authResp).slice(0, 300));
+    }));
 
+    const authResp = await readMessage(socket);
     const success = authResp?.response?.authenticateRsp?.success;
+    console.log('Auth success:', success);
     if (!success) {
-      console.log('Auth failed');
+      console.log('Auth response:', JSON.stringify(authResp).slice(0, 500));
       return;
     }
-    console.log('Authenticated!');
 
     // Step 2: Open ownership_service
     console.log('Opening ownership_service...');
-    const openResp = await sendMessage(socket, {
+    socket.write(encode({
       request: {
-        requestId: ++requestId,
-        openConnectionReq: {
-          serviceName: 'ownership_service',
-        },
+        requestId: 2,
+        openConnectionReq: { serviceName: 'ownership_service' },
       },
-    });
-    console.log('Open response:', JSON.stringify(openResp).slice(0, 300));
+    }));
 
-    const connectionId = openResp?.response?.openConnectionRsp?.connectionId;
-    if (!connectionId) {
-      console.log('Failed to open connection');
+    const openResp = await readMessage(socket);
+    const connId = openResp?.response?.openConnectionRsp?.connectionId;
+    console.log('Connection ID:', connId);
+    if (!connId) {
+      console.log('Open response:', JSON.stringify(openResp).slice(0, 500));
       return;
     }
-    console.log('Connection opened, ID:', connectionId);
 
-    // Step 3: Initialize ownership
+    // Step 3: Send ownership initialize via push (service message wrapped in demux push)
     console.log('Initializing ownership...');
-    const initResp = await sendOwnership(socket, connectionId, {
+    const ownershipUpstream = root.lookupType('mg.protocol.ownership.Upstream');
+    const ownershipDownstream = root.lookupType('mg.protocol.ownership.Downstream');
+
+    const servicePayload = ownershipUpstream.encode(ownershipUpstream.create({
       request: {
         requestId: 1,
         initializeReq: {
@@ -189,13 +132,35 @@ async function run() {
           useStaging: false,
         },
       },
-    });
+    })).finish();
 
-    const ownedGames = initResp?.response?.initializeRsp?.ownedGames?.ownedGames || [];
-    console.log('Total products:', ownedGames.length);
+    socket.write(encode({
+      push: {
+        data: {
+          connectionId: connId,
+          data: servicePayload,
+        },
+      },
+    }));
+
+    // Read the ownership response (comes as a push with connectionData)
+    const ownershipResp = await readMessage(socket);
+    const connData = ownershipResp?.push?.data?.data;
+    if (!connData) {
+      console.log('Ownership response (no connData):', JSON.stringify(ownershipResp).slice(0, 500));
+      return;
+    }
+
+    const serviceResp = ownershipDownstream.decode(connData);
+    const ownedGames = serviceResp?.response?.initializeRsp?.ownedGames?.ownedGames || [];
+    console.log('\nTotal products:', ownedGames.length);
+
+    const types = {};
+    ownedGames.forEach(g => { types[g.productType] = (types[g.productType] || 0) + 1; });
+    console.log('By type:', JSON.stringify(types), '(0=Game 1=AddOn 4=Trial 6=Bundle 7=SeasonPass)');
 
     const games = ownedGames.filter(g => g.productType === 0);
-    console.log('Games (type=0):', games.length);
+    console.log('\nGames (type=0):', games.length);
 
     for (const game of games) {
       let name = null;
