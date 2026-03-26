@@ -323,13 +323,13 @@ router.get('/', (req, res) => {
   const db = req.app.locals.db;
   const {
     search, genre, tag, launcher, sort = 'title_asc',
-    page = '1', limit = '50', duplicates, starts_with,
+    page = '1', limit = '100', duplicates, starts_with,
     release_year_min, release_year_max, playtime_min, playtime_max,
     owned = 'true',
   } = req.query;
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+  const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 100));
   const offset = (pageNum - 1) * limitNum;
 
   // Filters that apply inside the CTE (edition-level columns: ge.*, l.*)

@@ -47,7 +47,7 @@ export default function Library() {
   const games = data?.games || [];
   const total = data?.total || 0;
   const page = data?.page || 1;
-  const limit = data?.limit || 50;
+  const limit = data?.limit || 100;
   const totalPages = Math.ceil(total / limit);
 
   function goToPage(p) {
