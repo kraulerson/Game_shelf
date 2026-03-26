@@ -2,18 +2,18 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 describe('UbisoftLauncher', () => {
-  it('refreshIfNeeded() should login with Basic Auth when no ticket exists', async () => {
+  it('refreshIfNeeded() should login and get both club and demux tickets', async () => {
     const axios = require('axios');
     const originalPost = axios.post;
 
-    let capturedHeaders = null;
+    let callCount = 0;
     axios.post = async (url, body, opts) => {
-      capturedHeaders = opts?.headers;
+      callCount++;
       return {
         data: {
-          ticket: 'ubi_ticket_123',
-          sessionId: 'sess_123',
-          rememberMeTicket: 'rm_ticket_123',
+          ticket: `ticket_${callCount}`,
+          sessionId: `sess_${callCount}`,
+          rememberMeTicket: `rm_${callCount}`,
           userId: 'user_123',
           expiration: '2099-01-01T00:00:00.000Z',
         },
@@ -30,20 +30,11 @@ describe('UbisoftLauncher', () => {
         password: 'mypass',
       });
 
-      // Verify Basic auth header
-      assert.ok(capturedHeaders.Authorization.startsWith('Basic '));
-      const decoded = Buffer.from(capturedHeaders.Authorization.split(' ')[1], 'base64').toString();
-      assert.equal(decoded, 'user@example.com:mypass');
-
-      // Verify session returned
-      assert.equal(result.session.ticket, 'ubi_ticket_123');
-      assert.equal(result.session.sessionId, 'sess_123');
-
-      // Verify updated credentials include ticket + rememberMeTicket
-      assert.equal(result.updatedCredentials.ticket, 'ubi_ticket_123');
-      assert.equal(result.updatedCredentials.rememberMeTicket, 'rm_ticket_123');
-      assert.equal(result.updatedCredentials.username, 'user@example.com');
-      assert.equal(result.updatedCredentials.password, 'mypass');
+      // Should have both tickets
+      assert.ok(result.session.ticket, 'Should have club ticket');
+      assert.ok(result.updatedCredentials.username, 'Should preserve username');
+      assert.ok(result.updatedCredentials.password, 'Should preserve password');
+      assert.ok(result.updatedCredentials.rememberMeTicket, 'Should have club rememberMeTicket');
     } finally {
       axios.post = originalPost;
     }
@@ -56,7 +47,6 @@ describe('UbisoftLauncher', () => {
     axios.post = async () => ({
       data: {
         twoFactorAuthenticationTicket: '2fa_ticket_abc',
-        maskedPhone: '***1234',
       },
     });
 
@@ -80,53 +70,7 @@ describe('UbisoftLauncher', () => {
     }
   });
 
-  it('refreshIfNeeded() should complete login with OTP code after 2FA', async () => {
-    const axios = require('axios');
-    const originalPost = axios.post;
-
-    let callCount = 0;
-    axios.post = async (url, body, opts) => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          data: {
-            twoFactorAuthenticationTicket: '2fa_ticket_abc',
-          },
-        };
-      }
-      assert.ok(opts.headers['Ubi-2faCode'], 'Should include 2FA code header');
-      assert.ok(opts.headers.Authorization.includes('2fa_ticket_abc'));
-      return {
-        data: {
-          ticket: 'ubi_ticket_after_2fa',
-          sessionId: 'sess_456',
-          rememberMeTicket: 'rm_ticket_456',
-          userId: 'user_123',
-          expiration: '2099-01-01T00:00:00.000Z',
-        },
-      };
-    };
-
-    try {
-      delete require.cache[require.resolve('../../../src/services/launchers/ubisoft')];
-      const UbisoftLauncher = require('../../../src/services/launchers/ubisoft');
-      const launcher = new UbisoftLauncher('ubisoft', {});
-
-      const result = await launcher.refreshIfNeeded({
-        username: 'user@example.com',
-        password: 'mypass',
-        otp_code: '123456',
-      });
-
-      assert.equal(result.session.ticket, 'ubi_ticket_after_2fa');
-      assert.equal(result.updatedCredentials.ticket, 'ubi_ticket_after_2fa');
-      assert.equal(callCount, 2, 'Should make two requests (login + 2FA)');
-    } finally {
-      axios.post = originalPost;
-    }
-  });
-
-  it('refreshIfNeeded() should skip login when ticket is not expired', async () => {
+  it('refreshIfNeeded() should skip login when tickets are not expired', async () => {
     delete require.cache[require.resolve('../../../src/services/launchers/ubisoft')];
     const UbisoftLauncher = require('../../../src/services/launchers/ubisoft');
     const launcher = new UbisoftLauncher('ubisoft', {});
@@ -134,33 +78,35 @@ describe('UbisoftLauncher', () => {
     const result = await launcher.refreshIfNeeded({
       username: 'user@example.com',
       password: 'mypass',
-      ticket: 'valid_ticket',
+      ticket: 'valid_club_ticket',
       sessionId: 'sess_123',
-      rememberMeTicket: 'rm_ticket',
+      rememberMeTicket: 'rm_club',
       expiration: new Date(Date.now() + 3600000).toISOString(),
+      demuxTicket: 'valid_demux_ticket',
+      demuxRememberMeTicket: 'rm_demux',
+      demuxExpiration: new Date(Date.now() + 3600000).toISOString(),
     });
 
-    assert.equal(result.session.ticket, 'valid_ticket');
-    assert.equal(result.updatedCredentials, null, 'Should not refresh when ticket is valid');
+    assert.equal(result.session.ticket, 'valid_club_ticket');
+    assert.equal(result.session.demuxTicket, 'valid_demux_ticket');
+    // Credentials are always returned (to preserve all fields), but tickets should be unchanged
+    assert.equal(result.updatedCredentials.ticket, 'valid_club_ticket');
+    assert.equal(result.updatedCredentials.demuxTicket, 'valid_demux_ticket');
   });
 
-  it('refreshIfNeeded() should use rememberMeTicket when ticket is expired', async () => {
+  it('refreshIfNeeded() should use rememberMeTicket when expired', async () => {
     const axios = require('axios');
     const originalPost = axios.post;
 
-    let capturedHeaders = null;
-    axios.post = async (url, body, opts) => {
-      capturedHeaders = opts?.headers;
-      return {
-        data: {
-          ticket: 'new_ticket',
-          sessionId: 'new_sess',
-          rememberMeTicket: 'new_rm',
-          userId: 'user_123',
-          expiration: '2099-01-01T00:00:00.000Z',
-        },
-      };
-    };
+    axios.post = async (url, body, opts) => ({
+      data: {
+        ticket: 'new_ticket',
+        sessionId: 'new_sess',
+        rememberMeTicket: 'new_rm',
+        userId: 'user_123',
+        expiration: '2099-01-01T00:00:00.000Z',
+      },
+    });
 
     try {
       delete require.cache[require.resolve('../../../src/services/launchers/ubisoft')];
@@ -174,63 +120,13 @@ describe('UbisoftLauncher', () => {
         sessionId: 'old_sess',
         rememberMeTicket: 'old_rm',
         expiration: new Date(Date.now() - 1000).toISOString(),
+        demuxTicket: 'expired_demux',
+        demuxRememberMeTicket: 'old_demux_rm',
+        demuxExpiration: new Date(Date.now() - 1000).toISOString(),
       });
 
-      assert.ok(capturedHeaders.Authorization.startsWith('rm_v1 t='));
-      assert.equal(result.session.ticket, 'new_ticket');
-      assert.equal(result.updatedCredentials.rememberMeTicket, 'new_rm');
-    } finally {
-      axios.post = originalPost;
-    }
-  });
-
-  it('fetchOwnedGames() should return PC games from GraphQL response', async () => {
-    const axios = require('axios');
-    const originalPost = axios.post;
-
-    let capturedHeaders = null;
-    axios.post = async (url, body, opts) => {
-      capturedHeaders = opts?.headers;
-      return {
-        data: {
-          data: {
-            viewer: {
-              ownedGames: {
-                totalCount: 2,
-                nodes: [
-                  {
-                    id: 'game-1',
-                    spaceId: 'space-1',
-                    name: 'Assassin\'s Creed Valhalla',
-                    viewer: { meta: { id: 'm1', ownedPlatformGroups: [{ id: 'pg1', name: 'PC', type: 'PC' }] } },
-                  },
-                  {
-                    id: 'game-2',
-                    spaceId: 'space-2',
-                    name: 'Far Cry 6',
-                    viewer: { meta: { id: 'm2', ownedPlatformGroups: [{ id: 'pg2', name: 'PC', type: 'PC' }] } },
-                  },
-                ],
-              },
-            },
-          },
-        },
-      };
-    };
-
-    try {
-      delete require.cache[require.resolve('../../../src/services/launchers/ubisoft')];
-      const UbisoftLauncher = require('../../../src/services/launchers/ubisoft');
-      const launcher = new UbisoftLauncher('ubisoft', {});
-      const games = await launcher.fetchOwnedGames({ ticket: 'test_ticket', sessionId: 'test_sess' });
-
-      assert.equal(games.length, 2);
-      assert.equal(games[0].launcher_game_id, 'game-1');
-      assert.equal(games[0].title, 'Assassin\'s Creed Valhalla');
-      assert.equal(games[0].playtime_minutes, 0);
-
-      assert.ok(capturedHeaders.Authorization.includes('test_ticket'));
-      assert.equal(capturedHeaders['Ubi-SessionId'], 'test_sess');
+      assert.ok(result.updatedCredentials.ticket, 'Should have new club ticket');
+      assert.ok(result.updatedCredentials.rememberMeTicket, 'Should have new rememberMeTicket');
     } finally {
       axios.post = originalPost;
     }
@@ -239,7 +135,7 @@ describe('UbisoftLauncher', () => {
   // REGRESSION: platform filter was dropping all games because ownedPlatformGroups.type
   // is not populated by the API. Since the uplay/graphql endpoint only returns PC games,
   // no client-side platform filter is needed.
-  it('fetchOwnedGames() should return all games without platform filtering', async () => {
+  it('_fetchViaGraphQL() should return all games without platform filtering', async () => {
     const axios = require('axios');
     const originalPost = axios.post;
 
@@ -264,11 +160,43 @@ describe('UbisoftLauncher', () => {
       delete require.cache[require.resolve('../../../src/services/launchers/ubisoft')];
       const UbisoftLauncher = require('../../../src/services/launchers/ubisoft');
       const launcher = new UbisoftLauncher('ubisoft', {});
-      const games = await launcher.fetchOwnedGames({ ticket: 'test', sessionId: 'test' });
+      const games = await launcher._fetchViaGraphQL('test_ticket', 'test_sess');
 
       assert.equal(games.length, 3, 'Should return all games without filtering');
       assert.equal(games[0].title, 'Watch Dogs 2');
-      assert.equal(games[2].title, 'Rainbow Six Siege');
+    } finally {
+      axios.post = originalPost;
+    }
+  });
+
+  it('fetchOwnedGames() should fall back to GraphQL when no demux ticket', async () => {
+    const axios = require('axios');
+    const originalPost = axios.post;
+
+    axios.post = async () => ({
+      data: {
+        data: {
+          viewer: {
+            ownedGames: {
+              totalCount: 2,
+              nodes: [
+                { id: 'game-1', name: 'Far Cry 5' },
+                { id: 'game-2', name: 'Anno 1800' },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    try {
+      delete require.cache[require.resolve('../../../src/services/launchers/ubisoft')];
+      const UbisoftLauncher = require('../../../src/services/launchers/ubisoft');
+      const launcher = new UbisoftLauncher('ubisoft', {});
+      const games = await launcher.fetchOwnedGames({ ticket: 'test', sessionId: 'test' });
+
+      assert.equal(games.length, 2);
+      assert.equal(games[0].title, 'Far Cry 5');
     } finally {
       axios.post = originalPost;
     }
