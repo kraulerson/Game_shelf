@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, RefreshCw, GripVertical, Lock } from 'lucide-react';
@@ -24,6 +24,7 @@ function LaunchersTab() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [confirmRemove, setConfirmRemove] = useState(null);
+  const [eaTokenInput, setEaTokenInput] = useState(null);
   const location = useLocation();
   const [flash, setFlash] = useState(location.state?.flash || null);
   useEffect(() => {
@@ -174,7 +175,8 @@ function LaunchersTab() {
       {(launchers || []).map(l => {
         const status = statusMap[l.id];
         return (
-          <div key={l.id} className={`bg-gray-800 rounded-lg p-4 flex items-center justify-between ${!l.implemented ? 'opacity-50' : ''}`}>
+          <React.Fragment key={l.id}>
+          <div className={`bg-gray-800 rounded-lg p-4 flex items-center justify-between ${!l.implemented ? 'opacity-50' : ''}`}>
             <div className="flex items-center gap-3">
               <LauncherBadge launcherName={l.id} displayName={l.display_name} primary />
               <div>
@@ -225,12 +227,25 @@ function LaunchersTab() {
                     Enter Code
                   </button>
                 ) : (
-                  <button
-                    onClick={() => handleSyncClick(l)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
-                  >
-                    <RefreshCw size={14} /> Sync
-                  </button>
+                  <>
+                    {l.id === 'ea' && (
+                      <a
+                        href="https://accounts.ea.com/connect/auth?response_type=token&client_id=ORIGIN_JS_SDK&redirect_uri=nucleus%3Arest"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => setEaTokenInput('')}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors text-blue-400"
+                      >
+                        New Token
+                      </a>
+                    )}
+                    <button
+                      onClick={() => handleSyncClick(l)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+                    >
+                      <RefreshCw size={14} /> Sync
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={() => setConfirmRemove(l.id)}
@@ -248,6 +263,44 @@ function LaunchersTab() {
               </button>
             )}
           </div>
+          {l.id === 'ea' && eaTokenInput !== null && (
+            <div className="bg-gray-800/50 rounded-lg p-3 -mt-1 flex items-center gap-2">
+              <input
+                type="text"
+                value={eaTokenInput}
+                onChange={e => setEaTokenInput(e.target.value)}
+                placeholder="Paste access_token here..."
+                className="flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={async () => {
+                  if (!eaTokenInput.trim()) return;
+                  const res = await fetch('/api/launchers/ea/credentials', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ auth_code: eaTokenInput.trim() }),
+                  });
+                  if (res.ok) {
+                    setEaTokenInput(null);
+                    queryClient.invalidateQueries({ queryKey: ['launchers'] });
+                    fetch('/api/sync/ea', { method: 'POST', credentials: 'same-origin' });
+                    queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
+                  }
+                }}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded"
+              >
+                Save & Sync
+              </button>
+              <button
+                onClick={() => setEaTokenInput(null)}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </React.Fragment>
         );
       })}
 
