@@ -41,9 +41,78 @@ router.get('/available', (req, res) => {
   res.json(result);
 });
 
-// POST /api/launchers/ubisoft/import-cache — upload local cache files for full library
 const multer = require('multer');
 const uploadCache = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// POST /api/launchers/amazon/preview — upload games.db, return parsed game list (no DB writes)
+router.post('/amazon/preview', uploadCache.single('games_db'), (req, res) => {
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ error: 'games_db file is required' });
+  }
+
+  const { parseGamesDb } = require('../services/launchers/amazon');
+
+  let games;
+  try {
+    games = parseGamesDb(file.buffer);
+  } catch (err) {
+    return res.status(400).json({ error: 'Failed to parse games.db: ' + err.message });
+  }
+
+  res.json({ games });
+});
+
+// POST /api/launchers/amazon/import — import approved games and lock sync
+router.post('/amazon/import', (req, res) => {
+  const { approved_games } = req.body || {};
+
+  if (!Array.isArray(approved_games) || approved_games.length === 0) {
+    return res.status(400).json({ error: 'approved_games must be a non-empty array' });
+  }
+
+  const db = req.app.locals.db;
+  const { detectEditionTier } = require('../utils/editionTier');
+
+  // Ensure amazon launcher row exists
+  db.prepare(
+    "INSERT OR IGNORE INTO launchers (name, display_name, enabled) VALUES ('amazon', 'Amazon Games', 1)"
+  ).run();
+  const launcher = db.prepare("SELECT * FROM launchers WHERE name = 'amazon'").get();
+
+  const upsert = db.prepare(`
+    INSERT INTO game_editions (launcher_id, launcher_game_id, title, playtime_minutes, owned)
+    VALUES (?, ?, ?, 0, 1)
+    ON CONFLICT(launcher_id, launcher_game_id) DO UPDATE SET
+      title = excluded.title,
+      owned = 1
+  `);
+  const insertTier = db.prepare('INSERT OR IGNORE INTO edition_tiers (game_edition_id, tier) VALUES (?, ?)');
+
+  const importGames = db.transaction((gameList) => {
+    for (const game of gameList) {
+      const result = upsert.run(launcher.id, game.launcher_game_id, game.title);
+      const editionId = result.lastInsertRowid ? Number(result.lastInsertRowid) : null;
+      if (editionId) {
+        insertTier.run(editionId, detectEditionTier(game.title));
+      }
+    }
+  });
+
+  importGames(approved_games);
+
+  // Lock sync to prevent removal of imported games
+  db.prepare('UPDATE launchers SET sync_locked = 1 WHERE id = ?').run(launcher.id);
+
+  // Trigger enrichment
+  const { enrichAll } = require('../services/metadata/enrichGame');
+  enrichAll(db).catch(err => console.error('[Metadata] enrichAll error:', err.message));
+
+  console.log(`[Amazon] Imported ${approved_games.length} games from games.db`);
+  res.json({ imported: approved_games.length });
+});
+
+// POST /api/launchers/ubisoft/import-cache — upload local cache files for full library
 router.post('/ubisoft/import-cache', uploadCache.fields([
   { name: 'configurations', maxCount: 1 },
   { name: 'ownership', maxCount: 1 },

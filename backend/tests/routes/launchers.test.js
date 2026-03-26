@@ -259,6 +259,91 @@ describe('Launcher routes', () => {
     );
   });
 
+  // Amazon Games: preview should parse games.db and return game list without DB writes
+  it('POST /api/launchers/amazon/preview should return parsed games', async () => {
+    const Database = require('better-sqlite3');
+    const tmpPath = require('node:path').join(__dirname, 'test-amazon-preview.db');
+    const tmpDb = new Database(tmpPath);
+    tmpDb.exec(`
+      CREATE TABLE IF NOT EXISTS "DbSet" (
+        Id TEXT PRIMARY KEY,
+        ProductTitle TEXT,
+        ProductIdStr TEXT,
+        Installed INTEGER
+      )
+    `);
+    tmpDb.prepare('INSERT INTO DbSet (Id, ProductTitle, ProductIdStr, Installed) VALUES (?, ?, ?, ?)').run(
+      'amzn1.preview.aaa', 'Preview Game', 'amzn1.preview.aaa', 1
+    );
+    tmpDb.close();
+
+    const fileBuffer = fs.readFileSync(tmpPath);
+    fs.unlinkSync(tmpPath);
+
+    const boundary = '----TestBoundary' + Date.now();
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="games_db"; filename="games.db"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+      fileBuffer,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const res = await makeFetch(app, '/api/launchers/amazon/preview', {
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        Cookie: authCookie(),
+      },
+      body,
+    });
+
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(Array.isArray(data.games), 'should return games array');
+    assert.equal(data.games.length, 1);
+    assert.equal(data.games[0].title, 'Preview Game');
+
+    // Verify no DB writes happened
+    const db = app.locals.db;
+    const amazonRow = db.prepare("SELECT id FROM launchers WHERE name = 'amazon'").get();
+    if (amazonRow) {
+      const editions = db.prepare('SELECT COUNT(*) as c FROM game_editions WHERE launcher_id = ?').get(amazonRow.id);
+      assert.equal(editions.c, 0, 'preview should not write to game_editions');
+    }
+  });
+
+  // Amazon Games: import should upsert games and set sync_locked
+  it('POST /api/launchers/amazon/import should upsert games and lock sync', async () => {
+    const db = app.locals.db;
+
+    const res = await makeFetch(app, '/api/launchers/amazon/import', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie(),
+      },
+      body: JSON.stringify({
+        approved_games: [
+          { launcher_game_id: 'amzn1.import.aaa', title: 'Imported Game A' },
+          { launcher_game_id: 'amzn1.import.bbb', title: 'Imported Game B' },
+        ],
+      }),
+    });
+
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.imported, 2);
+
+    // Verify games exist in DB
+    const launcher = db.prepare("SELECT id, sync_locked FROM launchers WHERE name = 'amazon'").get();
+    assert.ok(launcher, 'amazon launcher row should exist');
+    assert.equal(launcher.sync_locked, 1, 'sync_locked should be 1 after import');
+
+    const editions = db.prepare(
+      'SELECT COUNT(*) as c FROM game_editions WHERE launcher_id = ? AND owned = 1'
+    ).get(launcher.id);
+    assert.equal(editions.c, 2, 'should have 2 game editions');
+  });
+
   // REGRESSION: Ubisoft cache-imported games were removed when a subsequent
   // GraphQL sync ran, because the sync engine marked API-missing games as
   // unowned. Fix: cache import now locks the launcher like Xbox approval does.
