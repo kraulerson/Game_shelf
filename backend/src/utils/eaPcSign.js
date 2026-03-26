@@ -68,7 +68,6 @@ function generateEaAuthUrl() {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: 'JUNO_PC_CLIENT',
-    display: 'junoClient/login',
     redirect_uri: 'qrc:///html/login_successful.html',
     locale: 'en_US',
     pc_sign: pcSign,
