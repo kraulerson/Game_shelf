@@ -303,6 +303,18 @@ function LaunchersTab() {
                     >
                       <RefreshCw size={14} /> Sync
                     </button>
+                    <button
+                      onClick={async () => {
+                        await fetch(`/api/launchers/${l.id}/lock-sync`, {
+                          method: 'POST',
+                          credentials: 'same-origin',
+                        });
+                        queryClient.invalidateQueries({ queryKey: ['launchers'] });
+                      }}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors"
+                    >
+                      <Lock size={14} /> Lock
+                    </button>
                   </>
                 )}
                 <button

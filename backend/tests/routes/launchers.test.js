@@ -241,6 +241,23 @@ describe('Launcher routes', () => {
     }
   });
 
+  it('POST /api/launchers/:id/lock-sync should set sync_locked', async () => {
+    const db = app.locals.db;
+    db.prepare('UPDATE launchers SET sync_locked = 0 WHERE name = ?').run('steam');
+
+    const res = await makeFetch(app, '/api/launchers/steam/lock-sync', {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+    assert.equal(res.status, 200);
+
+    const row = db.prepare('SELECT sync_locked FROM launchers WHERE name = ?').get('steam');
+    assert.equal(row.sync_locked, 1, 'sync_locked should be 1 after lock');
+
+    // Cleanup
+    db.prepare('UPDATE launchers SET sync_locked = 0 WHERE name = ?').run('steam');
+  });
+
   // REGRESSION: XboxApproval confirmation dialog said "re-sync to recover"
   // which was misleading after adding sync lock — user must unlock first.
   it('regression: XboxApproval confirmation text should mention unlock step', () => {

@@ -449,4 +449,24 @@ router.post('/:id/unlock-sync', (req, res) => {
   res.json({ success: true });
 });
 
+// POST /api/launchers/:id/lock-sync
+router.post('/:id/lock-sync', (req, res) => {
+  const { id } = req.params;
+  const launcher = LAUNCHER_MAP[id];
+
+  if (!launcher) {
+    return res.status(400).json({ error: `Unknown launcher: ${id}` });
+  }
+
+  const db = req.app.locals.db;
+  const row = db.prepare('SELECT id FROM launchers WHERE name = ?').get(id);
+
+  if (!row) {
+    return res.status(404).json({ error: 'Launcher not configured' });
+  }
+
+  db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run(id);
+  res.json({ success: true });
+});
+
 module.exports = router;
