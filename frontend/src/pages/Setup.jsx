@@ -290,10 +290,10 @@ export default function Setup() {
                         step2: 'After logging in, you will be redirected to a page that may appear blank. Copy the "code" value from your browser\'s address bar and paste it below',
                       },
                       ea: {
-                        dynamic: true,
+                        url: 'https://accounts.ea.com/connect/auth?response_type=code&client_id=ORIGIN_JS_SDK&redirect_uri=nucleus%3Arest',
                         linkText: 'Open EA Login',
                         step1: 'Click the link below and log in to your EA account',
-                        step2: 'After logging in, you will be redirected. Copy the "code" value from the URL and paste it below',
+                        step2: 'After logging in, you will see a JSON response with a "code" field. Copy that value and paste it below',
                       },
                     };
                     const config = authCodeConfig[launcher.id] || {
@@ -305,30 +305,14 @@ export default function Setup() {
                     return (
                       <div className="mb-3">
                         <p className="text-sm text-gray-400 mb-2">1. {config.step1}</p>
-                        {config.dynamic ? (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const res = await fetch(`/api/launchers/${launcher.id}/auth-url`, { credentials: 'same-origin' });
-                              if (res.ok) {
-                                const { url } = await res.json();
-                                window.open(url, '_blank');
-                              }
-                            }}
-                            className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3 text-left"
-                          >
-                            {config.linkText}
-                          </button>
-                        ) : (
-                          <a
-                            href={config.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3"
-                          >
-                            {config.linkText}
-                          </a>
-                        )}
+                        <a
+                          href={config.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3"
+                        >
+                          {config.linkText}
+                        </a>
                         <p className="text-sm text-gray-400 mb-2">2. {config.step2}</p>
                         <label className="block text-sm text-gray-300 mb-1">Authorization Code</label>
                         <input

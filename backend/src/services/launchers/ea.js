@@ -11,10 +11,10 @@ const BaseLauncher = require('./base');
  * { access_token, refresh_token, expires_at }
  */
 
-const EA_CLIENT_ID = 'JUNO_PC_CLIENT';
-const EA_CLIENT_SECRET = '4mRLtYMb6vq9qglomWEaT4auACSQmaccrOyR2';
+const EA_CLIENT_ID = 'ORIGIN_JS_SDK';
+const EA_CLIENT_SECRET = '';
 const EA_TOKEN_URL = 'https://accounts.ea.com/connect/token';
-const EA_REDIRECT_URI = 'qrc:///html/login_successful.html';
+const EA_REDIRECT_URI = 'nucleus:rest';
 const EA_GRAPHQL_URL = 'https://service-aggregation-layer.juno.ea.com/graphql';
 
 const OWNED_GAMES_QUERY = `
@@ -70,14 +70,15 @@ class EALauncher extends BaseLauncher {
   async authenticate(credentials) {
     const { auth_code } = credentials;
 
-    const res = await axios.post(EA_TOKEN_URL, new URLSearchParams({
+    const params = {
       grant_type: 'authorization_code',
       code: auth_code,
       client_id: EA_CLIENT_ID,
-      client_secret: EA_CLIENT_SECRET,
       redirect_uri: EA_REDIRECT_URI,
-      token_format: 'JWS',
-    }).toString(), {
+    };
+    if (EA_CLIENT_SECRET) params.client_secret = EA_CLIENT_SECRET;
+
+    const res = await axios.post(EA_TOKEN_URL, new URLSearchParams(params).toString(), {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
 
@@ -108,13 +109,14 @@ class EALauncher extends BaseLauncher {
     // Access token expired — refresh it
     console.log('[EA] Access token expired, refreshing...');
     try {
-      const res = await axios.post(EA_TOKEN_URL, new URLSearchParams({
+      const refreshParams = {
         grant_type: 'refresh_token',
         refresh_token: refresh_token,
         client_id: EA_CLIENT_ID,
-        client_secret: EA_CLIENT_SECRET,
-        token_format: 'JWS',
-      }).toString(), {
+      };
+      if (EA_CLIENT_SECRET) refreshParams.client_secret = EA_CLIENT_SECRET;
+
+      const res = await axios.post(EA_TOKEN_URL, new URLSearchParams(refreshParams).toString(), {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
 

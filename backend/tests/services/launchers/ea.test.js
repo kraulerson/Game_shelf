@@ -33,7 +33,7 @@ describe('EALauncher', () => {
       const params = new URLSearchParams(capturedBody);
       assert.equal(params.get('grant_type'), 'authorization_code');
       assert.equal(params.get('code'), 'test_code_123');
-      assert.equal(params.get('client_id'), 'JUNO_PC_CLIENT');
+      assert.equal(params.get('client_id'), 'ORIGIN_JS_SDK');
 
       // Verify returned credentials shape
       assert.equal(result.access_token, 'ea_test_access');
