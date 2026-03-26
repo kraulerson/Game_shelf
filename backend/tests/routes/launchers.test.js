@@ -344,6 +344,17 @@ describe('Launcher routes', () => {
     assert.equal(editions.c, 2, 'should have 2 game editions');
   });
 
+  it('POST /api/launchers/amazon/credentials should return 400 for file_import launcher', async () => {
+    const res = await makeFetch(app, '/api/launchers/amazon/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error.includes('file import'), 'should mention file import');
+  });
+
   // REGRESSION: Ubisoft cache-imported games were removed when a subsequent
   // GraphQL sync ran, because the sync engine marked API-missing games as
   // unowned. Fix: cache import now locks the launcher like Xbox approval does.

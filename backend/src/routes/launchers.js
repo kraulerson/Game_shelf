@@ -186,6 +186,10 @@ router.post('/:id/credentials', async (req, res) => {
     return res.status(400).json({ error: 'This launcher is not yet implemented' });
   }
 
+  if (launcher.auth_type === 'file_import') {
+    return res.status(400).json({ error: `${launcher.display_name} uses file import — no credentials needed` });
+  }
+
   const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie } = req.body || {};
 
   // Validate required fields by auth_type
