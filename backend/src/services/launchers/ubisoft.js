@@ -314,26 +314,41 @@ class UbisoftLauncher extends BaseLauncher {
         },
       }));
       const authResp = await readMessage(socket);
+      console.log('[Ubisoft] Demux auth success:', !!authResp?.response?.authenticateRsp?.success);
       if (!authResp?.response?.authenticateRsp?.success) {
-        throw new Error('Demux auth failed');
+        throw new Error('Demux auth failed: ' + JSON.stringify(authResp).slice(0, 200));
       }
 
       // Open ownership_service
+      console.log('[Ubisoft] Opening ownership_service...');
       socket.write(encode({
         request: { requestId: 2, openConnectionReq: { serviceName: 'ownership_service' } },
       }));
       const openResp = await readMessage(socket);
       const connId = openResp?.response?.openConnectionRsp?.connectionId;
-      if (!connId) throw new Error('Failed to open ownership_service');
+      console.log('[Ubisoft] Ownership connection ID:', connId, '| resp keys:', Object.keys(openResp || {}));
+      if (!connId) throw new Error('Failed to open ownership_service: ' + JSON.stringify(openResp).slice(0, 200));
 
       // Initialize ownership
+      console.log('[Ubisoft] Sending ownership init request...');
       const svcPayload = ownershipUpstream.encode(ownershipUpstream.create({
         request: { requestId: 1, initializeReq: { getAssociations: true, protoVersion: 7, useStaging: false } },
       })).finish();
       socket.write(encode({ push: { data: { connectionId: connId, data: svcPayload } } }));
 
       // Wait for a push message containing connection data (skip acks, keepalives)
-      const ownerResp = await readUntil(socket, msg => !!msg?.push?.data?.data, 30000);
+      console.log('[Ubisoft] Waiting for ownership response (30s timeout)...');
+      const ownerResp = await readUntil(socket, msg => {
+        const hasConnData = !!msg?.push?.data?.data;
+        const hasResponse = !!msg?.response;
+        const hasPush = !!msg?.push;
+        if (!hasConnData) {
+          console.log('[Ubisoft] Demux msg received - response:', hasResponse, 'push:', hasPush,
+            'pushKeys:', msg?.push ? Object.keys(msg.push) : 'n/a',
+            'dataKeys:', msg?.push?.data ? Object.keys(msg.push.data) : 'n/a');
+        }
+        return hasConnData;
+      }, 30000);
       const connData = ownerResp.push.data.data;
 
       const svcResp = ownershipDownstream.decode(connData);
