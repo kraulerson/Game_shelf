@@ -290,10 +290,10 @@ router.delete('/:id/manual-override', (req, res) => {
   const { id } = req.params;
   const { field } = req.body || {};
 
-  const validFields = { description: 'manual_description', cover: 'manual_cover' };
+  const validFields = { description: 'manual_description', cover: 'manual_cover', title: 'manual_title' };
   const column = validFields[field];
   if (!column) {
-    return res.status(400).json({ error: 'field must be "description" or "cover"' });
+    return res.status(400).json({ error: 'field must be "description", "cover", or "title"' });
   }
 
   const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);

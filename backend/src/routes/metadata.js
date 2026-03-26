@@ -35,6 +35,8 @@ router.post('/re-enrich/:gameId', async (req, res, next) => {
     // Reset the game so enrichment picks it up (respect manual override flags)
     db.prepare(`
       UPDATE games SET
+        title = CASE WHEN manual_title = 1 THEN title ELSE NULL END,
+        slug = CASE WHEN manual_title = 1 THEN slug ELSE NULL END,
         cover_url = CASE WHEN manual_cover = 1 THEN cover_url ELSE NULL END,
         hero_url = CASE WHEN manual_cover = 1 THEN hero_url ELSE NULL END,
         icon_url = CASE WHEN manual_cover = 1 THEN icon_url ELSE NULL END,

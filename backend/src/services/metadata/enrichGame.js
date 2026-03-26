@@ -190,7 +190,8 @@ async function enrichGame(gameEditionId, db) {
     INSERT INTO games (title, slug, description, release_year, developer, publisher, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(slug) DO UPDATE SET
-      title = excluded.title,
+      title = CASE WHEN games.manual_title = 1 THEN games.title ELSE excluded.title END,
+      slug = CASE WHEN games.manual_title = 1 THEN games.slug ELSE excluded.slug END,
       description = CASE WHEN games.manual_description = 1 THEN games.description ELSE excluded.description END,
       release_year = excluded.release_year,
       developer = excluded.developer,
