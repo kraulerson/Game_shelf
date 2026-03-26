@@ -205,7 +205,7 @@ describe('Manual metadata editing API', () => {
     const res = await makeFetch(app, `/api/games/${gameId}/manual-override`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
-      body: JSON.stringify({ field: 'title' }),
+      body: JSON.stringify({ field: 'invalid_field' }),
     });
     assert.equal(res.status, 400);
   });
