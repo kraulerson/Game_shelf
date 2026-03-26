@@ -236,7 +236,10 @@ describe('UbisoftLauncher', () => {
     }
   });
 
-  it('fetchOwnedGames() should return all games (uplay endpoint is PC-only)', async () => {
+  // REGRESSION: platform filter was dropping all games because ownedPlatformGroups.type
+  // is not populated by the API. Since the uplay/graphql endpoint only returns PC games,
+  // no client-side platform filter is needed.
+  it('fetchOwnedGames() should return all games without platform filtering', async () => {
     const axios = require('axios');
     const originalPost = axios.post;
 

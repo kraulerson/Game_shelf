@@ -2,6 +2,9 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 describe('EALauncher', () => {
+  // REGRESSION: JUNO_PC_CLIENT requires pc_sign and doesn't work in browsers.
+  // ORIGIN_JS_SDK only supports response_type=token (implicit flow), not code exchange.
+  // authenticate() stores the access_token directly — no server-side token exchange.
   it('authenticate() should store access token directly from implicit flow', async () => {
     delete require.cache[require.resolve('../../../src/services/launchers/ea')];
     const EALauncher = require('../../../src/services/launchers/ea');
