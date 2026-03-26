@@ -290,10 +290,10 @@ export default function Setup() {
                         step2: 'After logging in, you will be redirected to a page that may appear blank. Copy the "code" value from your browser\'s address bar and paste it below',
                       },
                       ea: {
-                        url: 'https://accounts.ea.com/connect/auth?response_type=code&client_id=ORIGIN_JS_SDK&redirect_uri=nucleus%3Arest',
+                        url: 'https://accounts.ea.com/connect/auth?response_type=token&client_id=ORIGIN_JS_SDK&redirect_uri=nucleus%3Arest',
                         linkText: 'Open EA Login',
                         step1: 'Click the link below and log in to your EA account',
-                        step2: 'After logging in, you will see a JSON response with a "code" field. Copy that value and paste it below',
+                        step2: 'After logging in, you will see a JSON response. Copy the "access_token" value and paste it below',
                       },
                     };
                     const config = authCodeConfig[launcher.id] || {

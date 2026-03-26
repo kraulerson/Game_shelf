@@ -29,7 +29,7 @@ describe('Express server', () => {
 
     const body = await res.json();
     assert.equal(body.status, 'ok');
-    assert.equal(body.version, '1.14.3');
+    assert.equal(body.version, '1.14.4');
     assert.equal(body.app, 'Gameshelf');
   });
 

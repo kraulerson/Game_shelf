@@ -65,40 +65,28 @@ const OWNED_GAMES_VARIABLES = {
 
 class EALauncher extends BaseLauncher {
   /**
-   * Exchange a one-time authorization code for tokens.
+   * Store the access token from the implicit OAuth flow.
+   * The user pastes the access_token directly (no code exchange).
    */
   async authenticate(credentials) {
     const { auth_code } = credentials;
 
-    const params = {
-      grant_type: 'authorization_code',
-      code: auth_code,
-      client_id: EA_CLIENT_ID,
-      redirect_uri: EA_REDIRECT_URI,
-    };
-    if (EA_CLIENT_SECRET) params.client_secret = EA_CLIENT_SECRET;
+    // In the implicit flow, auth_code IS the access_token
+    const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
 
-    const res = await axios.post(EA_TOKEN_URL, new URLSearchParams(params).toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
-
-    const data = res.data;
-    const expiresAt = new Date(Date.now() + (data.expires_in || 3600) * 1000).toISOString();
-
-    console.log('[EA] Token exchange successful');
+    console.log('[EA] Access token stored');
     return {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
+      access_token: auth_code,
       expires_at: expiresAt,
     };
   }
 
   /**
-   * Check token expiry and refresh if needed.
-   * Returns { session, updatedCredentials } for syncEngine to persist.
+   * Check token expiry. No refresh possible with implicit flow —
+   * user must re-authenticate when token expires.
    */
   async refreshIfNeeded(credentials) {
-    const { access_token, refresh_token, expires_at } = credentials;
+    const { access_token, expires_at } = credentials;
 
     // Check if access token is still valid (with 60s buffer)
     const expiresAtMs = new Date(expires_at).getTime();
@@ -106,35 +94,8 @@ class EALauncher extends BaseLauncher {
       return { session: access_token, updatedCredentials: null };
     }
 
-    // Access token expired — refresh it
-    console.log('[EA] Access token expired, refreshing...');
-    try {
-      const refreshParams = {
-        grant_type: 'refresh_token',
-        refresh_token: refresh_token,
-        client_id: EA_CLIENT_ID,
-      };
-      if (EA_CLIENT_SECRET) refreshParams.client_secret = EA_CLIENT_SECRET;
-
-      const res = await axios.post(EA_TOKEN_URL, new URLSearchParams(refreshParams).toString(), {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      });
-
-      const data = res.data;
-      const newExpiresAt = new Date(Date.now() + (data.expires_in || 3600) * 1000).toISOString();
-
-      const updatedCredentials = {
-        access_token: data.access_token,
-        refresh_token: data.refresh_token,
-        expires_at: newExpiresAt,
-      };
-
-      console.log('[EA] Token refreshed successfully');
-      return { session: data.access_token, updatedCredentials };
-    } catch (err) {
-      console.error('[EA] Token refresh failed:', err.message);
-      throw new Error('EA authentication expired. Please re-authenticate.');
-    }
+    // No refresh token available with implicit flow
+    throw new Error('EA access token expired. Please re-authenticate by pasting a new token from the EA login page.');
   }
 
   /**
