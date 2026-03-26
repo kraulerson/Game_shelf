@@ -259,30 +259,17 @@ describe('Launcher routes', () => {
     );
   });
 
-  // Amazon Games: preview should parse games.db and return game list without DB writes
+  // Amazon Games: preview should parse JSON and return game list without DB writes
   it('POST /api/launchers/amazon/preview should return parsed games', async () => {
-    const Database = require('better-sqlite3');
-    const tmpPath = require('node:path').join(__dirname, 'test-amazon-preview.db');
-    const tmpDb = new Database(tmpPath);
-    tmpDb.exec(`
-      CREATE TABLE IF NOT EXISTS "DbSet" (
-        Id TEXT PRIMARY KEY,
-        ProductTitle TEXT,
-        ProductIdStr TEXT,
-        Installed INTEGER
-      )
-    `);
-    tmpDb.prepare('INSERT INTO DbSet (Id, ProductTitle, ProductIdStr, Installed) VALUES (?, ?, ?, ?)').run(
-      'amzn1.preview.aaa', 'Preview Game', 'amzn1.preview.aaa', 1
-    );
-    tmpDb.close();
-
-    const fileBuffer = fs.readFileSync(tmpPath);
-    fs.unlinkSync(tmpPath);
+    const jsonData = JSON.stringify([
+      { productId: 'amzn1.preview.aaa', title: 'Preview Game' },
+      { productId: 'amzn1.preview.bbb', title: 'Another Game' },
+    ]);
+    const fileBuffer = Buffer.from(jsonData);
 
     const boundary = '----TestBoundary' + Date.now();
     const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="games_db"; filename="games.db"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="games_json"; filename="amazon-games.json"\r\nContent-Type: application/json\r\n\r\n`),
       fileBuffer,
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ]);
@@ -299,8 +286,9 @@ describe('Launcher routes', () => {
     assert.equal(res.status, 200);
     const data = await res.json();
     assert.ok(Array.isArray(data.games), 'should return games array');
-    assert.equal(data.games.length, 1);
-    assert.equal(data.games[0].title, 'Preview Game');
+    assert.equal(data.games.length, 2);
+    assert.equal(data.games[0].title, 'Another Game');  // sorted
+    assert.equal(data.games[1].title, 'Preview Game');
 
     // Verify no DB writes happened
     const db = app.locals.db;

@@ -44,20 +44,20 @@ router.get('/available', (req, res) => {
 const multer = require('multer');
 const uploadCache = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// POST /api/launchers/amazon/preview — upload games.db, return parsed game list (no DB writes)
-router.post('/amazon/preview', uploadCache.single('games_db'), (req, res) => {
+// POST /api/launchers/amazon/preview — upload amazon-games.json, return parsed game list (no DB writes)
+router.post('/amazon/preview', uploadCache.single('games_json'), (req, res) => {
   const file = req.file;
   if (!file) {
-    return res.status(400).json({ error: 'games_db file is required' });
+    return res.status(400).json({ error: 'games_json file is required' });
   }
 
-  const { parseGamesDb } = require('../services/launchers/amazon');
+  const { parseGamesJson } = require('../services/launchers/amazon');
 
   let games;
   try {
-    games = parseGamesDb(file.buffer);
+    games = parseGamesJson(file.buffer);
   } catch (err) {
-    return res.status(400).json({ error: 'Failed to parse games.db: ' + err.message });
+    return res.status(400).json({ error: err.message });
   }
 
   res.json({ games });
