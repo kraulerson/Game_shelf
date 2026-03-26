@@ -7,6 +7,7 @@ const UbisoftLauncher = require('./ubisoft');
 const EpicLauncher = require('./epic');
 const BattlenetLauncher = require('./battlenet');
 const XboxLauncher = require('./xbox');
+const AmazonLauncher = require('./amazon');
 
 const LAUNCHER_CLASSES = {
   steam: SteamLauncher,
@@ -18,6 +19,7 @@ const LAUNCHER_CLASSES = {
   epic: EpicLauncher,
   battlenet: BattlenetLauncher,
   xbox: XboxLauncher,
+  amazon: AmazonLauncher,
 };
 
 module.exports = { LAUNCHER_CLASSES };

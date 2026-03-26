@@ -18,6 +18,7 @@ const AVAILABLE_LAUNCHERS = [
   { id: 'gog', display_name: 'GOG', auth_type: 'auth_code', otp_supported: false, qr_supported: false, implemented: true },
   { id: 'battlenet', display_name: 'Battle.net', auth_type: 'credentials+totp', otp_supported: true, qr_supported: false, implemented: false },
   { id: 'xbox', display_name: 'Xbox / Microsoft', auth_type: 'api_key', otp_supported: false, qr_supported: false, implemented: true },
+  { id: 'amazon', display_name: 'Amazon Games', auth_type: 'file_import', otp_supported: false, qr_supported: false, implemented: true },
 ];
 
 const LAUNCHER_MAP = Object.fromEntries(AVAILABLE_LAUNCHERS.map(l => [l.id, l]));

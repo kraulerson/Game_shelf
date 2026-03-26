@@ -37,13 +37,13 @@ describe('Launcher routes', () => {
     return `gameshelf_session=${token}`;
   }
 
-  it('GET /api/launchers/available should return 9 launchers', async () => {
+  it('GET /api/launchers/available should return 10 launchers', async () => {
     const res = await makeFetch(app, '/api/launchers/available', {
       headers: { Cookie: authCookie() },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.length, 9);
+    assert.equal(body.length, 10);
     assert.equal(body[0].id, 'steam');
     assert.equal(body[0].display_name, 'Steam');
   });
