@@ -14,52 +14,58 @@ const headers = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
 };
 
-// Query 1: Current query
-const query1 = `query { viewer { id ownedGames: games(filterBy: {isOwned: true}) { totalCount nodes { id name } } } }`;
+const userId = creds.userId;
 
-// Query 2: Try without filter
-const query2 = `query { viewer { id allGames: games { totalCount nodes { id name } } } }`;
-
-// Query 3: Try with limit and offset
-const query3 = `query { viewer { id ownedGames: games(filterBy: {isOwned: true}, limit: 100) { totalCount nodes { id name } } } }`;
+async function tryEndpoint(label, url, method = 'get', body = null) {
+  console.log(`\n=== ${label} ===`);
+  try {
+    const res = method === 'get'
+      ? await axios.get(url, { headers })
+      : await axios.post(url, body, { headers });
+    const data = res.data;
+    if (Array.isArray(data)) {
+      console.log('Array, count:', data.length);
+      data.slice(0, 3).forEach(g => console.log(' -', JSON.stringify(g).slice(0, 150)));
+    } else if (typeof data === 'object') {
+      const keys = Object.keys(data);
+      console.log('Object keys:', keys.join(', '));
+      // Try to find game lists in common patterns
+      for (const key of keys) {
+        if (Array.isArray(data[key])) {
+          console.log(`  ${key}: array of ${data[key].length}`);
+          if (data[key].length > 0) data[key].slice(0, 2).forEach(g => console.log('   -', JSON.stringify(g).slice(0, 150)));
+        }
+      }
+      if (keys.length <= 5) console.log(JSON.stringify(data).slice(0, 500));
+    }
+  } catch (e) {
+    console.log('Error:', e.response?.status, e.response?.data ? JSON.stringify(e.response.data).slice(0, 200) : e.message);
+  }
+}
 
 async function run() {
-  console.log('=== Query 1: isOwned filter ===');
-  try {
-    const res1 = await axios.post('https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql', { query: query1 }, { headers });
-    const games1 = res1.data?.data?.viewer?.ownedGames;
-    console.log('totalCount:', games1?.totalCount, '| nodes:', games1?.nodes?.length);
-    games1?.nodes?.forEach(g => console.log(' -', g.name));
-  } catch (e) { console.log('Error:', e.response?.status, e.response?.data?.errors?.[0]?.message || e.message); }
+  console.log('userId:', userId);
 
-  console.log('\n=== Query 2: no filter ===');
-  try {
-    const res2 = await axios.post('https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql', { query: query2 }, { headers });
-    const games2 = res2.data?.data?.viewer?.allGames;
-    console.log('totalCount:', games2?.totalCount, '| nodes:', games2?.nodes?.length);
-    if (games2?.nodes) games2.nodes.forEach(g => console.log(' -', g.name));
-  } catch (e) { console.log('Error:', e.response?.status, e.response?.data?.errors?.[0]?.message || e.message); }
+  // Ownership/entitlements endpoints
+  await tryEndpoint('Ownership v1', `https://public-ubiservices.ubi.com/v1/profiles/${userId}/ownership`);
+  await tryEndpoint('Ownership v2', `https://public-ubiservices.ubi.com/v2/profiles/${userId}/ownership`);
+  await tryEndpoint('Ownership v3', `https://public-ubiservices.ubi.com/v3/profiles/${userId}/ownership`);
 
-  console.log('\n=== Query 3: isOwned with limit 100 ===');
-  try {
-    const res3 = await axios.post('https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql', { query: query3 }, { headers });
-    const games3 = res3.data?.data?.viewer?.ownedGames;
-    console.log('totalCount:', games3?.totalCount, '| nodes:', games3?.nodes?.length);
-  } catch (e) { console.log('Error:', e.response?.status, e.response?.data?.errors?.[0]?.message || e.message); }
+  // Club/library endpoints
+  await tryEndpoint('Club games', `https://public-ubiservices.ubi.com/v1/profiles/${userId}/club/games`);
+  await tryEndpoint('Uplay games', `https://public-ubiservices.ubi.com/v1/profiles/${userId}/uplay/games`);
 
-  // Query 4: Try the ownership endpoint directly (REST, not GraphQL)
-  console.log('\n=== Query 4: REST ownership endpoint ===');
-  try {
-    const res4 = await axios.get('https://public-ubiservices.ubi.com/v1/profiles/' + creds.userId + '/club/aggregation/website/owned-games', { headers });
-    const data = res4.data;
-    console.log('Type:', typeof data, '| isArray:', Array.isArray(data));
-    if (Array.isArray(data)) {
-      console.log('Count:', data.length);
-      data.slice(0, 5).forEach(g => console.log(' -', g.name || g.title || JSON.stringify(g).slice(0, 100)));
-    } else {
-      console.log(JSON.stringify(data).slice(0, 500));
-    }
-  } catch (e) { console.log('Error:', e.response?.status, e.message); }
+  // Try different GraphQL with productType
+  const gqlQuery = `query { viewer { id ownedGames: games(filterBy: {isOwned: true}, limit: 100, offset: 0) { totalCount nodes { id name } } } }`;
+  await tryEndpoint('GraphQL with limit/offset', 'https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql', 'post', { query: gqlQuery });
+
+  // Try alternative GraphQL queries
+  const gql2 = `query { viewer { id games(limit: 100) { totalCount nodes { id name } } } }`;
+  await tryEndpoint('GraphQL all games limit 100', 'https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql', 'post', { query: gql2 });
+
+  // Entitlements
+  await tryEndpoint('Entitlements', `https://public-ubiservices.ubi.com/v1/profiles/${userId}/entitlements`);
+  await tryEndpoint('Entitlements v2', `https://public-ubiservices.ubi.com/v2/profiles/${userId}/entitlements`);
 
   db.close();
 }
