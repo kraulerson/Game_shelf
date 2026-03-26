@@ -36,7 +36,11 @@ class ItchioLauncher extends BaseLauncher {
         params: { page },
       });
 
-      const ownedKeys = res.data?.owned_keys || [];
+      const ownedKeys = res.data?.owned_keys;
+      if (!Array.isArray(ownedKeys)) {
+        console.warn(`[itch.io] Unexpected owned_keys type on page ${page}: ${typeof ownedKeys}, keys: ${res.data ? Object.keys(res.data).join(',') : 'null'}`);
+        break;
+      }
       if (ownedKeys.length === 0) break;
 
       for (const key of ownedKeys) {
