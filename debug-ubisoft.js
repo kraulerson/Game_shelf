@@ -1,42 +1,86 @@
 const Database = require('better-sqlite3');
 const { decrypt } = require('./src/utils/encrypt');
-const axios = require('axios');
+const { UbisoftDemux } = require('ubisoft-demux');
+const yaml = require('yaml');
 
 const db = new Database('/app/data/gameshelf.db');
 const launcher = db.prepare("SELECT * FROM launchers WHERE name = 'ubisoft'").get();
 const creds = JSON.parse(decrypt(launcher.credentials_json));
 
-const headers = {
-  'Authorization': 'Ubi_v1 t=' + creds.ticket,
-  'Ubi-AppId': 'f35adcb5-1911-440c-b1c9-48fdc1701c68',
-  'Ubi-SessionId': creds.sessionId,
-  'Content-Type': 'application/json',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-};
-
 async function run() {
-  let allGames = [];
-  let offset = 0;
-  const limit = 50;
+  console.log('Ticket exists:', !!creds.ticket);
 
-  while (true) {
-    const query = `query { viewer { ownedGames: games(filterBy: {isOwned: true}, limit: ${limit}, offset: ${offset}) { totalCount nodes { id name } } } }`;
-    const res = await axios.post('https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql', { query }, { headers });
-    const games = res.data?.data?.viewer?.ownedGames;
+  const ubiDemux = new UbisoftDemux({ timeout: 15000 });
 
-    if (!games || !games.nodes?.length) break;
+  try {
+    console.log('Authenticating with Demux...');
+    const authResp = await ubiDemux.basicRequest({
+      authenticateReq: {
+        clientId: 'uplay_pc',
+        sendKeepAlive: false,
+        token: { ubiTicket: creds.ticket },
+      },
+    });
 
-    console.log(`Page offset=${offset}: ${games.nodes.length} games (totalCount: ${games.totalCount})`);
-    allGames.push(...games.nodes);
+    if (!authResp.authenticateRsp?.success) {
+      console.log('Auth failed:', JSON.stringify(authResp));
+      return;
+    }
+    console.log('Demux auth successful');
 
-    if (allGames.length >= games.totalCount || games.nodes.length < limit) break;
-    offset += limit;
+    console.log('Opening ownership_service...');
+    const ownershipConn = await ubiDemux.openConnection('ownership_service');
+
+    const initResp = await ownershipConn.request({
+      request: {
+        requestId: 1,
+        initializeReq: {
+          getAssociations: true,
+          protoVersion: 7,
+          useStaging: false,
+        },
+      },
+    });
+
+    const ownedGames = initResp.response?.initializeRsp?.ownedGames?.ownedGames || [];
+    console.log('Total owned products:', ownedGames.length);
+
+    // Show breakdown by productType
+    const types = {};
+    ownedGames.forEach(g => { types[g.productType] = (types[g.productType] || 0) + 1; });
+    console.log('By productType:', JSON.stringify(types));
+    console.log('  0=Game, 1=AddOn, 2=PreOrderGame, 4=Trial, 6=Bundle, 7=SeasonPass');
+
+    // Filter to games only (productType 0)
+    const games = ownedGames.filter(g => g.productType === 0);
+    console.log('\nGames (productType=0):', games.length);
+
+    let named = 0;
+    let unnamed = 0;
+    for (const game of games) {
+      let name = null;
+      if (game.configuration) {
+        try {
+          const config = yaml.parse(game.configuration, { uniqueKeys: false, strict: false });
+          name = config?.root?.name || config?.root?.sort_string || null;
+        } catch (e) {}
+      }
+      if (name) {
+        named++;
+        console.log(` - ${name} (productId: ${game.productId}, state: ${game.state})`);
+      } else {
+        unnamed++;
+        console.log(` - [NO NAME] productId: ${game.productId}, uplayId: ${game.uplayId}, state: ${game.state}`);
+      }
+    }
+    console.log(`\nNamed: ${named}, Unnamed: ${unnamed}`);
+
+  } catch (err) {
+    console.error('Error:', err.message);
+  } finally {
+    await ubiDemux.destroy();
+    db.close();
   }
-
-  console.log(`\nTotal fetched: ${allGames.length}`);
-  allGames.forEach((g, i) => console.log(`${i + 1}. ${g.name}`));
-
-  db.close();
 }
 
 run();
