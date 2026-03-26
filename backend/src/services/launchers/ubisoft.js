@@ -258,6 +258,40 @@ class UbisoftLauncher extends BaseLauncher {
       });
     }
 
+    // Read messages until we get one matching a predicate, skipping others
+    function readUntil(socket, predicate, timeout = 30000) {
+      return new Promise((resolve, reject) => {
+        let buf = Buffer.alloc(0);
+        const timer = setTimeout(() => {
+          socket.removeListener('data', onData);
+          reject(new Error('Demux timeout waiting for matching message'));
+        }, timeout);
+        function onData(chunk) {
+          buf = Buffer.concat([buf, chunk]);
+          while (buf.length >= 4) {
+            const len = buf.readUInt32BE(0);
+            if (buf.length < 4 + len) return;
+            const msgBuf = buf.subarray(4, 4 + len);
+            buf = buf.subarray(4 + len);
+            try {
+              const msg = demuxDownstream.decode(msgBuf);
+              if (predicate(msg)) {
+                clearTimeout(timer);
+                socket.removeListener('data', onData);
+                resolve(msg);
+                return;
+              }
+              // Skip non-matching messages (keepalives, acks, etc.)
+              console.log('[Ubisoft] Skipping demux message:', msg.response ? 'response' : msg.push ? 'push' : 'unknown');
+            } catch (e) {
+              // Skip decode errors
+            }
+          }
+        }
+        socket.on('data', onData);
+      });
+    }
+
     const socket = tls.connect(443, DEMUX_HOST, {
       servername: DEMUX_HOST, rejectUnauthorized: false,
     });
@@ -298,9 +332,9 @@ class UbisoftLauncher extends BaseLauncher {
       })).finish();
       socket.write(encode({ push: { data: { connectionId: connId, data: svcPayload } } }));
 
-      const ownerResp = await readMessage(socket, 30000);
-      const connData = ownerResp?.push?.data?.data;
-      if (!connData) throw new Error('No ownership data in response');
+      // Wait for a push message containing connection data (skip acks, keepalives)
+      const ownerResp = await readUntil(socket, msg => !!msg?.push?.data?.data, 30000);
+      const connData = ownerResp.push.data.data;
 
       const svcResp = ownershipDownstream.decode(connData);
       const allProducts = svcResp?.response?.initializeRsp?.ownedGames?.ownedGames || [];
