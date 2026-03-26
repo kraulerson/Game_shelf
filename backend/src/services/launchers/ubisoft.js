@@ -1,35 +1,22 @@
 const axios = require('axios');
-const tls = require('tls');
-const protobuf = require('protobufjs');
-const path = require('path');
-const glob = require('glob');
-const fs = require('fs');
-const yaml = require('yaml');
 const BaseLauncher = require('./base');
 
 /**
- * Ubisoft Connect integration using email/password Basic Auth + demux ownership service.
+ * Ubisoft Connect integration.
  *
- * Auth flow: User provides email/password during setup. First sync logs in
- * via Basic Auth with the demux AppId, handles email-based 2FA via two-phase
- * sync flow, stores ticket + rememberMeTicket for refresh.
+ * Two game sources:
+ * 1. GraphQL API — returns ~16 native Ubisoft Store purchases with clean names
+ * 2. Local cache file import — user uploads configurations + ownership files
+ *    from their Windows machine for the complete library (Prime Gaming, etc.)
  *
- * Game library: Uses demux ownership_service (TLS socket + protobuf) for the
- * complete game list (including redeemed keys, Prime Gaming, etc.). Falls back
- * to GraphQL if demux fails.
- *
- * Credentials shape (after login):
- * { username, password, ticket, sessionId, rememberMeTicket, userId, expiration,
- *   demuxTicket, demuxRememberMeTicket, demuxExpiration }
+ * Auth: email/password Basic Auth with email-based 2FA via two-phase sync flow.
+ * Credentials: { username, password, ticket, sessionId, rememberMeTicket, userId, expiration }
  */
 
-const UBI_DEMUX_APP_ID = 'f68a4bb5-608a-4ff2-8123-be8ef797e0a6';
-const UBI_CLUB_APP_ID = 'f35adcb5-1911-440c-b1c9-48fdc1701c68';
+const UBI_APP_ID = 'f35adcb5-1911-440c-b1c9-48fdc1701c68';
 const UBI_AUTH_URL = 'https://public-ubiservices.ubi.com/v3/profiles/sessions';
 const UBI_GRAPHQL_URL = 'https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql';
 const UBI_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const DEMUX_HOST = 'dmx.upc.ubisoft.com';
-const DEMUX_VERSION = 11200;
 
 const OWNED_GAMES_QUERY = `
 query AllGames {
@@ -42,44 +29,142 @@ query AllGames {
   }
 }`;
 
-// Lazy-load protobuf definitions (loaded once on first use)
-let _protoRoot = null;
-function getProtoRoot() {
-  if (_protoRoot) return _protoRoot;
-  const protoDir = path.join(__dirname, '../../../node_modules/ubisoft-demux/dist/proto');
-  if (!fs.existsSync(protoDir)) return null;
-  const protoFiles = glob.sync(`${protoDir}/**/*.proto`);
-  if (protoFiles.length === 0) return null;
-  _protoRoot = new protobuf.Root();
-  _protoRoot.resolvePath = (origin, target) => {
-    const resolved = path.resolve(protoDir, target);
-    if (fs.existsSync(resolved)) return resolved;
-    return path.resolve(path.dirname(origin), target);
-  };
-  _protoRoot.loadSync(protoFiles);
-  return _protoRoot;
-}
-
-function buildHeaders(appId, extra = {}) {
+function buildHeaders(extra = {}) {
   return {
     'Content-Type': 'application/json',
-    'Ubi-AppId': appId,
+    'Ubi-AppId': UBI_APP_ID,
     'User-Agent': UBI_USER_AGENT,
     ...extra,
   };
 }
 
+function readVarint(buf, pos) {
+  let result = 0, shift = 0;
+  while (pos < buf.length) {
+    const byte = buf[pos++];
+    result |= (byte & 0x7f) << shift;
+    shift += 7;
+    if (!(byte & 0x80)) break;
+  }
+  return { value: result, pos };
+}
+
+/**
+ * Parse the Ubisoft Connect local cache files to extract owned games.
+ * configurations: protobuf file with game metadata (YAML configs)
+ * ownership: protobuf file with owned product IDs
+ */
+function parseLocalCacheFiles(configBuf, ownershipBuf) {
+  // Parse configurations → map of productId → { name, isDlc, hasStartGame }
+  const productMap = {};
+  let pos = 0;
+  while (pos < configBuf.length) {
+    const tag = readVarint(configBuf, pos); pos = tag.pos;
+    const fn = tag.value >> 3, wt = tag.value & 7;
+    if (wt === 2) {
+      const len = readVarint(configBuf, pos); pos = len.pos;
+      const end = pos + len.value;
+      if (fn === 1) {
+        let ep = pos, uid = 0, config = '';
+        while (ep < end) {
+          const et = readVarint(configBuf, ep); ep = et.pos;
+          const efn = et.value >> 3, ewt = et.value & 7;
+          if (ewt === 0) { const v = readVarint(configBuf, ep); ep = v.pos; if (efn === 1) uid = v.value; }
+          else if (ewt === 2) { const l = readVarint(configBuf, ep); ep = l.pos; if (efn === 3) config = configBuf.toString('utf8', ep, ep + l.value); ep += l.value; }
+          else break;
+        }
+        if (config && uid) {
+          const isDlc = /is_dlc:\s*yes/i.test(config) || /is_ulc:\s*yes/i.test(config);
+          const hasStart = /start_game:/i.test(config);
+          if (!isDlc && hasStart) {
+            // Extract name from multiple sources (best to worst)
+            let name = null;
+            const placeholder = /^(l\d+|NAME|GAMENAME|GAME_NAME|BACKGROUNDIMAGE|THUMBIMAGE)$/i;
+
+            // 1. display_name field
+            const dn = config.match(/display_name:\s*(.+?)\s*$/m);
+            if (dn && dn[1].length > 2 && !placeholder.test(dn[1])) name = dn[1].replace(/^["']|["']$/g, '');
+
+            // 2. name field (if not placeholder)
+            if (!name) {
+              const nm = config.match(/^\s*name:\s*["']?(.+?)["']?\s*$/m);
+              if (nm && nm[1].length > 2 && !placeholder.test(nm[1])) name = nm[1];
+            }
+
+            // 3. Comment header (e.g., "# Child of Light")
+            if (!name) {
+              const lines = config.split('\n');
+              for (const line of lines) {
+                const cm = line.match(/^#\s+([A-Za-z][\w\s:®™'&\-!.]+)/);
+                if (cm && cm[1].length > 3 && !cm[1].startsWith('---')) {
+                  name = cm[1].trim();
+                  break;
+                }
+              }
+            }
+
+            // 4. sort_string (clean up internal codes like "Assassin's Creed 05.1")
+            if (!name) {
+              const ss = config.match(/sort_string:\s*(.+?)\s*$/m);
+              if (ss && ss[1].length > 2) name = ss[1].replace(/^["']|["']$/g, '');
+            }
+
+            productMap[uid] = name || null;
+          }
+        }
+      }
+      pos = end;
+    } else if (wt === 0) { pos = readVarint(configBuf, pos).pos; }
+    else break;
+  }
+
+  // Parse ownership file → set of owned product IDs
+  // Skip 0x108 byte header
+  const ownedIds = new Set();
+  pos = 0x108;
+  while (pos < ownershipBuf.length) {
+    try {
+      const tag = readVarint(ownershipBuf, pos); pos = tag.pos;
+      const wt = tag.value & 7;
+      if (wt === 2) {
+        const len = readVarint(ownershipBuf, pos); pos = len.pos;
+        const end = pos + len.value;
+        let ep = pos, pid = 0;
+        while (ep < end) {
+          const et = readVarint(ownershipBuf, ep); ep = et.pos;
+          const efn = et.value >> 3, ewt = et.value & 7;
+          if (ewt === 0) { const v = readVarint(ownershipBuf, ep); ep = v.pos; if (efn === 1) pid = v.value; }
+          else if (ewt === 2) { const l = readVarint(ownershipBuf, ep); ep = l.pos; ep += l.value; }
+          else break;
+        }
+        if (pid > 0) ownedIds.add(pid);
+        pos = end;
+      } else if (wt === 0) { pos = readVarint(ownershipBuf, pos).pos; }
+      else break;
+    } catch (e) { break; }
+  }
+
+  // Cross-reference: owned IDs that have a config entry (base game with start_game)
+  const games = [];
+  for (const id of ownedIds) {
+    if (id in productMap) {
+      games.push({
+        launcher_game_id: String(id),
+        title: productMap[id] || `Ubisoft Game ${id}`,
+        playtime_minutes: 0,
+      });
+    }
+  }
+
+  return games;
+}
+
 class UbisoftLauncher extends BaseLauncher {
-  /**
-   * Login with email/password Basic Auth using specified AppId.
-   * If 2FA is triggered and otp_code is provided, completes 2FA.
-   * If 2FA is triggered without otp_code, throws OTP_REQUIRED.
-   */
-  async _login(appId, username, password, otpCode) {
+  async _login(username, password, otpCode) {
     const basicAuth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
 
     const res = await axios.post(UBI_AUTH_URL, { rememberMe: true }, {
-      headers: buildHeaders(appId, { Authorization: basicAuth }),
+      headers: buildHeaders({ Authorization: basicAuth }),
     });
 
     const data = res.data;
@@ -90,7 +175,7 @@ class UbisoftLauncher extends BaseLauncher {
       }
 
       const res2fa = await axios.post(UBI_AUTH_URL, { rememberMe: true }, {
-        headers: buildHeaders(appId, {
+        headers: buildHeaders({
           Authorization: `ubi_2fa_v1 t=${data.twoFactorAuthenticationTicket}`,
           'Ubi-2faCode': otpCode,
         }),
@@ -102,326 +187,81 @@ class UbisoftLauncher extends BaseLauncher {
     return data;
   }
 
-  /**
-   * Refresh using rememberMeTicket with specified AppId.
-   */
-  async _refreshWithRememberMe(appId, rememberMeTicket) {
+  async _refreshWithRememberMe(rememberMeTicket) {
     const res = await axios.post(UBI_AUTH_URL, { rememberMe: true }, {
-      headers: buildHeaders(appId, { Authorization: `rm_v1 t=${rememberMeTicket}` }),
+      headers: buildHeaders({ Authorization: `rm_v1 t=${rememberMeTicket}` }),
     });
     return res.data;
-  }
-
-  /**
-   * Get a valid ticket for a given AppId, using rememberMe refresh or full login.
-   */
-  async _getTicket(appId, credentials, rmTicketKey, ticketKey, expirationKey) {
-    const { username, password, otp_code } = credentials;
-    const rmTicket = credentials[rmTicketKey];
-    const ticket = credentials[ticketKey];
-    const expiration = credentials[expirationKey];
-
-    // Check if existing ticket is still valid
-    if (ticket && expiration) {
-      const expiresAtMs = new Date(expiration).getTime();
-      if (Date.now() < expiresAtMs - 60000) {
-        return { ticket, isNew: false };
-      }
-    }
-
-    // Try rememberMeTicket refresh (avoids 2FA)
-    if (rmTicket) {
-      try {
-        console.log(`[Ubisoft] Refreshing ${appId === UBI_DEMUX_APP_ID ? 'demux' : 'club'} ticket...`);
-        const data = await this._refreshWithRememberMe(appId, rmTicket);
-        return { data, isNew: true };
-      } catch (err) {
-        console.warn(`[Ubisoft] rememberMe refresh failed for ${appId}:`, err.message);
-      }
-    }
-
-    // Full login
-    console.log(`[Ubisoft] Logging in with ${appId === UBI_DEMUX_APP_ID ? 'demux' : 'club'} AppId...`);
-    const data = await this._login(appId, username, password, otp_code);
-    return { data, isNew: true };
   }
 
   async authenticate(credentials) {
     return credentials;
   }
 
-  /**
-   * Get both club and demux tickets. Returns session with both.
-   */
   async refreshIfNeeded(credentials) {
-    const { username, password } = credentials;
+    const { username, password, ticket, sessionId, rememberMeTicket, expiration, otp_code } = credentials;
 
-    // Get club ticket (for GraphQL fallback)
-    const clubResult = await this._getTicket(
-      UBI_CLUB_APP_ID, credentials,
-      'rememberMeTicket', 'ticket', 'expiration'
-    );
-
-    // Get demux ticket (for ownership_service)
-    let demuxResult;
-    try {
-      demuxResult = await this._getTicket(
-        UBI_DEMUX_APP_ID, credentials,
-        'demuxRememberMeTicket', 'demuxTicket', 'demuxExpiration'
-      );
-    } catch (err) {
-      // If demux login fails (e.g., 2FA already consumed by club login), proceed without it
-      console.warn('[Ubisoft] Demux ticket failed, will use GraphQL fallback:', err.message);
-      demuxResult = null;
+    if (ticket && expiration) {
+      const expiresAtMs = new Date(expiration).getTime();
+      if (Date.now() < expiresAtMs - 60000) {
+        return { session: { ticket, sessionId }, updatedCredentials: null };
+      }
     }
 
-    const updatedCredentials = { username, password };
+    let data;
 
-    // Club credentials
-    if (clubResult.isNew && clubResult.data) {
-      updatedCredentials.ticket = clubResult.data.ticket;
-      updatedCredentials.sessionId = clubResult.data.sessionId;
-      updatedCredentials.rememberMeTicket = clubResult.data.rememberMeTicket;
-      updatedCredentials.userId = clubResult.data.userId;
-      updatedCredentials.expiration = clubResult.data.expiration;
-    } else if (clubResult.ticket) {
-      updatedCredentials.ticket = clubResult.ticket;
-      updatedCredentials.sessionId = credentials.sessionId;
-      updatedCredentials.rememberMeTicket = credentials.rememberMeTicket;
-      updatedCredentials.userId = credentials.userId;
-      updatedCredentials.expiration = credentials.expiration;
+    if (rememberMeTicket) {
+      try {
+        console.log('[Ubisoft] Refreshing with rememberMeTicket...');
+        data = await this._refreshWithRememberMe(rememberMeTicket);
+      } catch (err) {
+        console.warn('[Ubisoft] rememberMeTicket refresh failed, falling back to login:', err.message);
+        data = null;
+      }
     }
 
-    // Demux credentials
-    if (demuxResult?.isNew && demuxResult.data) {
-      updatedCredentials.demuxTicket = demuxResult.data.ticket;
-      updatedCredentials.demuxRememberMeTicket = demuxResult.data.rememberMeTicket;
-      updatedCredentials.demuxExpiration = demuxResult.data.expiration;
-    } else if (demuxResult?.ticket) {
-      updatedCredentials.demuxTicket = demuxResult.ticket;
-      updatedCredentials.demuxRememberMeTicket = credentials.demuxRememberMeTicket;
-      updatedCredentials.demuxExpiration = credentials.demuxExpiration;
-    } else {
-      // Preserve existing demux creds if available
-      updatedCredentials.demuxTicket = credentials.demuxTicket;
-      updatedCredentials.demuxRememberMeTicket = credentials.demuxRememberMeTicket;
-      updatedCredentials.demuxExpiration = credentials.demuxExpiration;
+    if (!data) {
+      console.log('[Ubisoft] Logging in with credentials...');
+      data = await this._login(username, password, otp_code);
     }
 
-    const session = {
-      ticket: updatedCredentials.ticket,
-      sessionId: updatedCredentials.sessionId,
-      demuxTicket: updatedCredentials.demuxTicket,
+    const session = { ticket: data.ticket, sessionId: data.sessionId };
+    const updatedCredentials = {
+      username,
+      password,
+      ticket: data.ticket,
+      sessionId: data.sessionId,
+      rememberMeTicket: data.rememberMeTicket,
+      userId: data.userId,
+      expiration: data.expiration,
     };
 
     console.log('[Ubisoft] Authentication successful');
     return { session, updatedCredentials };
   }
 
-  /**
-   * Fetch games via demux ownership_service (returns complete library).
-   */
-  async _fetchViaDemux(demuxTicket) {
-    const root = getProtoRoot();
-    if (!root) throw new Error('Protobuf definitions not available');
+  async fetchOwnedGames(session) {
+    const { ticket, sessionId } = session;
 
-    const demuxUpstream = root.lookupType('mg.protocol.demux.Upstream');
-    const demuxDownstream = root.lookupType('mg.protocol.demux.Downstream');
-    const ownershipUpstream = root.lookupType('mg.protocol.ownership.Upstream');
-    const ownershipDownstream = root.lookupType('mg.protocol.ownership.Downstream');
-
-    function encode(data) {
-      const payload = demuxUpstream.encode(demuxUpstream.create(data)).finish();
-      const header = Buffer.alloc(4);
-      header.writeUInt32BE(payload.length, 0);
-      return Buffer.concat([header, payload]);
-    }
-
-    function readMessage(socket, timeout = 30000) {
-      return new Promise((resolve, reject) => {
-        let buf = Buffer.alloc(0);
-        const timer = setTimeout(() => { socket.removeListener('data', onData); reject(new Error('Demux timeout')); }, timeout);
-        function onData(chunk) {
-          buf = Buffer.concat([buf, chunk]);
-          while (buf.length >= 4) {
-            const len = buf.readUInt32BE(0);
-            if (buf.length < 4 + len) return;
-            const msgBuf = buf.subarray(4, 4 + len);
-            buf = buf.subarray(4 + len);
-            clearTimeout(timer);
-            socket.removeListener('data', onData);
-            resolve(demuxDownstream.decode(msgBuf));
-            return;
-          }
-        }
-        socket.on('data', onData);
-      });
-    }
-
-    // Read messages until we get one matching a predicate, skipping others
-    function readUntil(socket, predicate, timeout = 30000) {
-      return new Promise((resolve, reject) => {
-        let buf = Buffer.alloc(0);
-        const timer = setTimeout(() => {
-          socket.removeListener('data', onData);
-          reject(new Error('Demux timeout waiting for matching message'));
-        }, timeout);
-        function onData(chunk) {
-          buf = Buffer.concat([buf, chunk]);
-          while (buf.length >= 4) {
-            const len = buf.readUInt32BE(0);
-            if (buf.length < 4 + len) return;
-            const msgBuf = buf.subarray(4, 4 + len);
-            buf = buf.subarray(4 + len);
-            try {
-              const msg = demuxDownstream.decode(msgBuf);
-              if (predicate(msg)) {
-                clearTimeout(timer);
-                socket.removeListener('data', onData);
-                resolve(msg);
-                return;
-              }
-              // Skip non-matching messages (keepalives, acks, etc.)
-              console.log('[Ubisoft] Skipping demux message:', msg.response ? 'response' : msg.push ? 'push' : 'unknown');
-            } catch (e) {
-              // Skip decode errors
-            }
-          }
-        }
-        socket.on('data', onData);
-      });
-    }
-
-    const socket = tls.connect(443, DEMUX_HOST, {
-      servername: DEMUX_HOST, rejectUnauthorized: false,
-    });
-    await new Promise((resolve, reject) => {
-      socket.on('secureConnect', resolve);
-      socket.on('error', reject);
-      setTimeout(() => reject(new Error('TLS connect timeout')), 10000);
-    });
-
-    try {
-      // clientVersion must be first
-      socket.write(encode({ push: { clientVersion: { version: DEMUX_VERSION } } }));
-      await new Promise(r => setTimeout(r, 300));
-
-      // Authenticate
-      socket.write(encode({
-        request: {
-          requestId: 1,
-          authenticateReq: { clientId: 'uplay_pc', sendKeepAlive: false, token: { ubiTicket: demuxTicket } },
-        },
-      }));
-      const authResp = await readMessage(socket);
-      console.log('[Ubisoft] Demux auth success:', !!authResp?.response?.authenticateRsp?.success);
-      if (!authResp?.response?.authenticateRsp?.success) {
-        throw new Error('Demux auth failed: ' + JSON.stringify(authResp).slice(0, 200));
-      }
-
-      // Open ownership_service
-      console.log('[Ubisoft] Opening ownership_service...');
-      socket.write(encode({
-        request: { requestId: 2, openConnectionReq: { serviceName: 'ownership_service' } },
-      }));
-      const openResp = await readMessage(socket);
-      const connId = openResp?.response?.openConnectionRsp?.connectionId;
-      console.log('[Ubisoft] Ownership connection ID:', connId, '| resp keys:', Object.keys(openResp || {}));
-      if (!connId) throw new Error('Failed to open ownership_service: ' + JSON.stringify(openResp).slice(0, 200));
-
-      // Initialize ownership
-      console.log('[Ubisoft] Sending ownership init request...');
-      const svcPayload = ownershipUpstream.encode(ownershipUpstream.create({
-        request: { requestId: 1, initializeReq: { getAssociations: true, protoVersion: 7, useStaging: false } },
-      })).finish();
-      socket.write(encode({ push: { data: { connectionId: connId, data: svcPayload } } }));
-
-      // Wait for a push message containing connection data (skip acks, keepalives)
-      console.log('[Ubisoft] Waiting for ownership response (30s timeout)...');
-      const ownerResp = await readUntil(socket, msg => {
-        const hasConnData = !!msg?.push?.data?.data;
-        const hasResponse = !!msg?.response;
-        const hasPush = !!msg?.push;
-        if (!hasConnData) {
-          console.log('[Ubisoft] Demux msg received - response:', hasResponse, 'push:', hasPush,
-            'pushKeys:', msg?.push ? Object.keys(msg.push) : 'n/a',
-            'dataKeys:', msg?.push?.data ? Object.keys(msg.push.data) : 'n/a');
-        }
-        return hasConnData;
-      }, 30000);
-      const connData = ownerResp.push.data.data;
-
-      const svcResp = ownershipDownstream.decode(connData);
-      const allProducts = svcResp?.response?.initializeRsp?.ownedGames?.ownedGames || [];
-
-      // Filter to base games (productType 0), parse names from YAML config
-      return allProducts
-        .filter(g => g.productType === 0)
-        .map(g => {
-          let name = null;
-          if (g.configuration) {
-            try {
-              const config = yaml.parse(g.configuration, { uniqueKeys: false, strict: false });
-              name = config?.root?.name || config?.root?.sort_string || null;
-            } catch (e) { /* ignore malformed YAML */ }
-          }
-          return {
-            launcher_game_id: String(g.productId),
-            title: name || `Ubisoft Product ${g.productId}`,
-            playtime_minutes: 0,
-          };
-        })
-        .filter(g => g.title && !g.title.startsWith('Ubisoft Product'));
-    } finally {
-      socket.destroy();
-    }
-  }
-
-  /**
-   * Fetch games via GraphQL (returns only native purchases, ~16 games).
-   */
-  async _fetchViaGraphQL(ticket, sessionId) {
     const res = await axios.post(UBI_GRAPHQL_URL, {
       query: OWNED_GAMES_QUERY,
     }, {
-      headers: buildHeaders(UBI_CLUB_APP_ID, {
+      headers: buildHeaders({
         Authorization: `Ubi_v1 t=${ticket}`,
         'Ubi-SessionId': sessionId,
       }),
     });
 
     const nodes = res.data?.data?.viewer?.ownedGames?.nodes || [];
+    console.log(`[Ubisoft] GraphQL returned ${nodes.length} games`);
+
     return nodes.map(node => ({
       launcher_game_id: node.id,
       title: node.name,
       playtime_minutes: 0,
     }));
   }
-
-  /**
-   * Fetch owned games. Tries demux first (complete list), falls back to GraphQL.
-   */
-  async fetchOwnedGames(session) {
-    const { ticket, sessionId, demuxTicket } = session;
-
-    // Try demux ownership_service for complete library
-    if (demuxTicket) {
-      try {
-        console.log('[Ubisoft] Fetching games via demux ownership_service...');
-        const games = await this._fetchViaDemux(demuxTicket);
-        console.log(`[Ubisoft] Demux returned ${games.length} games`);
-        return games;
-      } catch (err) {
-        console.warn('[Ubisoft] Demux fetch failed, falling back to GraphQL:', err.message);
-      }
-    }
-
-    // Fallback: GraphQL (only returns ~16 native purchases)
-    console.log('[Ubisoft] Fetching games via GraphQL (limited to native purchases)...');
-    const games = await this._fetchViaGraphQL(ticket, sessionId);
-    console.log(`[Ubisoft] GraphQL returned ${games.length} games`);
-    return games;
-  }
 }
 
 module.exports = UbisoftLauncher;
+module.exports.parseLocalCacheFiles = parseLocalCacheFiles;

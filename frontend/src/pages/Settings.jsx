@@ -207,6 +207,42 @@ function LaunchersTab() {
                     Approve
                   </button>
                 )}
+                {l.id === 'ubisoft' && (
+                  <label className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded transition-colors cursor-pointer text-blue-400">
+                    Import Cache
+                    <input
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={async (e) => {
+                        const files = Array.from(e.target.files || []);
+                        const configFile = files.find(f => f.name === 'configurations');
+                        const ownerFile = files.find(f => f.name !== 'configurations');
+                        if (!configFile || !ownerFile) {
+                          alert('Select both files: "configurations" and your ownership file');
+                          return;
+                        }
+                        const formData = new FormData();
+                        formData.append('configurations', configFile);
+                        formData.append('ownership', ownerFile);
+                        const res = await fetch('/api/launchers/ubisoft/import-cache', {
+                          method: 'POST',
+                          credentials: 'same-origin',
+                          body: formData,
+                        });
+                        if (res.ok) {
+                          const data = await res.json();
+                          alert(`Imported ${data.imported} games from cache files`);
+                          queryClient.invalidateQueries({ queryKey: ['syncStatus'] });
+                        } else {
+                          const err = await res.json();
+                          alert('Import failed: ' + (err.error || 'Unknown error'));
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                )}
                 {l.sync_locked ? (
                   <>
                     <span className="flex items-center gap-1 px-3 py-1.5 bg-yellow-900/30 text-yellow-400 text-sm rounded">

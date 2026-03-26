@@ -40,6 +40,66 @@ router.get('/available', (req, res) => {
   res.json(result);
 });
 
+// POST /api/launchers/ubisoft/import-cache — upload local cache files for full library
+const multer = require('multer');
+const uploadCache = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+router.post('/ubisoft/import-cache', uploadCache.fields([
+  { name: 'configurations', maxCount: 1 },
+  { name: 'ownership', maxCount: 1 },
+]), (req, res) => {
+  const configFile = req.files?.configurations?.[0];
+  const ownerFile = req.files?.ownership?.[0];
+
+  if (!configFile || !ownerFile) {
+    return res.status(400).json({ error: 'Both configurations and ownership files are required' });
+  }
+
+  const db = req.app.locals.db;
+  const launcher = db.prepare("SELECT * FROM launchers WHERE name = 'ubisoft'").get();
+  if (!launcher) {
+    return res.status(400).json({ error: 'Ubisoft launcher not configured. Add credentials first.' });
+  }
+
+  const { parseLocalCacheFiles } = require('../services/launchers/ubisoft');
+  const { detectEditionTier } = require('../utils/editionTier');
+
+  let games;
+  try {
+    games = parseLocalCacheFiles(configFile.buffer, ownerFile.buffer);
+  } catch (err) {
+    return res.status(400).json({ error: 'Failed to parse cache files: ' + err.message });
+  }
+
+  // Upsert games as game_editions
+  const upsert = db.prepare(`
+    INSERT INTO game_editions (launcher_id, launcher_game_id, title, playtime_minutes, owned)
+    VALUES (?, ?, ?, ?, 1)
+    ON CONFLICT(launcher_id, launcher_game_id) DO UPDATE SET
+      title = excluded.title,
+      owned = 1
+  `);
+  const insertTier = db.prepare('INSERT OR IGNORE INTO edition_tiers (game_edition_id, tier) VALUES (?, ?)');
+
+  const importGames = db.transaction((gameList) => {
+    for (const game of gameList) {
+      const result = upsert.run(launcher.id, game.launcher_game_id, game.title, game.playtime_minutes);
+      const editionId = result.lastInsertRowid ? Number(result.lastInsertRowid) : null;
+      if (editionId) {
+        insertTier.run(editionId, detectEditionTier(game.title));
+      }
+    }
+  });
+
+  importGames(games);
+
+  // Trigger enrichment
+  const { enrichAll } = require('../services/metadata/enrichGame');
+  enrichAll(db).catch(err => console.error('[Metadata] enrichAll error:', err.message));
+
+  console.log(`[Ubisoft] Imported ${games.length} games from local cache files`);
+  res.json({ imported: games.length, games: games.map(g => g.title) });
+});
+
 // POST /api/launchers/:id/credentials
 router.post('/:id/credentials', async (req, res) => {
   const { id } = req.params;

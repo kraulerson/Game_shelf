@@ -1,6 +1,6 @@
 {
   "name": "gameshelf-backend",
-  "version": "1.15.3",
+  "version": "1.15.4",
   "description": "Gameshelf backend API",
   "main": "src/server.js",
   "scripts": {
@@ -20,8 +20,6 @@
     "node-cron": "^3.0.3",
     "otpauth": "^9.5.0",
     "steam-totp": "^2.1.2",
-    "steamgriddb": "^2.2.1",
-    "ubisoft-demux": "^1.10931.1",
-    "yaml": "^2.8.3"
+    "steamgriddb": "^2.2.1"
   }
 }
