@@ -129,6 +129,44 @@ describe('Games routes', () => {
     assert.ok(display.tier_label, 'Should have tier_label');
   });
 
+  it('PATCH /api/games/:id should set manual_title flag', async () => {
+    const db = app.locals.db;
+    db.prepare("INSERT OR IGNORE INTO games (title, slug) VALUES ('Test Manual Title', 'test-manual-title')").run();
+    const game = db.prepare("SELECT id FROM games WHERE slug = 'test-manual-title'").get();
+
+    const res = await makeFetch(app, `/api/games/${game.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ title: 'New Title' }),
+    });
+    assert.equal(res.status, 200);
+
+    const updated = db.prepare('SELECT manual_title, title FROM games WHERE id = ?').get(game.id);
+    assert.equal(updated.manual_title, 1, 'manual_title should be set to 1');
+    assert.equal(updated.title, 'New Title');
+  });
+
+  // REGRESSION: After re-enrich reverted title but kept old slug, editing again
+  // generated a slug that already existed, causing a 500 UNIQUE constraint error.
+  it('PATCH /api/games/:id should handle slug collision gracefully', async () => {
+    const db = app.locals.db;
+    db.prepare("INSERT OR IGNORE INTO games (title, slug) VALUES ('Existing Game', 'existing-game')").run();
+    db.prepare("INSERT OR IGNORE INTO games (title, slug) VALUES ('Other Game', 'other-game')").run();
+    const other = db.prepare("SELECT id FROM games WHERE slug = 'other-game'").get();
+
+    const res = await makeFetch(app, `/api/games/${other.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ title: 'Existing Game' }),
+    });
+    assert.equal(res.status, 200);
+
+    const updated = db.prepare('SELECT title, slug FROM games WHERE id = ?').get(other.id);
+    assert.equal(updated.title, 'Existing Game');
+    assert.ok(updated.slug.startsWith('existing-game'), 'slug should be based on title');
+    assert.notEqual(updated.slug, 'existing-game', 'slug should have suffix to avoid collision');
+  });
+
   it('GET /api/games/filters should return filter options', async () => {
     const res = await makeFetch(app, '/api/games/filters', {
       headers: { Cookie: authCookie() },

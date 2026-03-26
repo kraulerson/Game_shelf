@@ -167,9 +167,22 @@ router.patch('/:id', (req, res) => {
     if (!title.trim()) {
       return res.status(400).json({ error: 'Title cannot be empty' });
     }
+    const { slugify } = require('../services/metadata/titleMatcher');
+    let slug = slugify(title.trim());
+
+    // Handle slug collision — append suffix if slug exists on a different game
+    const existing = db.prepare('SELECT id FROM games WHERE slug = ? AND id != ?').get(slug, id);
+    if (existing) {
+      let suffix = 2;
+      while (db.prepare('SELECT id FROM games WHERE slug = ?').get(`${slug}-${suffix}`)) {
+        suffix++;
+      }
+      slug = `${slug}-${suffix}`;
+    }
+
     db.prepare(
-      "UPDATE games SET title = ?, slug = ?, updated_at = datetime('now') WHERE id = ?"
-    ).run(title.trim(), require('../services/metadata/titleMatcher').slugify(title.trim()), id);
+      "UPDATE games SET title = ?, slug = ?, manual_title = 1, updated_at = datetime('now') WHERE id = ?"
+    ).run(title.trim(), slug, id);
   }
 
   if (hasDescription) {
