@@ -127,14 +127,17 @@ router.get('/:id', (req, res) => {
   });
 });
 
-// PATCH /api/games/:id — update game title
+// PATCH /api/games/:id — update game title and/or description
 router.patch('/:id', (req, res) => {
   const db = req.app.locals.db;
   const { id } = req.params;
-  const { title } = req.body || {};
+  const { title, description } = req.body || {};
 
-  if (!title || !title.trim()) {
-    return res.status(400).json({ error: 'Title is required' });
+  const hasTitle = title !== undefined && title !== null;
+  const hasDescription = description !== undefined;
+
+  if (!hasTitle && !hasDescription) {
+    return res.status(400).json({ error: 'title or description is required' });
   }
 
   const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);
@@ -142,9 +145,21 @@ router.patch('/:id', (req, res) => {
     return res.status(404).json({ error: 'Game not found' });
   }
 
-  db.prepare(
-    "UPDATE games SET title = ?, slug = ?, updated_at = datetime('now') WHERE id = ?"
-  ).run(title.trim(), require('../services/metadata/titleMatcher').slugify(title.trim()), id);
+  if (hasTitle) {
+    if (!title.trim()) {
+      return res.status(400).json({ error: 'Title cannot be empty' });
+    }
+    db.prepare(
+      "UPDATE games SET title = ?, slug = ?, updated_at = datetime('now') WHERE id = ?"
+    ).run(title.trim(), require('../services/metadata/titleMatcher').slugify(title.trim()), id);
+  }
+
+  if (hasDescription) {
+    const descValue = description.trim() || null;
+    db.prepare(
+      "UPDATE games SET description = ?, manual_description = 1, updated_at = datetime('now') WHERE id = ?"
+    ).run(descValue, id);
+  }
 
   res.json({ updated: true });
 });
