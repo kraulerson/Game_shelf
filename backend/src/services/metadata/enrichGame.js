@@ -162,9 +162,12 @@ async function enrichGame(gameEditionId, db) {
     const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(slug);
     db.prepare('UPDATE game_editions SET game_id = ? WHERE id = ?').run(game.id, gameEditionId);
 
-    // Try SteamGridDB → Steam CDN for images
-    const { coverUrl, artworkUrl } = await getBestImages(null, title, edition.launcher_name, edition.launcher_game_id);
-    await cacheGameImages(coverUrl, artworkUrl, game.id, title, db);
+    // Try SteamGridDB → Steam CDN for images (skip if manual cover set)
+    const existingFlags = db.prepare('SELECT manual_cover FROM games WHERE id = ?').get(game.id);
+    if (!existingFlags?.manual_cover) {
+      const { coverUrl, artworkUrl } = await getBestImages(null, title, edition.launcher_name, edition.launcher_game_id);
+      await cacheGameImages(coverUrl, artworkUrl, game.id, title, db);
+    }
 
     return { status: 'minimal', gameId: game.id };
   }
@@ -182,13 +185,13 @@ async function enrichGame(gameEditionId, db) {
   const developer = companies.find(c => c.developer)?.company?.name || null;
   const publisher = companies.find(c => c.publisher)?.company?.name || null;
 
-  // Upsert games row
+  // Upsert games row (respect manual override flags)
   db.prepare(`
     INSERT INTO games (title, slug, description, release_year, developer, publisher, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(slug) DO UPDATE SET
       title = excluded.title,
-      description = excluded.description,
+      description = CASE WHEN games.manual_description = 1 THEN games.description ELSE excluded.description END,
       release_year = excluded.release_year,
       developer = excluded.developer,
       publisher = excluded.publisher,
@@ -198,9 +201,12 @@ async function enrichGame(gameEditionId, db) {
   const game = db.prepare('SELECT id FROM games WHERE slug = ?').get(gameSlug);
   const gameId = game.id;
 
-  // Download and cache images: IGDB → SteamGridDB → Steam CDN
-  const { coverUrl, artworkUrl } = await getBestImages(match, gameTitle, edition.launcher_name, edition.launcher_game_id);
-  await cacheGameImages(coverUrl, artworkUrl, gameId, gameTitle, db);
+  // Download and cache images: IGDB → SteamGridDB → Steam CDN (skip if manual cover)
+  const existingGame = db.prepare('SELECT manual_cover FROM games WHERE id = ?').get(gameId);
+  if (!existingGame?.manual_cover) {
+    const { coverUrl, artworkUrl } = await getBestImages(match, gameTitle, edition.launcher_name, edition.launcher_game_id);
+    await cacheGameImages(coverUrl, artworkUrl, gameId, gameTitle, db);
+  }
 
   // Clear stale genre/tag associations before re-inserting (preserve user-created tags)
   db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(gameId);
@@ -239,11 +245,14 @@ async function enrichGame(gameEditionId, db) {
 async function enrichUnderEnriched(db) {
   const underEnriched = db.prepare(`
     SELECT DISTINCT g.id, g.title, g.slug,
-           ge.launcher_game_id, l.name as launcher_name
+           ge.launcher_game_id, l.name as launcher_name,
+           COALESCE(g.manual_description, 0) as manual_description,
+           COALESCE(g.manual_cover, 0) as manual_cover
     FROM games g
     JOIN game_editions ge ON ge.game_id = g.id AND ge.owned = 1
     JOIN launchers l ON l.id = ge.launcher_id
-    WHERE (g.cover_url IS NULL OR g.description IS NULL)
+    WHERE ((g.cover_url IS NULL AND COALESCE(g.manual_cover, 0) = 0)
+        OR (g.description IS NULL AND COALESCE(g.manual_description, 0) = 0))
       AND (g.last_enrichment_at IS NULL
            OR g.last_enrichment_at < datetime('now', '-7 days'))
   `).all();
@@ -276,9 +285,11 @@ async function enrichUnderEnriched(db) {
       if (!match) {
         console.log(`[Gameshelf Metadata] Re-enrich: no IGDB match for: ${game.title}`);
 
-        // Try SteamGridDB → Steam CDN for images
-        const { coverUrl, artworkUrl } = await getBestImages(null, game.title, game.launcher_name, game.launcher_game_id);
-        await cacheGameImages(coverUrl, artworkUrl, game.id, game.title, db);
+        // Try SteamGridDB → Steam CDN for images (skip if manual cover set)
+        if (!game.manual_cover) {
+          const { coverUrl, artworkUrl } = await getBestImages(null, game.title, game.launcher_name, game.launcher_game_id);
+          await cacheGameImages(coverUrl, artworkUrl, game.id, game.title, db);
+        }
 
         db.prepare("UPDATE games SET last_enrichment_at = datetime('now') WHERE id = ?").run(game.id);
         skipped++;
@@ -294,10 +305,10 @@ async function enrichUnderEnriched(db) {
       const developer = companies.find(c => c.developer)?.company?.name || null;
       const publisher = companies.find(c => c.publisher)?.company?.name || null;
 
-      // Update game metadata + last_enrichment_at in one statement
+      // Update game metadata + last_enrichment_at (respect manual override flags)
       db.prepare(`
         UPDATE games SET
-          description = COALESCE(?, description),
+          description = CASE WHEN manual_description = 1 THEN description ELSE COALESCE(?, description) END,
           release_year = COALESCE(?, release_year),
           developer = COALESCE(?, developer),
           publisher = COALESCE(?, publisher),
@@ -306,9 +317,11 @@ async function enrichUnderEnriched(db) {
         WHERE id = ?
       `).run(description, releaseYear, developer, publisher, game.id);
 
-      // Download and cache images: IGDB → SteamGridDB → Steam CDN
-      const { coverUrl, artworkUrl } = await getBestImages(match, game.title, game.launcher_name, game.launcher_game_id);
-      await cacheGameImages(coverUrl, artworkUrl, game.id, game.title, db);
+      // Download and cache images: IGDB → SteamGridDB → Steam CDN (skip if manual cover)
+      if (!game.manual_cover) {
+        const { coverUrl, artworkUrl } = await getBestImages(match, game.title, game.launcher_name, game.launcher_game_id);
+        await cacheGameImages(coverUrl, artworkUrl, game.id, game.title, db);
+      }
 
       // Update genres and tags (preserve user-created tags)
       db.prepare('DELETE FROM game_genres WHERE game_id = ?').run(game.id);

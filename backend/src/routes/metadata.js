@@ -32,11 +32,16 @@ router.post('/re-enrich/:gameId', async (req, res, next) => {
     const db = req.app.locals.db;
     const { gameId } = req.params;
 
-    // Reset the game so enrichment picks it up
-    db.prepare(
-      "UPDATE games SET cover_url = NULL, hero_url = NULL, icon_url = NULL, " +
-      "description = NULL, last_enrichment_at = NULL WHERE id = ?"
-    ).run(gameId);
+    // Reset the game so enrichment picks it up (respect manual override flags)
+    db.prepare(`
+      UPDATE games SET
+        cover_url = CASE WHEN manual_cover = 1 THEN cover_url ELSE NULL END,
+        hero_url = CASE WHEN manual_cover = 1 THEN hero_url ELSE NULL END,
+        icon_url = CASE WHEN manual_cover = 1 THEN icon_url ELSE NULL END,
+        description = CASE WHEN manual_description = 1 THEN description ELSE NULL END,
+        last_enrichment_at = NULL
+      WHERE id = ?
+    `).run(gameId);
 
     // Find an edition to re-enrich through
     const edition = db.prepare(
