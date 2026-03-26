@@ -90,4 +90,134 @@ describe('EALauncher', () => {
       axios.post = originalPost;
     }
   });
+
+  it('fetchOwnedGames() should return games from GraphQL response', async () => {
+    const axios = require('axios');
+    const originalPost = axios.post;
+
+    let capturedHeaders = null;
+    axios.post = async (url, body, opts) => {
+      capturedHeaders = opts?.headers;
+      return {
+        data: {
+          data: {
+            me: {
+              ownedGameProducts: {
+                items: [
+                  {
+                    id: 'OFB-EAST:109552153',
+                    product: {
+                      id: 'prod123',
+                      name: 'Battlefield 1',
+                      gameSlug: 'battlefield-1',
+                      baseItem: { title: 'Battlefield 1', gameType: 'BASE_GAME' },
+                    },
+                  },
+                  {
+                    id: 'OFB-EAST:109552154',
+                    product: {
+                      id: 'prod456',
+                      name: 'Mass Effect Legendary Edition',
+                      gameSlug: 'mass-effect-le',
+                      baseItem: { title: 'Mass Effect Legendary Edition', gameType: 'BASE_GAME' },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+    };
+
+    try {
+      delete require.cache[require.resolve('../../../src/services/launchers/ea')];
+      const EALauncher = require('../../../src/services/launchers/ea');
+      const launcher = new EALauncher('ea', {});
+      const games = await launcher.fetchOwnedGames('test_bearer_token');
+
+      assert.equal(games.length, 2);
+      assert.equal(games[0].launcher_game_id, 'OFB-EAST:109552153');
+      assert.equal(games[0].title, 'Battlefield 1');
+      assert.equal(games[0].playtime_minutes, 0);
+      assert.equal(games[1].title, 'Mass Effect Legendary Edition');
+
+      // Verify auth header
+      assert.equal(capturedHeaders.Authorization, 'Bearer test_bearer_token');
+      assert.equal(capturedHeaders['x-client-id'], 'EAX-JUNO-CLIENT');
+    } finally {
+      axios.post = originalPost;
+    }
+  });
+
+  it('fetchOwnedGames() should filter out non-base-game items', async () => {
+    const axios = require('axios');
+    const originalPost = axios.post;
+
+    axios.post = async () => ({
+      data: {
+        data: {
+          me: {
+            ownedGameProducts: {
+              items: [
+                {
+                  id: 'game1',
+                  product: {
+                    id: 'p1', name: 'FIFA 24',
+                    baseItem: { title: 'FIFA 24', gameType: 'BASE_GAME' },
+                  },
+                },
+                {
+                  id: 'dlc1',
+                  product: {
+                    id: 'p2', name: 'FIFA 24 Ultimate Team Pack',
+                    baseItem: { title: 'FIFA 24 Ultimate Team Pack', gameType: 'EXPANSION' },
+                  },
+                },
+                {
+                  id: 'trial1',
+                  product: {
+                    id: 'p3', name: 'FIFA 24 Trial',
+                    baseItem: { title: 'FIFA 24 Trial', gameType: 'TRIAL' },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    try {
+      delete require.cache[require.resolve('../../../src/services/launchers/ea')];
+      const EALauncher = require('../../../src/services/launchers/ea');
+      const launcher = new EALauncher('ea', {});
+      const games = await launcher.fetchOwnedGames('test_token');
+
+      assert.equal(games.length, 1, 'Should only return BASE_GAME items');
+      assert.equal(games[0].title, 'FIFA 24');
+    } finally {
+      axios.post = originalPost;
+    }
+  });
+
+  it('fetchOwnedGames() should handle empty library', async () => {
+    const axios = require('axios');
+    const originalPost = axios.post;
+
+    axios.post = async () => ({
+      data: { data: { me: { ownedGameProducts: { items: [] } } } },
+    });
+
+    try {
+      delete require.cache[require.resolve('../../../src/services/launchers/ea')];
+      const EALauncher = require('../../../src/services/launchers/ea');
+      const launcher = new EALauncher('ea', {});
+      const games = await launcher.fetchOwnedGames('test_token');
+
+      assert.equal(games.length, 0);
+    } finally {
+      axios.post = originalPost;
+    }
+  });
 });
