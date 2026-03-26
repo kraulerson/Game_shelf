@@ -179,16 +179,12 @@ class UbisoftLauncher extends BaseLauncher {
 
     const nodes = res.data?.data?.viewer?.ownedGames?.nodes || [];
 
-    return nodes
-      .filter(node => {
-        const platforms = node.viewer?.meta?.ownedPlatformGroups || [];
-        return platforms.some(p => p.type === 'PC');
-      })
-      .map(node => ({
-        launcher_game_id: node.id,
-        title: node.name,
-        playtime_minutes: 0,
-      }));
+    // The uplay/graphql endpoint only returns PC games, so no platform filter needed
+    return nodes.map(node => ({
+      launcher_game_id: node.id,
+      title: node.name,
+      playtime_minutes: 0,
+    }));
   }
 }
 

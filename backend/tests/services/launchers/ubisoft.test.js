@@ -236,7 +236,7 @@ describe('UbisoftLauncher', () => {
     }
   });
 
-  it('fetchOwnedGames() should filter out non-PC games', async () => {
+  it('fetchOwnedGames() should return all games (uplay endpoint is PC-only)', async () => {
     const axios = require('axios');
     const originalPost = axios.post;
 
@@ -247,24 +247,9 @@ describe('UbisoftLauncher', () => {
             ownedGames: {
               totalCount: 3,
               nodes: [
-                {
-                  id: 'pc-game',
-                  name: 'Watch Dogs 2',
-                  viewer: { meta: { id: 'm1', ownedPlatformGroups: [{ id: 'pg1', name: 'PC', type: 'PC' }] } },
-                },
-                {
-                  id: 'console-game',
-                  name: 'Just Dance 2024',
-                  viewer: { meta: { id: 'm2', ownedPlatformGroups: [{ id: 'pg2', name: 'PS5', type: 'CONSOLE' }] } },
-                },
-                {
-                  id: 'multi-plat',
-                  name: 'Rainbow Six Siege',
-                  viewer: { meta: { id: 'm3', ownedPlatformGroups: [
-                    { id: 'pg3', name: 'PC', type: 'PC' },
-                    { id: 'pg4', name: 'PS5', type: 'CONSOLE' },
-                  ] } },
-                },
+                { id: 'game-1', name: 'Watch Dogs 2' },
+                { id: 'game-2', name: 'Just Dance 2024' },
+                { id: 'game-3', name: 'Rainbow Six Siege' },
               ],
             },
           },
@@ -278,9 +263,9 @@ describe('UbisoftLauncher', () => {
       const launcher = new UbisoftLauncher('ubisoft', {});
       const games = await launcher.fetchOwnedGames({ ticket: 'test', sessionId: 'test' });
 
-      assert.equal(games.length, 2, 'Should include PC and multi-plat, exclude console-only');
+      assert.equal(games.length, 3, 'Should return all games without filtering');
       assert.equal(games[0].title, 'Watch Dogs 2');
-      assert.equal(games[1].title, 'Rainbow Six Siege');
+      assert.equal(games[2].title, 'Rainbow Six Siege');
     } finally {
       axios.post = originalPost;
     }
