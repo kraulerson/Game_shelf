@@ -21,7 +21,7 @@ export default function AmazonApproval() {
     setError(null);
     try {
       const formData = new FormData();
-      formData.append('games_db', file);
+      formData.append('games_json', file);
       const res = await fetch('/api/launchers/amazon/preview', {
         method: 'POST',
         credentials: 'same-origin',
@@ -91,8 +91,9 @@ export default function AmazonApproval() {
 
       <h1 className="text-xl font-bold text-white mb-2">Amazon Games Import</h1>
       <p className="text-sm text-gray-400 mb-4">
-        Upload your <code className="text-gray-300">games.db</code> file from{' '}
-        <code className="text-gray-300">%LocalAppData%\Amazon Games\Data\</code> to import your library.
+        First, run <code className="text-gray-300">amazon-export.ps1</code> on your Windows machine to
+        export your library. Then upload the generated{' '}
+        <code className="text-gray-300">amazon-games.json</code> file here.
       </p>
 
       {error && (
@@ -104,10 +105,10 @@ export default function AmazonApproval() {
       {!games ? (
         <label className="flex items-center justify-center gap-2 px-4 py-8 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-gray-500 transition-colors">
           <Upload size={20} className="text-gray-400" />
-          <span className="text-gray-400">{uploading ? 'Parsing...' : 'Select games.db file'}</span>
+          <span className="text-gray-400">{uploading ? 'Parsing...' : 'Select amazon-games.json file'}</span>
           <input
             type="file"
-            accept=".db"
+            accept=".json"
             className="hidden"
             onChange={handleFileUpload}
             disabled={uploading}
