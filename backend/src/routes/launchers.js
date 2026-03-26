@@ -40,6 +40,12 @@ router.get('/available', (req, res) => {
   res.json(result);
 });
 
+// GET /api/launchers/ea/auth-url — generate dynamic EA auth URL with pc_sign
+router.get('/ea/auth-url', (req, res) => {
+  const { generateEaAuthUrl } = require('../utils/eaPcSign');
+  res.json({ url: generateEaAuthUrl() });
+});
+
 // POST /api/launchers/:id/credentials
 router.post('/:id/credentials', async (req, res) => {
   const { id } = req.params;

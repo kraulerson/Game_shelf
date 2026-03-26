@@ -290,7 +290,7 @@ export default function Setup() {
                         step2: 'After logging in, you will be redirected to a page that may appear blank. Copy the "code" value from your browser\'s address bar and paste it below',
                       },
                       ea: {
-                        url: 'https://accounts.ea.com/connect/auth?response_type=code&client_id=JUNO_PC_CLIENT&display=junoClient/login&redirect_uri=qrc%3A%2F%2F%2Fhtml%2Flogin_successful.html&locale=en_US',
+                        dynamic: true,
                         linkText: 'Open EA Login',
                         step1: 'Click the link below and log in to your EA account',
                         step2: 'After logging in, you will be redirected. Copy the "code" value from the URL and paste it below',
@@ -305,14 +305,30 @@ export default function Setup() {
                     return (
                       <div className="mb-3">
                         <p className="text-sm text-gray-400 mb-2">1. {config.step1}</p>
-                        <a
-                          href={config.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3"
-                        >
-                          {config.linkText}
-                        </a>
+                        {config.dynamic ? (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const res = await fetch(`/api/launchers/${launcher.id}/auth-url`, { credentials: 'same-origin' });
+                              if (res.ok) {
+                                const { url } = await res.json();
+                                window.open(url, '_blank');
+                              }
+                            }}
+                            className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3 text-left"
+                          >
+                            {config.linkText}
+                          </button>
+                        ) : (
+                          <a
+                            href={config.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:text-blue-300 text-sm underline block mb-3"
+                          >
+                            {config.linkText}
+                          </a>
+                        )}
                         <p className="text-sm text-gray-400 mb-2">2. {config.step2}</p>
                         <label className="block text-sm text-gray-300 mb-1">Authorization Code</label>
                         <input
