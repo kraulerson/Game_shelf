@@ -1,5 +1,23 @@
 const { Router } = require('express');
+const multer = require('multer');
+const fs = require('node:fs');
+const pathMod = require('node:path');
 const authMiddleware = require('../middleware/auth');
+
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE },
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JPEG, PNG, and WebP images are allowed'));
+    }
+  },
+});
 
 const router = Router();
 
@@ -219,6 +237,67 @@ router.put('/:id/tags', (req, res) => {
   updateTags();
 
   res.json({ updated: true });
+});
+
+// POST /api/games/:id/cover — upload cover image
+router.post('/:id/cover', upload.single('cover'), (req, res) => {
+  const db = req.app.locals.db;
+  const { id } = req.params;
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'No image file provided' });
+  }
+
+  const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);
+  if (!game) {
+    return res.status(404).json({ error: 'Game not found' });
+  }
+
+  const extMap = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
+  const ext = extMap[req.file.mimetype] || '.jpg';
+
+  const dataDir = pathMod.resolve(pathMod.dirname(process.env.GAMESHELF_DB_PATH || './data/gameshelf.db'));
+  const gameDir = pathMod.join(dataDir, 'images', String(id));
+  fs.mkdirSync(gameDir, { recursive: true });
+
+  const filename = `cover${ext}`;
+  fs.writeFileSync(pathMod.join(gameDir, filename), req.file.buffer);
+
+  const coverUrl = `/data/images/${id}/${filename}`;
+  db.prepare(
+    "UPDATE games SET cover_url = ?, manual_cover = 1, updated_at = datetime('now') WHERE id = ?"
+  ).run(coverUrl, id);
+
+  res.json({ cover_url: coverUrl });
+});
+
+// DELETE /api/games/:id/manual-override — reset manual override flag
+router.delete('/:id/manual-override', (req, res) => {
+  const db = req.app.locals.db;
+  const { id } = req.params;
+  const { field } = req.body || {};
+
+  const validFields = { description: 'manual_description', cover: 'manual_cover' };
+  const column = validFields[field];
+  if (!column) {
+    return res.status(400).json({ error: 'field must be "description" or "cover"' });
+  }
+
+  const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);
+  if (!game) {
+    return res.status(404).json({ error: 'Game not found' });
+  }
+
+  db.prepare(`UPDATE games SET ${column} = 0, updated_at = datetime('now') WHERE id = ?`).run(id);
+  res.json({ ok: true });
+});
+
+// Multer error handler
+router.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError || err.message?.includes('Only JPEG')) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
 });
 
 // GET /api/games

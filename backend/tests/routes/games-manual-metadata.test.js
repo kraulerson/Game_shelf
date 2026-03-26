@@ -112,4 +112,101 @@ describe('Manual metadata editing API', () => {
     });
     assert.equal(res.status, 400);
   });
+
+  // --- Cover upload tests ---
+
+  it('POST /api/games/:id/cover should upload and set manual flag', async () => {
+    // Minimal valid 1x1 PNG
+    const pngHeader = Buffer.from([
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+      0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+      0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+      0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+      0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC,
+      0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+      0x44, 0xAE, 0x42, 0x60, 0x82,
+    ]);
+
+    const formData = new FormData();
+    formData.append('cover', new Blob([pngHeader], { type: 'image/png' }), 'test-cover.png');
+
+    const res = await makeFetch(app, `/api/games/${gameId}/cover`, {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+      body: formData,
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.cover_url, 'Should return cover_url');
+    assert.ok(body.cover_url.includes(`/data/images/${gameId}/cover`), 'Path should include game ID');
+
+    const db = app.locals.db;
+    const game = db.prepare('SELECT cover_url, manual_cover FROM games WHERE id = ?').get(gameId);
+    assert.equal(game.manual_cover, 1);
+    assert.equal(game.cover_url, body.cover_url);
+  });
+
+  it('POST /api/games/:id/cover should reject non-image files', async () => {
+    const formData = new FormData();
+    formData.append('cover', new Blob(['not an image'], { type: 'text/plain' }), 'test.txt');
+
+    const res = await makeFetch(app, `/api/games/${gameId}/cover`, {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+      body: formData,
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /api/games/:id/cover should reject missing file', async () => {
+    const res = await makeFetch(app, `/api/games/${gameId}/cover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  // --- Override reset tests ---
+
+  it('DELETE /api/games/:id/manual-override should reset description flag', async () => {
+    const db = app.locals.db;
+    db.prepare('UPDATE games SET manual_description = 1, description = ? WHERE id = ?').run('Manual desc', gameId);
+
+    const res = await makeFetch(app, `/api/games/${gameId}/manual-override`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ field: 'description' }),
+    });
+    assert.equal(res.status, 200);
+
+    const game = db.prepare('SELECT manual_description, description FROM games WHERE id = ?').get(gameId);
+    assert.equal(game.manual_description, 0);
+    assert.equal(game.description, 'Manual desc', 'Content should be preserved');
+  });
+
+  it('DELETE /api/games/:id/manual-override should reset cover flag', async () => {
+    const db = app.locals.db;
+    db.prepare('UPDATE games SET manual_cover = 1 WHERE id = ?').run(gameId);
+
+    const res = await makeFetch(app, `/api/games/${gameId}/manual-override`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ field: 'cover' }),
+    });
+    assert.equal(res.status, 200);
+
+    const game = db.prepare('SELECT manual_cover FROM games WHERE id = ?').get(gameId);
+    assert.equal(game.manual_cover, 0);
+  });
+
+  it('DELETE /api/games/:id/manual-override with invalid field returns 400', async () => {
+    const res = await makeFetch(app, `/api/games/${gameId}/manual-override`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+      body: JSON.stringify({ field: 'title' }),
+    });
+    assert.equal(res.status, 400);
+  });
 });
