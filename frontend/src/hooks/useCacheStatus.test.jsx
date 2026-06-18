@@ -46,6 +46,23 @@ describe('useCacheStatus', () => {
   });
 });
 
+describe('useCacheStatus — malformed payload tolerance (F17)', () => {
+  beforeEach(() => vi.restoreAllMocks());
+  it('a non-array `games` payload yields empty results, not a crash', async () => {
+    // A truthy non-array (object) is the real hazard: `body.games || []` lets it
+    // through, then `for (const g of games)` throws "is not iterable".
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: { unexpected: 'shape' } }) })
+    );
+    const { result } = renderHook(() => useCacheStatus(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.games).toEqual([]);
+    expect(result.current.counts.total).toBe(0);
+    expect(result.current.statusFor('steam', '123')).toBeUndefined();
+  });
+});
+
 describe('useCacheStatus counts', () => {
   beforeEach(() => vi.restoreAllMocks());
   it('exposes games + counts', async () => {
