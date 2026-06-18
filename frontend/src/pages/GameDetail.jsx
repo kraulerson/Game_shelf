@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, X, Plus, Pencil, RefreshCw, Upload, RotateCcw } from 'lucide-react';
 import LauncherBadge from '../components/LauncherBadge';
+import CachePanel from '../components/cache/CachePanel';
 
 function formatPlaytime(minutes) {
   if (!minutes || minutes <= 0) return 'Never played';
@@ -381,6 +382,9 @@ export default function GameDetail() {
             </button>
           )}
         </div>
+
+        {/* Lancache cache status (F15) */}
+        {game.editions?.length > 0 && <CachePanel editions={game.editions} />}
 
         {/* Versions & Editions */}
         {game.editions?.length > 0 && (

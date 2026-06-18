@@ -1,5 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import LauncherBadge from './LauncherBadge';
+import CacheBadge from './cache/CacheBadge';
+import { useCacheStatus } from '../hooks/useCacheStatus';
+import { launcherToPlatform } from '../utils/cacheBadge';
 
 function getInitials(title) {
   if (!title) return '?';
@@ -17,6 +20,10 @@ export default function GameCard({ game }) {
 
   const platforms = game.platforms || [];
   const playtime = formatPlaytime(game.playtime_minutes);
+
+  const { statusFor, isOffline } = useCacheStatus();
+  const platform = launcherToPlatform(game.launcher_name);
+  const cache = platform ? statusFor(platform, game.launcher_game_id) : undefined;
 
   return (
     <div
@@ -36,6 +43,17 @@ export default function GameCard({ game }) {
           <span className="text-2xl font-bold text-gray-500">{getInitials(game.title)}</span>
         </div>
       )}
+
+      {/* Cache status badge (primary edition) */}
+      <div className="absolute top-1.5 left-1.5 z-10">
+        <CacheBadge
+          status={cache?.status}
+          blocked={cache?.blocked}
+          tracked={Boolean(platform)}
+          offline={isOffline}
+          size="small"
+        />
+      </div>
 
       {/* Hover overlay */}
       <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity p-3 flex flex-col justify-end">
