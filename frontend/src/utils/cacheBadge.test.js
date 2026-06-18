@@ -47,3 +47,23 @@ describe('cacheBadgeFor', () => {
     expect(cacheBadgeFor({ status: 'wat', tracked: true }).label).toBe('Unknown');
   });
 });
+
+import { cacheCounts } from './cacheBadge';
+
+describe('cacheCounts', () => {
+  it('tallies by status + blocked + total', () => {
+    const games = [
+      { status: 'up_to_date', blocked: false },
+      { status: 'up_to_date', blocked: true },
+      { status: 'pending_update', blocked: false },
+      { status: 'not_downloaded', blocked: false },
+      { status: 'failed', blocked: false },
+    ];
+    expect(cacheCounts(games)).toEqual({
+      total: 5, cached: 2, update_ready: 1, not_cached: 1, failed: 1, blocked: 1,
+    });
+  });
+  it('empty -> zeros', () => {
+    expect(cacheCounts([])).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, failed: 0, blocked: 0 });
+  });
+});

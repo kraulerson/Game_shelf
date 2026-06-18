@@ -7,6 +7,7 @@ import Setup from './pages/Setup';
 import Library from './pages/Library';
 import GameDetail from './pages/GameDetail';
 import Settings from './pages/Settings';
+import Cache from './pages/Cache';
 import XboxApproval from './pages/XboxApproval';
 import AmazonApproval from './pages/AmazonApproval';
 
@@ -30,6 +31,7 @@ export default function App() {
 
           <Route element={<AuthenticatedLayout />}>
             <Route path="/settings" element={<Settings />} />
+            <Route path="/cache" element={<Cache />} />
             <Route path="/settings/xbox/approve" element={<XboxApproval />} />
             <Route path="/settings/amazon/approve" element={<AmazonApproval />} />
 

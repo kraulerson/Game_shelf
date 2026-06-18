@@ -45,3 +45,22 @@ describe('useCacheStatus', () => {
     expect(result.current.statusFor('steam', '730')).toBeUndefined();
   });
 });
+
+describe('useCacheStatus counts', () => {
+  beforeEach(() => vi.restoreAllMocks());
+  it('exposes games + counts', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ games: [
+        { id: 1, platform: 'steam', app_id: '1', status: 'up_to_date', blocked: false },
+        { id: 2, platform: 'steam', app_id: '2', status: 'failed', blocked: true },
+      ] }),
+    }));
+    const { result } = renderHook(() => useCacheStatus(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.games).toHaveLength(2);
+    expect(result.current.counts.total).toBe(2);
+    expect(result.current.counts.failed).toBe(1);
+    expect(result.current.counts.blocked).toBe(1);
+  });
+});
