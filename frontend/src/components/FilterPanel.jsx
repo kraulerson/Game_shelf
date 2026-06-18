@@ -4,6 +4,15 @@ import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import Fuse from 'fuse.js';
 
+const CACHE_STATUS_OPTIONS = [
+  { key: 'up_to_date', label: 'Cached' },
+  { key: 'pending_update', label: 'Update ready' },
+  { key: 'not_downloaded', label: 'Not cached' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'downloading', label: 'Downloading' },
+  { key: 'unknown', label: 'Unknown' },
+];
+
 export default function FilterPanel({ open, onClose }) {
   const ref = useRef(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -31,6 +40,7 @@ export default function FilterPanel({ open, onClose }) {
   const selectedGenres = (searchParams.get('genre') || '').split(',').filter(Boolean);
   const selectedTags = (searchParams.get('tag') || '').split(',').filter(Boolean);
   const selectedLaunchers = (searchParams.get('launcher') || '').split(',').filter(Boolean);
+  const selectedCacheStatuses = (searchParams.get('cache_status') || '').split(',').filter(Boolean);
 
   function toggleFilter(key, value) {
     const current = (searchParams.get(key) || '').split(',').filter(Boolean);
@@ -92,6 +102,22 @@ export default function FilterPanel({ open, onClose }) {
             />
             {l.display_name}
             <span className="text-gray-500 text-xs ml-auto">{l.count}</span>
+          </label>
+        ))}
+      </div>
+
+      {/* Cache status */}
+      <div className="mb-4">
+        <div className="text-sm text-gray-400 mb-2">Cache status</div>
+        {CACHE_STATUS_OPTIONS.map(opt => (
+          <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-300 py-0.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selectedCacheStatuses.includes(opt.key)}
+              onChange={() => toggleFilter('cache_status', opt.key)}
+              className="rounded"
+            />
+            {opt.label}
           </label>
         ))}
       </div>

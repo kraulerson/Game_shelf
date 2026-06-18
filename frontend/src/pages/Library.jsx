@@ -49,6 +49,7 @@ export default function Library() {
   const page = data?.page || 1;
   const limit = data?.limit || 100;
   const totalPages = Math.ceil(total / limit);
+  const cacheFilterUnavailable = Boolean(data?.cache_filter_unavailable);
 
   function goToPage(p) {
     const newParams = new URLSearchParams(searchParams);
@@ -78,7 +79,7 @@ export default function Library() {
     }, 3000);
   }
 
-  const filterKeys = ['genre', 'tag', 'launcher', 'release_year_min', 'release_year_max', 'playtime_min', 'playtime_max', 'owned', 'duplicates', 'starts_with'];
+  const filterKeys = ['genre', 'tag', 'launcher', 'cache_status', 'release_year_min', 'release_year_max', 'playtime_min', 'playtime_max', 'owned', 'duplicates', 'starts_with'];
   const activeFilterCount = filterKeys.filter(k => searchParams.has(k)).length;
 
   function clearAllFilters() {
@@ -166,6 +167,18 @@ export default function Library() {
               }}><X size={12} /></button>
             </span>
           ))}
+          {searchParams.get('cache_status') && searchParams.get('cache_status').split(',').map(s => (
+            <span key={`c-${s}`} className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
+              {({ up_to_date: 'Cached', pending_update: 'Update ready', not_downloaded: 'Not cached', failed: 'Failed', downloading: 'Downloading', unknown: 'Unknown' })[s] || s}
+              <button onClick={() => {
+                const next = searchParams.get('cache_status').split(',').filter(v => v !== s);
+                const p = new URLSearchParams(searchParams);
+                next.length ? p.set('cache_status', next.join(',')) : p.delete('cache_status');
+                p.set('page', '1');
+                setSearchParams(p);
+              }}><X size={12} /></button>
+            </span>
+          ))}
 
           {activeFilterCount > 0 && (
             <button onClick={clearAllFilters} className="text-xs text-gray-400 hover:text-white">Clear all</button>
@@ -205,6 +218,9 @@ export default function Library() {
       </div>
 
       <div className="p-4">
+        {cacheFilterUnavailable && (
+          <p className="text-xs text-amber-400 mb-2">Cache status unavailable — status filter ignored.</p>
+        )}
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 size={24} className="animate-spin text-gray-400" />
