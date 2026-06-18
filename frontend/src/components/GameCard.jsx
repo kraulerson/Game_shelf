@@ -44,17 +44,6 @@ export default function GameCard({ game }) {
         </div>
       )}
 
-      {/* Cache status badge (primary edition) */}
-      <div className="absolute top-1.5 left-1.5 z-10">
-        <CacheBadge
-          status={cache?.status}
-          blocked={cache?.blocked}
-          tracked={Boolean(platform)}
-          offline={isOffline}
-          size="small"
-        />
-      </div>
-
       {/* Hover overlay */}
       <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity p-3 flex flex-col justify-end">
         {game.description && (
@@ -90,6 +79,17 @@ export default function GameCard({ game }) {
           {playtime && (
             <span className="text-xs text-gray-500">{playtime}</span>
           )}
+        </div>
+
+        {/* Cache/prefill status (relocated under the info) */}
+        <div className="mt-1">
+          <CacheBadge
+            status={cache?.status}
+            blocked={cache?.blocked}
+            tracked={Boolean(platform)}
+            offline={isOffline}
+            size="small"
+          />
         </div>
       </div>
     </div>

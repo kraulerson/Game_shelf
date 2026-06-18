@@ -51,4 +51,27 @@ describe('GameCard cache badge', () => {
     });
     expect(await screen.findByText('—')).toBeInTheDocument();
   });
+
+  it('renders the cache badge in the info block, not as an absolute art overlay', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          games: [{ id: 1, platform: 'steam', app_id: '730', status: 'up_to_date', blocked: false }],
+        }),
+      })
+    );
+    const { container } = renderCard({
+      id: 1,
+      title: 'CS',
+      launcher_name: 'steam',
+      launcher_game_id: '730',
+      platforms: [{ launcher_name: 'steam' }],
+    });
+    // Badge still renders (just relocated)
+    expect(await screen.findByText('Cached')).toBeInTheDocument();
+    // ...but no longer inside the absolute top-left art overlay
+    expect(container.querySelector('.absolute.top-1\\.5.left-1\\.5')).toBeNull();
+  });
 });

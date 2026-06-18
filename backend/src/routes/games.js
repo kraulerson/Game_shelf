@@ -3,6 +3,7 @@ const multer = require('multer');
 const fs = require('node:fs');
 const pathMod = require('node:path');
 const authMiddleware = require('../middleware/auth');
+const { getCacheStatusSnapshot } = require('../services/cacheSnapshot');
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -319,13 +320,13 @@ router.use((err, req, res, next) => {
 });
 
 // GET /api/games
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const db = req.app.locals.db;
   const {
     search, genre, tag, launcher, sort = 'title_asc',
     page = '1', limit = '100', duplicates, starts_with,
     release_year_min, release_year_max, playtime_min, playtime_max,
-    owned = 'true',
+    owned = 'true', cache_status,
   } = req.query;
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -381,6 +382,49 @@ router.get('/', (req, res) => {
     const placeholders = tags.map(() => '?').join(',');
     outerConditions.push(`g.id IN (SELECT gt.game_id FROM game_tags gt JOIN tags t ON t.id = gt.tag_id WHERE t.name IN (${placeholders}))`);
     outerParams.push(...tags);
+  }
+
+  let cacheFilterUnavailable = false;
+  if (cache_status) {
+    const snap = await getCacheStatusSnapshot();
+    if (!snap.map) {
+      cacheFilterUnavailable = true;
+    } else {
+      db.exec('CREATE TEMP TABLE IF NOT EXISTS _cache_status(platform TEXT, app_id TEXT, status TEXT, PRIMARY KEY(platform, app_id))');
+      db.exec('DELETE FROM _cache_status');
+      const ins = db.prepare('INSERT OR REPLACE INTO _cache_status(platform, app_id, status) VALUES (?, ?, ?)');
+      const insMany = db.transaction((entries) => {
+        for (const [key, status] of entries) {
+          const idx = key.indexOf(':');
+          ins.run(key.slice(0, idx), key.slice(idx + 1), status);
+        }
+      });
+      insMany([...snap.map.entries()]);
+
+      const EXPAND = { failed: ['failed', 'validation_failed'] };
+      const selected = cache_status.split(',').map(s => s.trim()).filter(Boolean);
+      const expanded = [...new Set(selected.flatMap(s => EXPAND[s] || [s]))];
+
+      const existsParams = [];
+      let launcherInExists = '';
+      if (launcher) {
+        const launchers = launcher.split(',').map(l => l.trim());
+        launcherInExists = `AND l2.name IN (${launchers.map(() => '?').join(',')})`;
+        existsParams.push(...launchers);
+      }
+      const stPlaceholders = expanded.map(() => '?').join(',');
+      existsParams.push(...expanded);
+
+      outerConditions.push(`EXISTS (
+        SELECT 1 FROM game_editions ge2
+        JOIN launchers l2 ON l2.id = ge2.launcher_id
+        LEFT JOIN _cache_status cs ON cs.platform = l2.name AND cs.app_id = CAST(ge2.launcher_game_id AS TEXT)
+        WHERE ge2.game_id = g.id AND ge2.owned = 1 AND ge2.parent_edition_id IS NULL
+          ${launcherInExists}
+          AND COALESCE(cs.status, 'unknown') IN (${stPlaceholders})
+      )`);
+      outerParams.push(...existsParams);
+    }
   }
 
   const outerWhere = outerConditions.length > 0 ? 'AND ' + outerConditions.join(' AND ') : '';
@@ -553,7 +597,7 @@ router.get('/', (req, res) => {
     };
   });
 
-  res.json({ games, total, page: pageNum, limit: limitNum });
+  res.json({ games, total, page: pageNum, limit: limitNum, cache_filter_unavailable: cacheFilterUnavailable });
 });
 
 module.exports = router;
