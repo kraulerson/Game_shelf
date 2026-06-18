@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Library, Settings, LogOut, Menu, X, Loader2 } from 'lucide-react';
+import { Library, Settings, LogOut, Menu, X, Loader2, HardDrive } from 'lucide-react';
 
 export default function Nav() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -57,6 +57,9 @@ export default function Nav() {
           <Link to="/settings" className={linkClass('/settings')}>
             <Settings size={16} /> Settings
           </Link>
+          <Link to="/cache" className={linkClass('/cache')}>
+            <HardDrive size={16} /> Cache
+          </Link>
           <div className="flex items-center gap-2 ml-4">
             {isRunning ? (
               <Loader2 size={14} className="text-blue-400 animate-spin" />
@@ -83,6 +86,9 @@ export default function Nav() {
           </Link>
           <Link to="/settings" className={linkClass('/settings')} onClick={() => setMenuOpen(false)}>
             <Settings size={16} /> Settings
+          </Link>
+          <Link to="/cache" className={linkClass('/cache')} onClick={() => setMenuOpen(false)}>
+            <HardDrive size={16} /> Cache
           </Link>
           <button onClick={handleLogout} className="flex items-center gap-2 px-3 py-2 text-gray-400 hover:text-white text-sm w-full">
             <LogOut size={16} /> Logout

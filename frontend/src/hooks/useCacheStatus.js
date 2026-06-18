@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { cacheCounts } from '../utils/cacheBadge';
 
 async function fetchCacheGames() {
   const res = await fetch('/api/cache/games', { credentials: 'same-origin' });
@@ -23,8 +24,9 @@ export function useCacheStatus() {
     retry: false,
   });
 
+  const games = data?.games || [];
   const map = new Map();
-  for (const g of data?.games || []) {
+  for (const g of games) {
     map.set(`${g.platform}:${g.app_id}`, { id: g.id, status: g.status, blocked: g.blocked });
   }
 
@@ -32,5 +34,7 @@ export function useCacheStatus() {
     isLoading,
     isOffline: Boolean(data?.offline),
     statusFor: (platform, appId) => map.get(`${platform}:${appId}`),
+    games,
+    counts: cacheCounts(games),
   };
 }
