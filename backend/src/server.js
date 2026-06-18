@@ -20,6 +20,14 @@ for (const { name, minLength } of requiredEnv) {
   }
 }
 
+// Lancache orchestrator integration (F14) is OPTIONAL — the app boots without it.
+// Warn (don't fail) when unconfigured; /api/cache then degrades to 503 offline.
+if (!process.env.ORCH_API_URL || !process.env.ORCH_TOKEN) {
+  console.warn(
+    '[Gameshelf] ORCH_API_URL/ORCH_TOKEN not set — cache integration disabled until configured.'
+  );
+}
+
 const express = require('express');
 const path = require('node:path');
 const cookieParser = require('cookie-parser');
@@ -37,6 +45,7 @@ const gamesRouter = require('./routes/games');
 const syncRouter = require('./routes/sync');
 const metadataRouter = require('./routes/metadata');
 const tagsRouter = require('./routes/tags');
+const cacheRouter = require('./routes/cache');
 
 // Run migrations
 const dbPath = process.env.GAMESHELF_DB_PATH || './data/gameshelf.db';
@@ -70,6 +79,7 @@ app.use('/api/games', gamesRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/metadata', metadataRouter);
 app.use('/api/tags', tagsRouter);
+app.use('/api/cache', cacheRouter);
 
 // Global error handler
 app.use(errorHandler);
