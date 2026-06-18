@@ -10,7 +10,7 @@ async function fetchCacheGames() {
     }
     throw new Error(`cache games HTTP ${res.status}`);
   }
-  return { offline: false, games: body.games || [] };
+  return { offline: false, games: Array.isArray(body.games) ? body.games : [] };
 }
 
 // Bulk-fetch the orchestrator's games ONCE and expose a (platform, app_id) lookup.
@@ -24,7 +24,7 @@ export function useCacheStatus() {
     retry: false,
   });
 
-  const games = data?.games || [];
+  const games = Array.isArray(data?.games) ? data.games : [];
   const map = new Map();
   for (const g of games) {
     map.set(`${g.platform}:${g.app_id}`, { id: g.id, status: g.status, blocked: g.blocked });

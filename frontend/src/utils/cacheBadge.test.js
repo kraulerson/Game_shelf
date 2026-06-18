@@ -67,3 +67,43 @@ describe('cacheCounts', () => {
     expect(cacheCounts([])).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, failed: 0, blocked: 0 });
   });
 });
+
+describe('cacheBadgeFor — schema-skew tolerance (F17)', () => {
+  it('a tracked game missing the `blocked` field renders its status, not Blocked', () => {
+    expect(cacheBadgeFor({ status: 'up_to_date', tracked: true }).label).toBe('Cached');
+  });
+
+  it('an unknown status value falls through to Unknown (never throws)', () => {
+    expect(cacheBadgeFor({ status: 'teleporting', tracked: true }).label).toBe('Unknown');
+  });
+
+  it('a missing status falls through to Unknown', () => {
+    expect(cacheBadgeFor({ tracked: true }).label).toBe('Unknown');
+  });
+});
+
+describe('cacheCounts — malformed-entry tolerance (F17)', () => {
+  it('skips null/non-object entries without crashing', () => {
+    const c = cacheCounts([null, undefined, 42, { status: 'up_to_date' }]);
+    expect(c.total).toBe(1);
+    expect(c.cached).toBe(1);
+  });
+
+  it('a game missing `blocked` does not count as blocked', () => {
+    const c = cacheCounts([{ status: 'up_to_date' }]);
+    expect(c.blocked).toBe(0);
+  });
+
+  it('an unknown status is counted only toward total', () => {
+    const c = cacheCounts([{ status: 'teleporting' }]);
+    expect(c.total).toBe(1);
+    expect(c.cached).toBe(0);
+    expect(c.update_ready).toBe(0);
+    expect(c.not_cached).toBe(0);
+    expect(c.failed).toBe(0);
+  });
+
+  it('a non-array argument yields zeros', () => {
+    expect(cacheCounts(null)).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, failed: 0, blocked: 0 });
+  });
+});
