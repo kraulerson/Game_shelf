@@ -14,8 +14,10 @@ async function fetchCacheGames() {
 }
 
 // Bulk-fetch the orchestrator's games ONCE and expose a (platform, app_id) lookup.
-// Value = { id (orchestrator game id), status, blocked }. react-query dedupes the
-// shared queryKey, so many cards/panels mounting this hook = one network call.
+// Value = { id (orchestrator game id), status, blocked, chunks_cached, chunks_total }.
+// The chunk counts (latest validation) drive the "Partial · N%" badge; they're
+// undefined against an orchestrator that predates that field. react-query dedupes
+// the shared queryKey, so many cards/panels mounting this hook = one network call.
 export function useCacheStatus() {
   const { data, isLoading } = useQuery({
     queryKey: ['cacheStatus'],
@@ -27,7 +29,13 @@ export function useCacheStatus() {
   const games = Array.isArray(data?.games) ? data.games : [];
   const map = new Map();
   for (const g of games) {
-    map.set(`${g.platform}:${g.app_id}`, { id: g.id, status: g.status, blocked: g.blocked });
+    map.set(`${g.platform}:${g.app_id}`, {
+      id: g.id,
+      status: g.status,
+      blocked: g.blocked,
+      chunks_cached: g.chunks_cached,
+      chunks_total: g.chunks_total,
+    });
   }
 
   return {

@@ -13,16 +13,31 @@ const STATUS_MAP = {
   downloading: { icon: 'Download', tone: 'blue', label: 'Downloading' },
   pending_update: { icon: 'ArrowUpCircle', tone: 'amber', label: 'Update ready' },
   not_downloaded: { icon: 'Circle', tone: 'gray', label: 'Not cached' },
-  validation_failed: { icon: 'AlertTriangle', tone: 'red', label: 'Check failed' },
+  // validation_failed is handled specially below (amber "Partial · N%"), not here.
   failed: { icon: 'XCircle', tone: 'red', label: 'Failed' },
   unknown: { icon: 'HelpCircle', tone: 'gray', label: 'Unknown' },
 };
 
+// "Partial · 90%" when the cached fraction is known, else bare "Partial".
+// Guards against missing counts (older orchestrator) and total=0 (no divide).
+function partialLabel(chunksCached, chunksTotal) {
+  if (Number.isFinite(chunksCached) && Number.isFinite(chunksTotal) && chunksTotal > 0) {
+    const pct = Math.max(0, Math.min(100, Math.round((chunksCached / chunksTotal) * 100)));
+    return `Partial · ${pct}%`;
+  }
+  return 'Partial';
+}
+
 // Precedence: offline > not-tracked > blocked > status (blocked overlays any status).
-export function cacheBadgeFor({ status, blocked, tracked, offline } = {}) {
+// A validation_failed game is "partially cached", not broken — render it amber with
+// the cached percentage (from the latest validation) so the user sees how close it is.
+export function cacheBadgeFor({ status, blocked, tracked, offline, chunksCached, chunksTotal } = {}) {
   if (offline) return { icon: 'CloudOff', tone: 'neutral', label: '—' };
   if (!tracked) return { icon: 'Minus', tone: 'neutral', label: '—' };
   if (blocked) return { icon: 'Ban', tone: 'slate', label: 'Blocked' };
+  if (status === 'validation_failed') {
+    return { icon: 'AlertTriangle', tone: 'amber', label: partialLabel(chunksCached, chunksTotal) };
+  }
   return STATUS_MAP[status] || STATUS_MAP.unknown;
 }
 

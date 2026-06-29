@@ -17,4 +17,14 @@ describe('CacheBadge', () => {
     render(<CacheBadge tracked={false} />);
     expect(screen.getByText('—')).toBeInTheDocument();
   });
+
+  it('forwards chunk counts so validation_failed renders "Partial · N%"', () => {
+    render(<CacheBadge status="validation_failed" tracked chunksCached={90} chunksTotal={100} />);
+    expect(screen.getByText('Partial · 90%')).toBeInTheDocument();
+  });
+
+  it('renders bare "Partial" for validation_failed without chunk counts', () => {
+    render(<CacheBadge status="validation_failed" tracked />);
+    expect(screen.getByText('Partial')).toBeInTheDocument();
+  });
 });

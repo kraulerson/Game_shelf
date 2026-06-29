@@ -50,4 +50,9 @@ router.post('/platforms/:name/library/sync', (req, res) =>
   forward(res, 'POST', `/api/v1/platforms/${encodeURIComponent(req.params.name)}/library/sync`)
 );
 
+// Full re-validation sweep over the entire steam library — backs the cache
+// dashboard's "Refresh cache status" button. Always requests a FULL sweep so
+// not-yet-validated games are included, not just the cached subset.
+router.post('/sweep', (req, res) => forward(res, 'POST', '/api/v1/sweep', { data: { full: true } }));
+
 module.exports = router;

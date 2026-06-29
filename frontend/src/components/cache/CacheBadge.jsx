@@ -35,8 +35,16 @@ const TONE = {
   neutral: 'bg-gray-800 text-gray-400',
 };
 
-export default function CacheBadge({ status, blocked, tracked = true, offline = false, size = 'default' }) {
-  const { icon, tone, label } = cacheBadgeFor({ status, blocked, tracked, offline });
+export default function CacheBadge({
+  status,
+  blocked,
+  tracked = true,
+  offline = false,
+  chunksCached,
+  chunksTotal,
+  size = 'default',
+}) {
+  const { icon, tone, label } = cacheBadgeFor({ status, blocked, tracked, offline, chunksCached, chunksTotal });
   const Icon = ICONS[icon];
   const sizeClasses = size === 'small' ? 'text-xs px-1.5 py-0.5 gap-0.5' : 'text-sm px-2.5 py-0.5 gap-1';
   return (

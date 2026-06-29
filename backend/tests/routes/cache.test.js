@@ -13,11 +13,26 @@ let app, mock, lastReq;
 function startMock() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      lastReq = { method: req.method, url: req.url, auth: req.headers.authorization };
+      let raw = '';
+      req.on('data', (c) => {
+        raw += c;
+      });
+      req.on('end', () => handle(req, res, raw));
+    });
+    function handle(req, res, raw) {
+      let body;
+      try {
+        body = raw ? JSON.parse(raw) : undefined;
+      } catch {
+        body = raw;
+      }
+      lastReq = { method: req.method, url: req.url, auth: req.headers.authorization, body };
       const send = (code, obj) => {
         res.writeHead(code, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(obj));
       };
+      if (req.method === 'POST' && req.url === '/api/v1/sweep')
+        return send(202, { job_id: 9, full: true, queued: true });
       if (req.url === '/api/v1/jobs') return send(200, { jobs: [{ id: 1, kind: 'prefill' }], meta: { total: 1 } });
       if (req.url === '/api/v1/platforms') return send(200, { platforms: [{ name: 'steam', auth_status: 'ok' }] });
       if (req.url === '/api/v1/health') return send(200, { status: 'ok', git_sha: 'abc' });
@@ -36,7 +51,7 @@ function startMock() {
       if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/manifest\/fetch$/.test(req.url)) return send(202, { job_id: 7 });
       if (req.method === 'POST' && /\/api\/v1\/platforms\/\w+\/library\/sync$/.test(req.url)) return send(202, { job_id: 8 });
       send(404, { detail: 'not found' });
-    });
+    }
     server.listen(0, () => resolve({ server, url: `http://127.0.0.1:${server.address().port}` }));
   });
 }
@@ -137,6 +152,20 @@ describe('Cache proxy routes', () => {
     });
     assert.equal(res.status, 202);
     assert.equal(lastReq.url, '/api/v1/platforms/steam/library/sync');
+  });
+
+  it('POST /api/cache/sweep proxies a FULL re-validation sweep', async () => {
+    const res = await makeFetch(app, '/api/cache/sweep', {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+    assert.equal(res.status, 202);
+    const body = await res.json();
+    assert.equal(body.job_id, 9);
+    assert.equal(body.queued, true);
+    assert.equal(lastReq.method, 'POST');
+    assert.equal(lastReq.url, '/api/v1/sweep');
+    assert.deepEqual(lastReq.body, { full: true }); // always a full re-validation
   });
 
   it('never leaks ORCH_TOKEN to the client', async () => {
