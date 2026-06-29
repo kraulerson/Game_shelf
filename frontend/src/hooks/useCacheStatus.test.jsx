@@ -30,6 +30,37 @@ describe('useCacheStatus', () => {
     expect(result.current.isOffline).toBe(false);
   });
 
+  it('carries the latest validation chunk counts into the map value', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          games: [
+            {
+              id: 9,
+              platform: 'steam',
+              app_id: '730',
+              status: 'validation_failed',
+              blocked: false,
+              chunks_cached: 90,
+              chunks_total: 100,
+            },
+          ],
+        }),
+      })
+    );
+    const { result } = renderHook(() => useCacheStatus(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.statusFor('steam', '730')).toEqual({
+      id: 9,
+      status: 'validation_failed',
+      blocked: false,
+      chunks_cached: 90,
+      chunks_total: 100,
+    });
+  });
+
   it('flags offline on a 503 orchestrator_offline body', async () => {
     vi.stubGlobal(
       'fetch',

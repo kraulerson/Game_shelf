@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Cache from './Cache';
@@ -75,5 +75,54 @@ describe('Cache page — F17 degradation banners', () => {
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     // Clicking re-runs the cache queries; fetch is called again for the refetch.
     expect(fetch).toHaveBeenCalled();
+  });
+});
+
+describe('Cache page — Refresh cache status (full sweep)', () => {
+  it('starts a full sweep, polls the sweep job, and reports completion', async () => {
+    const fetchMock = vi.fn((url, opts) => {
+      if (String(url) === '/api/cache/sweep' && opts?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          status: 202,
+          json: async () => ({ job_id: 7, full: true, queued: true }),
+        });
+      }
+      if (String(url).includes('/api/cache/jobs') && String(url).includes('kind=sweep')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ jobs: [{ id: 7, kind: 'sweep', state: 'succeeded' }] }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ games: [], platforms: [], jobs: [], block_list: [] }),
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    wrap(<Cache />);
+    const btn = await screen.findByRole('button', { name: /refresh cache status/i });
+    await userEvent.click(btn);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/cache/sweep',
+        expect.objectContaining({ method: 'POST' })
+      )
+    );
+    await waitFor(() => expect(screen.getByText(/re-validation complete/i)).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('kind=sweep'), expect.anything());
+  });
+
+  it('the Refresh button is disabled when the orchestrator is offline', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({ status: 'orchestrator_offline' }) })
+    );
+    wrap(<Cache />);
+    // Wait for the offline state to settle (button is enabled on the first
+    // render before the cacheStatus query resolves).
+    await screen.findByText(/orchestrator is offline/i);
+    expect(screen.getByRole('button', { name: /refresh cache status/i })).toBeDisabled();
   });
 });

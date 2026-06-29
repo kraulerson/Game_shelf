@@ -17,7 +17,7 @@ describe('cacheBadgeFor', () => {
     [{ status: 'downloading', tracked: true }, 'Download', 'blue', 'Downloading'],
     [{ status: 'pending_update', tracked: true }, 'ArrowUpCircle', 'amber', 'Update ready'],
     [{ status: 'not_downloaded', tracked: true }, 'Circle', 'gray', 'Not cached'],
-    [{ status: 'validation_failed', tracked: true }, 'AlertTriangle', 'red', 'Check failed'],
+    [{ status: 'validation_failed', tracked: true }, 'AlertTriangle', 'amber', 'Partial'],
     [{ status: 'failed', tracked: true }, 'XCircle', 'red', 'Failed'],
     [{ status: 'unknown', tracked: true }, 'HelpCircle', 'gray', 'Unknown'],
   ];
@@ -45,6 +45,49 @@ describe('cacheBadgeFor', () => {
   });
   it('unknown status string falls back to Unknown', () => {
     expect(cacheBadgeFor({ status: 'wat', tracked: true }).label).toBe('Unknown');
+  });
+});
+
+describe('cacheBadgeFor — validation_failed renders amber "Partial · N%"', () => {
+  it('computes the cached percentage from chunk counts', () => {
+    expect(
+      cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 90, chunksTotal: 100 })
+    ).toEqual({ icon: 'AlertTriangle', tone: 'amber', label: 'Partial · 90%' });
+  });
+
+  it('rounds to the nearest percent', () => {
+    // 39780 / 45415 = 0.8759… -> 88%
+    expect(
+      cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 39780, chunksTotal: 45415 }).label
+    ).toBe('Partial · 88%');
+  });
+
+  it('falls back to bare "Partial" when counts are absent (orchestrator not yet upgraded)', () => {
+    expect(cacheBadgeFor({ status: 'validation_failed', tracked: true }).label).toBe('Partial');
+  });
+
+  it('falls back to bare "Partial" when total is zero (no divide-by-zero)', () => {
+    expect(
+      cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 0, chunksTotal: 0 }).label
+    ).toBe('Partial');
+  });
+
+  it('clamps a nonsensical >100% to 100', () => {
+    expect(
+      cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 120, chunksTotal: 100 }).label
+    ).toBe('Partial · 100%');
+  });
+
+  it('blocked still overlays validation_failed even with chunk counts', () => {
+    expect(
+      cacheBadgeFor({
+        status: 'validation_failed',
+        blocked: true,
+        tracked: true,
+        chunksCached: 90,
+        chunksTotal: 100,
+      }).label
+    ).toBe('Blocked');
   });
 });
 
