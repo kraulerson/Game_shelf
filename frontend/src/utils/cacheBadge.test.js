@@ -72,10 +72,25 @@ describe('cacheBadgeFor — validation_failed renders amber "Partial · N%"', ()
     ).toBe('Partial');
   });
 
-  it('clamps a nonsensical >100% to 100', () => {
+  it('never displays 100% for a partial game — caps at 99% (would round up)', () => {
+    // 51147/51192 = 99.912% -> Math.round = 100, but it's partial (45 missing),
+    // so it must read 99%, not a self-contradictory "Partial · 100%".
+    expect(
+      cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 51147, chunksTotal: 51192 }).label
+    ).toBe('Partial · 99%');
+  });
+
+  it('caps a nonsensical >100% at 99 too', () => {
     expect(
       cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 120, chunksTotal: 100 }).label
-    ).toBe('Partial · 100%');
+    ).toBe('Partial · 99%');
+  });
+
+  it('shows at least 1% when some chunks are cached (never rounds down to 0)', () => {
+    // 2/1000 = 0.2% -> Math.round = 0, but a cached chunk exists -> show 1%.
+    expect(
+      cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 2, chunksTotal: 1000 }).label
+    ).toBe('Partial · 1%');
   });
 
   it('blocked still overlays validation_failed even with chunk counts', () => {

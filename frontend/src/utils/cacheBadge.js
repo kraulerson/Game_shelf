@@ -22,7 +22,12 @@ const STATUS_MAP = {
 // Guards against missing counts (older orchestrator) and total=0 (no divide).
 function partialLabel(chunksCached, chunksTotal) {
   if (Number.isFinite(chunksCached) && Number.isFinite(chunksTotal) && chunksTotal > 0) {
-    const pct = Math.max(0, Math.min(100, Math.round((chunksCached / chunksTotal) * 100)));
+    // A 'partial' game is by definition NOT fully cached (else it'd be 'Cached'),
+    // so never let the rounded label contradict itself: cap at 99% (e.g. 99.9%
+    // would round up to 100) and show ≥1% whenever any chunk is cached.
+    let pct = Math.round((chunksCached / chunksTotal) * 100);
+    if (pct >= 100) pct = 99;
+    if (pct <= 0 && chunksCached > 0) pct = 1;
     return `Partial · ${pct}%`;
   }
   return 'Partial';
