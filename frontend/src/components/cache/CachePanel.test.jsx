@@ -112,6 +112,72 @@ describe('CachePanel', () => {
     );
   });
 
+  it('Repair is shown only for validation_failed (partial) games', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          games: [{ id: 9, platform: 'steam', app_id: '730', status: 'up_to_date', blocked: false }],
+        }),
+      })
+    );
+    wrap(<CachePanel editions={editions} />);
+    await screen.findByText('Cached');
+    expect(screen.queryByRole('button', { name: /^repair$/i })).not.toBeInTheDocument();
+  });
+
+  it('Repair shows "Repairing…", posts force=true, polls the prefill job, then settles', async () => {
+    let resolvePost;
+    const postPromise = new Promise((r) => {
+      resolvePost = r;
+    });
+    const games = {
+      games: [
+        {
+          id: 9,
+          platform: 'steam',
+          app_id: '730',
+          status: 'validation_failed',
+          blocked: false,
+          chunks_cached: 50,
+          chunks_total: 100,
+        },
+      ],
+    };
+    const fetchMock = vi.fn((url, opts) => {
+      if (/\/api\/cache\/games\/\d+\/prefill\?force=true$/.test(url) && opts?.method === 'POST') {
+        return postPromise.then(() => ({ ok: true, json: async () => ({ job_id: 7 }) }));
+      }
+      if (typeof url === 'string' && url.startsWith('/api/cache/jobs')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ jobs: [{ id: 7, kind: 'prefill', state: 'succeeded' }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => games });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    wrap(<CachePanel editions={editions} />);
+    await screen.findByText('Partial · 50%');
+
+    await userEvent.click(screen.getByRole('button', { name: /^repair$/i }));
+    expect(await screen.findByText('Repairing…')).toBeInTheDocument();
+
+    resolvePost();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^repair$/i })).toBeInTheDocument()
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/cache/games/9/prefill?force=true',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/cache/jobs?game_id=9&kind=prefill'),
+      expect.anything()
+    );
+  });
+
   it('Prefill posts to the orchestrator game id', async () => {
     const fetchMock = vi
       .fn()

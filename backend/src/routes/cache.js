@@ -40,7 +40,15 @@ router.delete('/block-list/:platform/:app_id', (req, res) =>
   )
 );
 
-for (const action of ['prefill', 'validate', 'manifest/fetch']) {
+// Prefill threads query params (notably ?force=true — a forced prefill re-requests
+// every chunk to repair an evicted/partial game) through to the orchestrator;
+// validate/manifest take no params.
+router.post('/games/:id/prefill', (req, res) =>
+  forward(res, 'POST', `/api/v1/games/${encodeURIComponent(req.params.id)}/prefill`, {
+    params: req.query,
+  })
+);
+for (const action of ['validate', 'manifest/fetch']) {
   router.post(`/games/:id/${action}`, (req, res) =>
     forward(res, 'POST', `/api/v1/games/${encodeURIComponent(req.params.id)}/${action}`)
   );
