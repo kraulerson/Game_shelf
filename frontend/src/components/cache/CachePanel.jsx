@@ -5,7 +5,14 @@ import { useCacheStatus } from '../../hooks/useCacheStatus';
 import { launcherToPlatform } from '../../utils/cacheBadge';
 
 const POLL_INTERVAL_MS = 1500;
-const MAX_POLLS = 60; // ~90s ceiling so a stuck job never spins forever
+const MAX_POLLS = 60; // ~90s ceiling — fine for the fast disk-stat validate
+// A force prefill (Repair) re-requests EVERY chunk (a LAN re-read of the whole
+// game plus a WAN pull of the evicted gaps), so it runs minutes, not seconds.
+// Poll slower and far longer so "Repairing…" reflects the real duration instead
+// of reverting at 90s (which looked like nothing happened and prompted re-clicks).
+// A re-click is harmless: the orchestrator dedups in-flight prefills per game.
+const PREFILL_POLL_INTERVAL_MS = 3000;
+const PREFILL_MAX_POLLS = 240; // ~12 min ceiling
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -14,6 +21,8 @@ export default function CachePanel({ editions = [] }) {
   const { statusFor, isOffline } = useCacheStatus();
   // orchId -> true while a validate job for that game is in flight.
   const [validating, setValidating] = useState({});
+  // orchId -> true while a force-prefill (Repair) job for that game is in flight.
+  const [forcing, setForcing] = useState({});
 
   const tracked = editions
     .map((e) => ({ e, platform: launcherToPlatform(e.launcher_name) }))
@@ -39,7 +48,7 @@ export default function CachePanel({ editions = [] }) {
         method: 'POST',
         credentials: 'same-origin',
       });
-      if (res.ok) await pollValidateJob(orchId);
+      if (res.ok) await pollJob(orchId, 'validate');
     } finally {
       setValidating((v) => {
         const next = { ...v };
@@ -50,12 +59,35 @@ export default function CachePanel({ editions = [] }) {
     }
   }
 
-  async function pollValidateJob(orchId) {
-    for (let i = 0; i < MAX_POLLS; i++) {
+  // Repair = a FORCE prefill: re-requests every chunk so the lancache refills the
+  // evicted gaps a normal prefill would skip. Enqueues a prefill job (force=true)
+  // and polls it to completion like Validate, refreshing the badge as it runs.
+  async function force(orchId) {
+    setForcing((v) => ({ ...v, [orchId]: true }));
+    try {
+      const res = await fetch(`/api/cache/games/${orchId}/prefill?force=true`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (res.ok) await pollJob(orchId, 'prefill');
+    } finally {
+      setForcing((v) => {
+        const next = { ...v };
+        delete next[orchId];
+        return next;
+      });
+      invalidate();
+    }
+  }
+
+  async function pollJob(orchId, kind) {
+    const interval = kind === 'prefill' ? PREFILL_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+    const maxPolls = kind === 'prefill' ? PREFILL_MAX_POLLS : MAX_POLLS;
+    for (let i = 0; i < maxPolls; i++) {
       let job = null;
       try {
         const r = await fetch(
-          `/api/cache/jobs?game_id=${orchId}&kind=validate&sort=id:desc&limit=1`,
+          `/api/cache/jobs?game_id=${orchId}&kind=${kind}&sort=id:desc&limit=1`,
           { credentials: 'same-origin' }
         );
         const body = await r.json().catch(() => ({}));
@@ -65,7 +97,7 @@ export default function CachePanel({ editions = [] }) {
       }
       if (job && TERMINAL.has(job.state)) return;
       invalidate(); // progressive: pick up any mid-flight status change
-      await sleep(POLL_INTERVAL_MS);
+      await sleep(interval);
     }
   }
 
@@ -97,6 +129,7 @@ export default function CachePanel({ editions = [] }) {
           const cache = statusFor(platform, e.launcher_game_id);
           const orchId = cache?.id;
           const isValidating = Boolean(orchId && validating[orchId]);
+          const isForcing = Boolean(orchId && forcing[orchId]);
           return (
             <div key={e.id} className="flex items-center gap-3">
               <span className="w-24 text-sm text-gray-400">{e.launcher_display_name || e.launcher_name}</span>
@@ -140,6 +173,16 @@ export default function CachePanel({ editions = [] }) {
                 >
                   {isValidating ? 'Validating…' : 'Validate'}
                 </button>
+                {cache?.status === 'validation_failed' && (
+                  <button
+                    className={`${btn} bg-amber-700 hover:bg-amber-600`}
+                    disabled={isOffline || !orchId || isForcing}
+                    onClick={() => force(orchId)}
+                    title="Force-refill every chunk to repair this partially-cached game"
+                  >
+                    {isForcing ? 'Repairing…' : 'Repair'}
+                  </button>
+                )}
               </div>
             </div>
           );

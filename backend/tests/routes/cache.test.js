@@ -46,7 +46,7 @@ function startMock() {
       }
       if (req.method === 'POST' && req.url === '/api/v1/block-list') return send(201, { id: 1, platform: 'steam', app_id: '730' });
       if (req.method === 'DELETE' && req.url.startsWith('/api/v1/block-list/')) return send(200, { removed: 1 });
-      if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/prefill$/.test(req.url)) return send(202, { job_id: 5 });
+      if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/prefill(\?|$)/.test(req.url)) return send(202, { job_id: 5 });
       if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/validate$/.test(req.url)) return send(202, { job_id: 6 });
       if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/manifest\/fetch$/.test(req.url)) return send(202, { job_id: 7 });
       if (req.method === 'POST' && /\/api\/v1\/platforms\/\w+\/library\/sync$/.test(req.url)) return send(202, { job_id: 8 });
@@ -143,6 +143,15 @@ describe('Cache proxy routes', () => {
       assert.equal(res.status, 202, action);
       assert.equal(lastReq.url, `/api/v1/games/5/${action}`);
     }
+  });
+
+  it('POST /api/cache/games/:id/prefill?force=true threads force to the orchestrator', async () => {
+    const res = await makeFetch(app, '/api/cache/games/5/prefill?force=true', {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+    assert.equal(res.status, 202);
+    assert.equal(lastReq.url, '/api/v1/games/5/prefill?force=true');
   });
 
   it('POST /api/cache/platforms/:name/library/sync proxies', async () => {
