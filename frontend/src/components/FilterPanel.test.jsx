@@ -41,4 +41,10 @@ describe('FilterPanel cache status', () => {
     await userEvent.click(screen.getByLabelText('Failed'));
     expect(screen.getByTestId('cs').textContent).toBe('up_to_date,failed');
   });
+
+  it('toggling "Partial" sets cache_status=validation_failed', async () => {
+    wrap();
+    await userEvent.click(await screen.findByLabelText('Partial'));
+    expect(screen.getByTestId('cs').textContent).toBe('validation_failed');
+  });
 });
