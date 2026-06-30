@@ -401,9 +401,11 @@ router.get('/', async (req, res) => {
       });
       insMany([...snap.map.entries()]);
 
-      const EXPAND = { failed: ['failed', 'validation_failed'] };
-      const selected = cache_status.split(',').map(s => s.trim()).filter(Boolean);
-      const expanded = [...new Set(selected.flatMap(s => EXPAND[s] || [s]))];
+      // Each selected status matches exactly itself. (Earlier, 'failed' also
+      // folded in 'validation_failed' because there was no separate filter for
+      // partially-cached games; now "Partial" (validation_failed) is its own
+      // option, so Failed=failed and Partial=partial are distinct.)
+      const expanded = [...new Set(cache_status.split(',').map(s => s.trim()).filter(Boolean))];
 
       const existsParams = [];
       let launcherInExists = '';

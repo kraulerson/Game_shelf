@@ -8,6 +8,7 @@ const CACHE_STATUS_OPTIONS = [
   { key: 'up_to_date', label: 'Cached' },
   { key: 'pending_update', label: 'Update ready' },
   { key: 'not_downloaded', label: 'Not cached' },
+  { key: 'validation_failed', label: 'Partial' },
   { key: 'failed', label: 'Failed' },
   { key: 'downloading', label: 'Downloading' },
   { key: 'unknown', label: 'Unknown' },

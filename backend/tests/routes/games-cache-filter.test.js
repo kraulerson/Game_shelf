@@ -14,6 +14,7 @@ const ORCH_GAMES = [
   { id: 2, platform: 'steam', app_id: '20', status: 'not_downloaded' },
   { id: 3, platform: 'epic', app_id: '30', status: 'not_downloaded' },
   { id: 4, platform: 'epic', app_id: '40', status: 'validation_failed' },
+  { id: 6, platform: 'steam', app_id: '50', status: 'failed' },
 ];
 let orchUp = true;
 
@@ -50,8 +51,9 @@ function seed(db) {
     [1, 'Cached Steam', 'cached-steam', 1, '10'],
     [2, 'Uncached Steam', 'uncached-steam', 1, '20'],
     [3, 'Uncached Epic', 'uncached-epic', 2, '30'],
-    [4, 'Failed Epic', 'failed-epic', 2, '40'],
+    [4, 'Partial Epic', 'partial-epic', 2, '40'],
     [5, 'Unknown Steam', 'unknown-steam', 1, '99'],
+    [6, 'Broken Steam', 'broken-steam', 1, '50'],
   ];
   for (const [gid, title, slug] of rows) insGame.run(gid, title, slug);
   for (const [gid, , , lid, lgid] of rows) insEd.run(gid, lid, lgid, 'ed');
@@ -86,9 +88,17 @@ describe('cache_status filter', () => {
     const body = await get('cache_status=not_downloaded');
     assert.deepEqual(body.games.map(g => g.title).sort(), ['Uncached Epic', 'Uncached Steam']);
   });
-  it('failed folds in validation_failed', async () => {
+  it('failed matches only failed (validation_failed is now the separate "Partial")', async () => {
     const body = await get('cache_status=failed');
-    assert.deepEqual(body.games.map(g => g.title).sort(), ['Failed Epic']);
+    assert.deepEqual(body.games.map(g => g.title).sort(), ['Broken Steam']);
+  });
+  it('validation_failed (Partial) matches only the partially-cached game', async () => {
+    const body = await get('cache_status=validation_failed');
+    assert.deepEqual(body.games.map(g => g.title).sort(), ['Partial Epic']);
+  });
+  it('failed + validation_failed together match both', async () => {
+    const body = await get('cache_status=failed,validation_failed');
+    assert.deepEqual(body.games.map(g => g.title).sort(), ['Broken Steam', 'Partial Epic']);
   });
   it('unknown includes games with no orchestrator record', async () => {
     const body = await get('cache_status=unknown');
