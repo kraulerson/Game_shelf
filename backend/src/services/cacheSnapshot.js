@@ -19,7 +19,12 @@ function makeCacheSnapshot({ client = orchestrator, ttlMs = DEFAULT_TTL_MS, now 
       try {
         const { games } = await client.fetchAllGames();
         const map = new Map();
-        for (const g of games) map.set(`${g.platform}:${g.app_id}`, g.status);
+        // A blocked game (excluded from prefill) reports 'blocked' rather than its
+        // underlying cache status, so it never shows under "Failed" and can be
+        // filtered on its own. `blocked` overrides everything else.
+        for (const g of games) {
+          map.set(`${g.platform}:${g.app_id}`, g.blocked ? 'blocked' : g.status);
+        }
         cached = { map, fetchedAt: now() };
         return { map, stale: false };
       } catch {

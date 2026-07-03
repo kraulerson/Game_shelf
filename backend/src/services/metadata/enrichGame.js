@@ -142,18 +142,25 @@ async function enrichGame(gameEditionId, db) {
   if (!match) {
     console.log(`[Gameshelf Metadata] No IGDB match for: ${title}`);
 
-    // Cross-launcher: check if another launcher already has this game enriched
-    const crossMatch = db.prepare(`
+    // Cross-launcher: check if another launcher already has this game enriched.
+    // GUARD (issue #10): a too-short / degenerate slug — e.g. an Epic codename
+    // that slugifies to almost nothing — prefix-matches unrelated games and
+    // collapses dozens of distinct games onto one game_id. Require a meaningful
+    // slug on BOTH sides before treating a prefix overlap as the same game.
+    const MIN_CROSS_SLUG = 4;
+    const crossMatch = slug.length >= MIN_CROSS_SLUG ? db.prepare(`
       SELECT g.id, g.title, g.slug FROM games g
       WHERE g.description IS NOT NULL
         AND (g.slug LIKE ? || '%' OR ? LIKE g.slug || '%')
       ORDER BY length(g.slug) DESC LIMIT 5
-    `).all(slug, slug);
+    `).all(slug, slug) : [];
 
-    // Verify prefix match on word boundary
+    // Verify prefix match on word boundary; the shared prefix must itself be a
+    // meaningful length (a 1-3 char overlap is not a real cross-launcher match).
     const validCross = crossMatch.find(g => {
       const shorter = slug.length <= g.slug.length ? slug : g.slug;
       const longer = slug.length <= g.slug.length ? g.slug : slug;
+      if (shorter.length < MIN_CROSS_SLUG) return false;
       return longer.startsWith(shorter) && (longer.length === shorter.length || longer[shorter.length] === '-');
     });
 

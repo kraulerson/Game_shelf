@@ -178,9 +178,9 @@ export default function CachePanel({ editions = [] }) {
                     className={`${btn} bg-amber-700 hover:bg-amber-600`}
                     disabled={isOffline || !orchId || isForcing}
                     onClick={() => force(orchId)}
-                    title="Force-refill every chunk to repair this partially-cached game"
+                    title="Re-download every chunk fresh from the source (a complete re-download, not just the missing chunks). Use only if Validate confirms real missing data."
                   >
-                    {isForcing ? 'Repairing…' : 'Repair'}
+                    {isForcing ? 'Re-downloading…' : 'Complete Re-download'}
                   </button>
                 )}
               </div>

@@ -47,4 +47,10 @@ describe('FilterPanel cache status', () => {
     await userEvent.click(await screen.findByLabelText('Partial'));
     expect(screen.getByTestId('cs').textContent).toBe('validation_failed');
   });
+
+  it('toggling "Blocked" sets cache_status=blocked', async () => {
+    wrap();
+    await userEvent.click(await screen.findByLabelText('Blocked'));
+    expect(screen.getByTestId('cs').textContent).toBe('blocked');
+  });
 });

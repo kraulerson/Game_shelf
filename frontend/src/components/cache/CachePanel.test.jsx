@@ -112,7 +112,7 @@ describe('CachePanel', () => {
     );
   });
 
-  it('Repair is shown only for validation_failed (partial) games', async () => {
+  it('Complete Re-download is shown only for validation_failed (partial) games', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -124,10 +124,10 @@ describe('CachePanel', () => {
     );
     wrap(<CachePanel editions={editions} />);
     await screen.findByText('Cached');
-    expect(screen.queryByRole('button', { name: /^repair$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^complete re-download$/i })).not.toBeInTheDocument();
   });
 
-  it('Repair shows "Repairing…", posts force=true, polls the prefill job, then settles', async () => {
+  it('Complete Re-download shows "Re-downloading…", posts force=true, polls the prefill job, then settles', async () => {
     let resolvePost;
     const postPromise = new Promise((r) => {
       resolvePost = r;
@@ -161,12 +161,12 @@ describe('CachePanel', () => {
     wrap(<CachePanel editions={editions} />);
     await screen.findByText('Partial · 50%');
 
-    await userEvent.click(screen.getByRole('button', { name: /^repair$/i }));
-    expect(await screen.findByText('Repairing…')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^complete re-download$/i }));
+    expect(await screen.findByText('Re-downloading…')).toBeInTheDocument();
 
     resolvePost();
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^repair$/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^complete re-download$/i })).toBeInTheDocument()
     );
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/cache/games/9/prefill?force=true',
