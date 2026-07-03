@@ -238,6 +238,24 @@ function runMigrations(dbPath) {
     console.log('[Migration] Phase 14: Added manual_title column');
   }
 
+  // Phase 15: repair Epic import mis-grouping (issue #10). The old prefix matcher
+  // (enrichGame cross-launcher + Phase 12b) collapsed many unrelated Epic games
+  // onto ONE game_id when their titles were codenames (empty/degenerate slugs).
+  // Signature: a single game whose editions span many distinct epic_namespaces
+  // (a real game's editions/DLC share one namespace). For each such game, keep
+  // only the editions whose own title-slug is prefix-related to the game (the
+  // real base + its editions), and re-home the rest into their own game rows.
+  // Idempotent: once repaired, no game exceeds the namespace threshold. Runs only
+  // when the misGrouping columns exist (epic_namespace / parent_edition_id).
+  const geColsP15 = db.pragma('table_info(game_editions)');
+  if (geColsP15.some(c => c.name === 'epic_namespace') && geColsP15.some(c => c.name === 'parent_edition_id')) {
+    const { repairMisGroupedEditions } = require('./repairMisGroupedEditions');
+    const reHomed = repairMisGroupedEditions(db);
+    if (reHomed > 0) {
+      console.log(`[Migration] Phase 15: re-homed ${reHomed} mis-grouped Epic editions (issue #10)`);
+    }
+  }
+
   return db;
 }
 

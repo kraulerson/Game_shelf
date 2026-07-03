@@ -10,6 +10,7 @@ const CACHE_STATUS_OPTIONS = [
   { key: 'not_downloaded', label: 'Not cached' },
   { key: 'validation_failed', label: 'Partial' },
   { key: 'failed', label: 'Failed' },
+  { key: 'blocked', label: 'Blocked' },
   { key: 'downloading', label: 'Downloading' },
   { key: 'unknown', label: 'Unknown' },
 ];

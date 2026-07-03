@@ -15,6 +15,9 @@ const ORCH_GAMES = [
   { id: 3, platform: 'epic', app_id: '30', status: 'not_downloaded' },
   { id: 4, platform: 'epic', app_id: '40', status: 'validation_failed' },
   { id: 6, platform: 'steam', app_id: '50', status: 'failed' },
+  // Blocked game: its underlying status is 'failed', but blocked=true must make
+  // it report 'blocked' — never surfacing under the "Failed" filter.
+  { id: 7, platform: 'epic', app_id: '60', status: 'failed', blocked: true },
 ];
 let orchUp = true;
 
@@ -54,6 +57,7 @@ function seed(db) {
     [4, 'Partial Epic', 'partial-epic', 2, '40'],
     [5, 'Unknown Steam', 'unknown-steam', 1, '99'],
     [6, 'Broken Steam', 'broken-steam', 1, '50'],
+    [7, 'Blocked Epic', 'blocked-epic', 2, '60'],
   ];
   for (const [gid, title, slug] of rows) insGame.run(gid, title, slug);
   for (const [gid, , , lid, lgid] of rows) insEd.run(gid, lid, lgid, 'ed');
@@ -88,9 +92,14 @@ describe('cache_status filter', () => {
     const body = await get('cache_status=not_downloaded');
     assert.deepEqual(body.games.map(g => g.title).sort(), ['Uncached Epic', 'Uncached Steam']);
   });
-  it('failed matches only failed (validation_failed is now the separate "Partial")', async () => {
+  it('failed matches only failed (validation_failed is Partial; blocked is excluded)', async () => {
     const body = await get('cache_status=failed');
+    // "Blocked Epic" has underlying status 'failed' but is blocked -> NOT here.
     assert.deepEqual(body.games.map(g => g.title).sort(), ['Broken Steam']);
+  });
+  it('cache_status=blocked returns only the blocked game', async () => {
+    const body = await get('cache_status=blocked');
+    assert.deepEqual(body.games.map(g => g.title).sort(), ['Blocked Epic']);
   });
   it('validation_failed (Partial) matches only the partially-cached game', async () => {
     const body = await get('cache_status=validation_failed');

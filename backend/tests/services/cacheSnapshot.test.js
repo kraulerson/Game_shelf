@@ -19,6 +19,17 @@ describe('cacheSnapshot', () => {
     assert.equal(map.get('steam:730'), 'up_to_date');
   });
 
+  it('a blocked game reports "blocked", overriding its underlying status', async () => {
+    const client = stubClient(() => [
+      { platform: 'epic', app_id: '60', status: 'failed', blocked: true },
+      { platform: 'steam', app_id: '50', status: 'failed', blocked: false },
+    ]);
+    const snap = makeCacheSnapshot({ client, ttlMs: 1000, now: () => 0 });
+    const { map } = await snap.get();
+    assert.equal(map.get('epic:60'), 'blocked'); // blocked overrides 'failed'
+    assert.equal(map.get('steam:50'), 'failed'); // not blocked -> real status
+  });
+
   it('serves cached within TTL without refetching', async () => {
     let t = 0;
     const client = stubClient(() => [{ platform: 'steam', app_id: '1', status: 'up_to_date' }]);
