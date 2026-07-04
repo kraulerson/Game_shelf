@@ -40,6 +40,31 @@ describe('GameCard cache badge', () => {
     expect(await screen.findByText('Cached')).toBeInTheDocument();
   });
 
+  it('reads cache_launcher_* (the priority launcher), not the display launcher (#223)', async () => {
+    // The card is displayed as its Epic edition, but the game is cached on the
+    // higher-priority Steam launcher. cache_launcher_* points the badge at Steam,
+    // so it must read "Cached" — the multi-launcher bug this fixes.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          games: [{ id: 3, platform: 'steam', app_id: '400', status: 'up_to_date', blocked: false }],
+        }),
+      })
+    );
+    renderCard({
+      id: 3,
+      title: 'Portal',
+      launcher_name: 'epic',
+      launcher_game_id: 'epic-portal',
+      cache_launcher_name: 'steam',
+      cache_launcher_game_id: '400',
+      platforms: [{ launcher_name: 'steam' }, { launcher_name: 'epic' }],
+    });
+    expect(await screen.findByText('Cached')).toBeInTheDocument();
+  });
+
   it('shows a neutral dash for a GOG-only (untracked) game', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [] }) }));
     renderCard({
