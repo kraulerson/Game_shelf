@@ -1,3 +1,5 @@
+const { isSequelToken } = require('./gameIdentity');
+
 const EDITION_SUFFIXES = [
   /\s*[™®]/g,
   /\s*\(TM\)/gi,
@@ -87,11 +89,16 @@ function findBestMatch(searchTitle, igdbResults) {
     const resultSlug = slugify(result.name);
     let similarity = levenshteinSimilarity(searchSlug, resultSlug);
 
-    // Boost prefix matches: launcher titles often lack subtitles present in IGDB
+    // Boost prefix matches: launcher titles often lack subtitles present in IGDB.
+    // But a numeric/roman tail (Doom -> Doom 64) is a SEQUEL, not a subtitle —
+    // never boost that, or IGDB pulls the wrong game's metadata.
     const shorter = searchSlug.length <= resultSlug.length ? searchSlug : resultSlug;
     const longer = searchSlug.length <= resultSlug.length ? resultSlug : searchSlug;
     if (longer.startsWith(shorter) && (longer.length === shorter.length || longer[shorter.length] === '-')) {
-      similarity = Math.max(similarity, 0.80);
+      const tail = longer.slice(shorter.length + 1);
+      if (!tail || !isSequelToken(tail.split('-')[0])) {
+        similarity = Math.max(similarity, 0.80);
+      }
     }
 
     // Boost suffix matches: GOG uses short names, IGDB has franchise prefixes

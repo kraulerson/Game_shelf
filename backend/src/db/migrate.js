@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const fs = require('node:fs');
 const path = require('node:path');
 const bcrypt = require('bcrypt');
+const { sameGameSlug } = require('../services/metadata/gameIdentity');
 
 const BCRYPT_ROUNDS = 12;
 const DEFAULT_ADMIN_USER = 'admin';
@@ -189,9 +190,11 @@ function runMigrations(dbPath) {
       for (let j = i + 1; j < allGames.length; j++) {
         if (processed.has(allGames[j].id)) continue;
         const longer = allGames[j];
-        // Check if shorter.slug is a prefix of longer.slug on word boundary
+        // Merge edition variants only. sameGameSlug adds the sequel guard: a
+        // numeric/roman tail (portal -> portal-2) is a different game, never merged.
         if (longer.slug.startsWith(shorter.slug) &&
-            (longer.slug.length === shorter.slug.length || longer.slug[shorter.slug.length] === '-')) {
+            (longer.slug.length === shorter.slug.length || longer.slug[shorter.slug.length] === '-') &&
+            sameGameSlug(shorter.slug, longer.slug)) {
           // Keep the one with better metadata (description), or the longer slug (more specific edition)
           const keep = longer.description ? longer : (shorter.description ? shorter : longer);
           const discard = keep.id === longer.id ? shorter : longer;
@@ -253,6 +256,18 @@ function runMigrations(dbPath) {
     const reHomed = repairMisGroupedEditions(db);
     if (reHomed > 0) {
       console.log(`[Migration] Phase 15: re-homed ${reHomed} mis-grouped Epic editions (issue #10)`);
+    }
+  }
+
+  // Phase 16: split sequels the old prefix matcher merged onto one game (Portal +
+  // Portal 2, Darksiders + Darksiders II). Prevention now lives in gameIdentity
+  // (enrichGame cross-match, Phase 12b, Phase 15). This heals existing data.
+  // Idempotent: once split, each game's editions share one base game.
+  {
+    const { repairSequelGrouping } = require('./repairSequelGrouping');
+    const split = repairSequelGrouping(db);
+    if (split > 0) {
+      console.log(`[Migration] Phase 16: split ${split} sequel editions off mis-grouped games`);
     }
   }
 

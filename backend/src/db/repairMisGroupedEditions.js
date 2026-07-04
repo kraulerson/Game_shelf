@@ -6,20 +6,16 @@
 // re-home the rest into their own game rows (reusing an existing same-slug game
 // if one exists — a cross-launcher merge). Returns the count of editions moved.
 const { slugify } = require('../services/metadata/titleMatcher');
+const { sameGameSlug } = require('../services/metadata/gameIdentity');
 
 // A legit game's editions/DLC share 1-2 Epic namespaces; anything spanning more
 // than this on ONE game is the mis-grouping signature.
 const NAMESPACE_THRESHOLD = 5;
-const MIN_SLUG = 4;
 
-// One slug is a prefix of the other on a word boundary, and the shared prefix is
-// itself meaningful (a 1-3 char overlap is not a real match).
+// Two slugs belong to the same game. Delegates to the shared sequel-aware rule so
+// the Epic repair also refuses to keep a sequel edition on the wrong game.
 function isPrefixRelated(a, b) {
-  const shorter = a.length <= b.length ? a : b;
-  const longer = a.length <= b.length ? b : a;
-  if (shorter.length < MIN_SLUG) return false;
-  return longer.startsWith(shorter) &&
-    (longer.length === shorter.length || longer[shorter.length] === '-');
+  return sameGameSlug(a, b);
 }
 
 function repairMisGroupedEditions(db) {
