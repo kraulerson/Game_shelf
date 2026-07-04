@@ -2,6 +2,7 @@ const { Router } = require('express');
 const authMiddleware = require('../middleware/auth');
 const { callOrchestrator, fetchAllGames } = require('../services/orchestrator');
 const { syncCrossLauncherExclusions } = require('../services/crossLauncherExclusions');
+const { fetchManualCoverage } = require('../services/manualCoverage');
 
 const router = Router();
 router.use(authMiddleware);
@@ -71,6 +72,19 @@ router.post('/sweep', (req, res) => forward(res, 'POST', '/api/v1/sweep', { data
 router.post('/cross-launcher-exclusions/sync', async (req, res) => {
   try {
     const result = await syncCrossLauncherExclusions(req.app.locals.db);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 503).json(err.body || { status: 'orchestrator_offline' });
+  }
+});
+
+// #222: coverage report for a manual-download launcher (GOG/Humble/Itch/Amazon).
+// Diffs the owned library against the game folders the orchestrator lists on the
+// lancache host, returning which owned games were never downloaded (missing).
+// :launcher is the on-disk folder name (e.g. GOG); its lowercase is the launcher.
+router.get('/manual-coverage/:launcher', async (req, res) => {
+  try {
+    const result = await fetchManualCoverage(req.app.locals.db, req.params.launcher);
     res.json(result);
   } catch (err) {
     res.status(err.status || 503).json(err.body || { status: 'orchestrator_offline' });
