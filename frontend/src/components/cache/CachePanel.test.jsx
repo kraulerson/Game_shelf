@@ -178,6 +178,53 @@ describe('CachePanel', () => {
     );
   });
 
+  it('stops polling /api/cache/jobs after the panel unmounts (#230 poll-loop leak)', async () => {
+    const games = {
+      games: [
+        {
+          id: 9,
+          platform: 'steam',
+          app_id: '730',
+          status: 'validation_failed',
+          blocked: false,
+          chunks_cached: 50,
+          chunks_total: 100,
+        },
+      ],
+    };
+    const fetchMock = vi.fn((url, opts) => {
+      if (/\/api\/cache\/games\/\d+\/validate$/.test(url) && opts?.method === 'POST') {
+        return Promise.resolve({ ok: true, json: async () => ({ job_id: 6 }) });
+      }
+      if (typeof url === 'string' && url.startsWith('/api/cache/jobs')) {
+        // Never terminal -> the loop would poll forever without an unmount guard.
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ jobs: [{ id: 6, kind: 'validate', state: 'running' }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => games });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { unmount } = wrap(<CachePanel editions={editions} />);
+    await screen.findByText('Partial · 50%');
+    await userEvent.click(screen.getByRole('button', { name: /^validate$/i }));
+    await screen.findByText('Validating…');
+
+    const jobsCalls = () =>
+      fetchMock.mock.calls.filter(
+        ([u]) => typeof u === 'string' && u.startsWith('/api/cache/jobs')
+      ).length;
+    await waitFor(() => expect(jobsCalls()).toBeGreaterThanOrEqual(1));
+
+    unmount();
+    const before = jobsCalls();
+    // Wait well past two poll intervals (1500ms each). A guarded loop makes at
+    // most one more (in-flight) request; an unguarded loop keeps firing.
+    await new Promise((r) => setTimeout(r, 1500 * 2 + 300));
+    expect(jobsCalls() - before).toBeLessThanOrEqual(1);
+  }, 10000);
+
   it('Prefill posts to the orchestrator game id', async () => {
     const fetchMock = vi
       .fn()

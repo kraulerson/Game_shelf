@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { CloudOff, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCacheStatus } from '../hooks/useCacheStatus';
@@ -22,6 +22,10 @@ export default function Cache() {
   const { isDegraded, isSkewed, version } = useCacheHealth();
   const [sweeping, setSweeping] = useState(false);
   const [sweepMsg, setSweepMsg] = useState('');
+  // #230: stop the sweep poll once this page unmounts so it doesn't keep firing
+  // /api/cache/jobs after the user navigates away.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   // Re-run every cache query on demand (one place to refresh the whole page).
   const retry = () =>
@@ -57,6 +61,7 @@ export default function Cache() {
 
   async function pollSweep() {
     for (let i = 0; i < SWEEP_MAX_POLLS; i++) {
+      if (!mountedRef.current) return; // #230: page unmounted — stop polling
       let job = null;
       try {
         const r = await fetch('/api/cache/jobs?kind=sweep&sort=id:desc&limit=1', {

@@ -31,4 +31,23 @@ describe('CacheStats', () => {
     const ones = await screen.findAllByText('1');
     expect(ones.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('shows a Partial tile counting validation_failed games separately from Failed (#230)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          games: [
+            { id: 1, platform: 'steam', app_id: '1', status: 'validation_failed', blocked: false },
+            { id: 2, platform: 'steam', app_id: '2', status: 'failed', blocked: false },
+          ],
+        }),
+      })
+    );
+    wrap(<CacheStats />);
+    // A dedicated Partial tile exists (distinct from Failed).
+    expect(await screen.findByText('Partial')).toBeInTheDocument();
+    expect(screen.getByText('Failed')).toBeInTheDocument();
+  });
 });

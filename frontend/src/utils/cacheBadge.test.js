@@ -115,14 +115,24 @@ describe('cacheCounts', () => {
       { status: 'up_to_date', blocked: true },
       { status: 'pending_update', blocked: false },
       { status: 'not_downloaded', blocked: false },
+      { status: 'validation_failed', blocked: false },
       { status: 'failed', blocked: false },
     ];
     expect(cacheCounts(games)).toEqual({
-      total: 5, cached: 2, update_ready: 1, not_cached: 1, failed: 1, blocked: 1,
+      total: 6, cached: 2, update_ready: 1, not_cached: 1, partial: 1, failed: 1, blocked: 1,
     });
   });
+  it('counts validation_failed as partial, not failed (matches the amber Partial badge, #230)', () => {
+    const c = cacheCounts([
+      { status: 'validation_failed', blocked: false },
+      { status: 'validation_failed', blocked: false },
+      { status: 'failed', blocked: false },
+    ]);
+    expect(c.partial).toBe(2);
+    expect(c.failed).toBe(1);
+  });
   it('empty -> zeros', () => {
-    expect(cacheCounts([])).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, failed: 0, blocked: 0 });
+    expect(cacheCounts([])).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, failed: 0, blocked: 0 });
   });
 });
 
@@ -162,6 +172,6 @@ describe('cacheCounts — malformed-entry tolerance (F17)', () => {
   });
 
   it('a non-array argument yields zeros', () => {
-    expect(cacheCounts(null)).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, failed: 0, blocked: 0 });
+    expect(cacheCounts(null)).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, failed: 0, blocked: 0 });
   });
 });
