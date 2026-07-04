@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const authMiddleware = require('../middleware/auth');
 const { callOrchestrator, fetchAllGames } = require('../services/orchestrator');
+const { syncCrossLauncherExclusions } = require('../services/crossLauncherExclusions');
 
 const router = Router();
 router.use(authMiddleware);
@@ -62,5 +63,18 @@ router.post('/platforms/:name/library/sync', (req, res) =>
 // dashboard's "Refresh cache status" button. Always requests a FULL sweep so
 // not-yet-validated games are included, not just the cached subset.
 router.post('/sweep', (req, res) => forward(res, 'POST', '/api/v1/sweep', { data: { full: true } }));
+
+// Piece 3: compute the Epic games already covered on Steam (a shared game_id with
+// a Steam edition) and push them to the orchestrator as gameshelf exclusions, so
+// its Epic scheduled prefill skips the redundant copies. Also runs on the daily
+// cron; this route is the on-demand trigger.
+router.post('/cross-launcher-exclusions/sync', async (req, res) => {
+  try {
+    const result = await syncCrossLauncherExclusions(req.app.locals.db);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 503).json(err.body || { status: 'orchestrator_offline' });
+  }
+});
 
 module.exports = router;

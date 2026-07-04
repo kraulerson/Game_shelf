@@ -36,6 +36,7 @@ const { runMigrations } = require('./db/migrate');
 const errorHandler = require('./middleware/errorHandler');
 const { syncAll } = require('./services/syncEngine');
 const { enrichAll } = require('./services/metadata/enrichGame');
+const { syncCrossLauncherExclusions } = require('./services/crossLauncherExclusions');
 
 // Routes
 const authRouter = require('./routes/auth');
@@ -93,12 +94,18 @@ if (require.main === module) {
     syncAll(db).catch(err => console.error('[Scheduler] syncAll error:', err.message));
   });
 
-  // Daily enrichment pass at 3 AM — retries under-enriched games
+  // Daily enrichment pass at 3 AM — retries under-enriched games, then pushes
+  // cross-launcher exclusions (an Epic game already on Steam is redundant to
+  // prefill on Epic). Runs AFTER enrichment because enrichment establishes the
+  // shared game_id links the exclusion query depends on. Orchestrator-offline is
+  // logged, not fatal.
   cron.schedule('0 3 * * *', () => {
     console.log('[Gameshelf Metadata] Starting scheduled daily enrichment');
     enrichAll(db)
       .then(result => console.log('[Gameshelf Metadata] Daily enrichment complete:', result))
-      .catch(err => console.error('[Gameshelf Metadata] Daily enrichment error:', err.message));
+      .then(() => syncCrossLauncherExclusions(db))
+      .then(r => console.log('[Gameshelf Cache] Cross-launcher exclusions pushed:', r))
+      .catch(err => console.error('[Gameshelf Metadata] Daily enrichment/exclusion error:', err.message));
   });
 
   app.listen(PORT, () => {

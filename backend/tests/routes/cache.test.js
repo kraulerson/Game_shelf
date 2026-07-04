@@ -213,4 +213,66 @@ describe('Cache proxy — orchestrator offline', () => {
   });
 });
 
+describe('Cache proxy — cross-launcher exclusions (Piece 3)', () => {
+  let appX, dbX, mockX, lastPut;
+  const dbPathX = path.join(__dirname, '..', 'data', 'test-cache-xlauncher.db');
+
+  before(async () => {
+    for (const s of ['', '-wal', '-shm']) { const f = dbPathX + s; if (fs.existsSync(f)) fs.unlinkSync(f); }
+    mockX = await new Promise((resolve) => {
+      const server = http.createServer((req, res) => {
+        let raw = '';
+        req.on('data', (c) => { raw += c; });
+        req.on('end', () => {
+          const body = raw ? JSON.parse(raw) : undefined;
+          if (req.method === 'PUT' && req.url === '/api/v1/prefill-exclusions/gameshelf/epic') {
+            lastPut = { url: req.url, body, auth: req.headers.authorization };
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ platform: 'epic', added: body.app_ids.length, removed: 0, total: body.app_ids.length }));
+          }
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ detail: 'not found' }));
+        });
+      });
+      server.listen(0, () => resolve({ server, url: `http://127.0.0.1:${server.address().port}` }));
+    });
+    process.env.GAMESHELF_ENCRYPTION_KEY = 'a]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
+    process.env.GAMESHELF_JWT_SECRET = JWT_SECRET;
+    process.env.GAMESHELF_DB_PATH = dbPathX;
+    process.env.NODE_ENV = 'test';
+    process.env.ORCH_API_URL = mockX.url;
+    process.env.ORCH_TOKEN = 'test-orch-token';
+    delete require.cache[require.resolve('../../src/server')];
+    ({ app: appX, db: dbX } = require('../../src/server'));
+    // A game owned on BOTH Steam and Epic -> the Epic copy ('epic-cs') is covered.
+    dbX.prepare("INSERT INTO launchers (id,name,display_name,enabled,priority) VALUES (1,'steam','Steam',1,1)").run();
+    dbX.prepare("INSERT INTO launchers (id,name,display_name,enabled,priority) VALUES (2,'epic','Epic',1,2)").run();
+    dbX.prepare("INSERT INTO games (id,title,slug) VALUES (10,'CS','cs')").run();
+    dbX.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title) VALUES (100,10,1,'440','CS (Steam)')").run();
+    dbX.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title) VALUES (101,10,2,'epic-cs','CS (Epic)')").run();
+  });
+  after(() => {
+    mockX.server.close();
+    for (const s of ['', '-wal', '-shm']) { const f = dbPathX + s; if (fs.existsSync(f)) fs.unlinkSync(f); }
+  });
+
+  it('POST /api/cache/cross-launcher-exclusions/sync pushes the covered Epic app_ids', async () => {
+    const res = await makeFetch(appX, '/api/cache/cross-launcher-exclusions/sync', {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.pushed, 1);
+    assert.equal(lastPut.url, '/api/v1/prefill-exclusions/gameshelf/epic');
+    assert.deepEqual(lastPut.body, { app_ids: ['epic-cs'] });
+    assert.equal(lastPut.auth, 'Bearer test-orch-token'); // token injected server-side
+  });
+
+  it('rejects unauthenticated requests with 401', async () => {
+    const res = await makeFetch(appX, '/api/cache/cross-launcher-exclusions/sync', { method: 'POST' });
+    assert.equal(res.status, 401);
+  });
+});
+
 module.exports = { startMock, authCookie, makeFetch };
