@@ -132,5 +132,16 @@ describe('Title matcher', () => {
       const match = findBestMatch('MechWarrior 5', results);
       assert.equal(match, null, 'Should not boost without word boundary');
     });
+
+    it('should NOT prefix-boost a sequel (numeric/roman tail)', () => {
+      // Levenshtein("doom","doom-64") ~0.57; only the old prefix boost pushed it
+      // to 0.80 and wrongly matched. A numeric tail is a sequel, not a subtitle.
+      assert.equal(findBestMatch('Doom', [{ name: 'Doom 64', id: 1 }]), null);
+    });
+
+    it('should still prefix-boost a true edition (word tail)', () => {
+      const match = findBestMatch('Darksiders II', [{ name: 'Darksiders II: Deathinitive Edition', id: 1 }]);
+      assert.ok(match && match.id === 1, 'edition subtitle should still boost-match');
+    });
   });
 });

@@ -1,6 +1,7 @@
 const igdbClient = require('./igdbClient');
 const steamgriddbClient = require('./steamgriddbClient');
 const { normalize, simplifyTitle, slugify, findBestMatch } = require('./titleMatcher');
+const { sameGameSlug } = require('./gameIdentity');
 const { cacheImage } = require('./imageCache');
 
 function sleep(ms) {
@@ -155,14 +156,10 @@ async function enrichGame(gameEditionId, db) {
       ORDER BY length(g.slug) DESC LIMIT 5
     `).all(slug, slug) : [];
 
-    // Verify prefix match on word boundary; the shared prefix must itself be a
-    // meaningful length (a 1-3 char overlap is not a real cross-launcher match).
-    const validCross = crossMatch.find(g => {
-      const shorter = slug.length <= g.slug.length ? slug : g.slug;
-      const longer = slug.length <= g.slug.length ? g.slug : slug;
-      if (shorter.length < MIN_CROSS_SLUG) return false;
-      return longer.startsWith(shorter) && (longer.length === shorter.length || longer[shorter.length] === '-');
-    });
+    // Same game only — sameGameSlug rejects a sequel (numeric/roman tail), so
+    // "Portal" no longer cross-matches onto an existing "Portal 2" game. Its own
+    // MIN_BASE=4 guard subsumes the meaningful-length check above.
+    const validCross = crossMatch.find(g => sameGameSlug(slug, g.slug));
 
     if (validCross) {
       console.log(`[Gameshelf Metadata] Cross-launcher match: "${title}" → existing "${validCross.title}"`);
