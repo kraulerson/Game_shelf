@@ -22,8 +22,14 @@ export default function GameCard({ game }) {
   const playtime = formatPlaytime(game.playtime_minutes);
 
   const { statusFor, isOffline } = useCacheStatus();
-  const platform = launcherToPlatform(game.launcher_name);
-  const cache = platform ? statusFor(platform, game.launcher_game_id) : undefined;
+  // #223/#224: the cache badge follows the highest-priority owned launcher
+  // (cache_launcher_*), not the display edition's launcher — a game cached on
+  // Steam but displayed as its Epic edition must still read as cached. Falls
+  // back to the display launcher for older API responses.
+  const platform = launcherToPlatform(game.cache_launcher_name || game.launcher_name);
+  const cache = platform
+    ? statusFor(platform, game.cache_launcher_game_id || game.launcher_game_id)
+    : undefined;
 
   return (
     <div

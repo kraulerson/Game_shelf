@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const pathMod = require('node:path');
 const authMiddleware = require('../middleware/auth');
 const { getCacheStatusSnapshot } = require('../services/cacheSnapshot');
+const { resolveCacheLauncher } = require('../services/cacheLauncher');
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -573,6 +574,12 @@ router.get('/', async (req, res) => {
     const genres = gameId ? genresStmt.all(gameId).map(r => r.name) : [];
     const tags = gameId ? tagsStmt.all(gameId).map(r => r.name) : [];
 
+    // #223/#224: the cache badge must follow the highest-priority owned launcher
+    // (respecting the manual is_display_edition override), not the display
+    // edition (which is tier-driven). For an ungrouped single edition (no
+    // gameId) the display launcher IS the only launcher, so fall back to it.
+    const cacheLauncher = gameId ? resolveCacheLauncher(db, gameId) : null;
+
     return {
       id: gameId,
       title: row.title || row.r_title || row.launcher_game_id,
@@ -589,6 +596,9 @@ router.get('/', async (req, res) => {
       launcher_name: row.launcher_name,
       launcher_display_name: row.launcher_display_name,
       launcher_game_id: row.launcher_game_id,
+      // Launcher whose cache status the badge should reflect (#223/#224).
+      cache_launcher_name: cacheLauncher?.launcher_name || row.launcher_name,
+      cache_launcher_game_id: cacheLauncher?.launcher_game_id || row.launcher_game_id,
       display_edition_title: row.display_edition_title || row.r_title,
       display_tier: row.display_tier || 0,
       platforms: platformsList.length > 0 ? platformsList : [{
