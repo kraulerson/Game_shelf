@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import CacheBadge from './CacheBadge';
 import { useCacheStatus } from '../../hooks/useCacheStatus';
@@ -23,6 +23,11 @@ export default function CachePanel({ editions = [] }) {
   const [validating, setValidating] = useState({});
   // orchId -> true while a force-prefill (Repair) job for that game is in flight.
   const [forcing, setForcing] = useState({});
+  // #230: a poll loop must stop once the panel unmounts, or it keeps firing
+  // /api/cache/jobs after the user navigates away. Canonical React pattern
+  // (useEffect cleanup flips a ref the async loop checks each iteration).
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const tracked = editions
     .map((e) => ({ e, platform: launcherToPlatform(e.launcher_name) }))
@@ -84,6 +89,7 @@ export default function CachePanel({ editions = [] }) {
     const interval = kind === 'prefill' ? PREFILL_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
     const maxPolls = kind === 'prefill' ? PREFILL_MAX_POLLS : MAX_POLLS;
     for (let i = 0; i < maxPolls; i++) {
+      if (!mountedRef.current) return; // #230: panel unmounted — stop polling
       let job = null;
       try {
         const r = await fetch(

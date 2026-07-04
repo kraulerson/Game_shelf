@@ -49,7 +49,7 @@ export function cacheBadgeFor({ status, blocked, tracked, offline, chunksCached,
 // Tally a games list into the user-facing buckets shown on the dashboard stats.
 export function cacheCounts(games = []) {
   const list = Array.isArray(games) ? games : [];
-  const c = { total: 0, cached: 0, update_ready: 0, not_cached: 0, failed: 0, blocked: 0 };
+  const c = { total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, failed: 0, blocked: 0 };
   for (const g of list) {
     if (!g || typeof g !== 'object') continue; // tolerate malformed rows
     c.total += 1;
@@ -57,7 +57,11 @@ export function cacheCounts(games = []) {
     if (g.status === 'up_to_date') c.cached += 1;
     else if (g.status === 'pending_update') c.update_ready += 1;
     else if (g.status === 'not_downloaded') c.not_cached += 1;
-    else if (g.status === 'failed' || g.status === 'validation_failed') c.failed += 1;
+    // #230: validation_failed renders as the amber "Partial · N%" badge, so it
+    // must tally under `partial`, NOT `failed` — else the tile and the badge
+    // disagree for the same game. Only a true `failed` counts as failed.
+    else if (g.status === 'validation_failed') c.partial += 1;
+    else if (g.status === 'failed') c.failed += 1;
   }
   return c;
 }
