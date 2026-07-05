@@ -41,10 +41,28 @@ describe('manualCoverage.folderSlug + computeManualCoverage', () => {
     assert.deepEqual(r.missing, []);
   });
 
-  it('lists downloaded folders that match no owned game as extra_folders', () => {
+  it('lists downloaded folders that match no owned game as extra_folders (by name)', () => {
     const games = [{ id: 1, title: 'Trine 2', slug: 'trine-2' }];
-    const r = computeManualCoverage(games, ['trine_2', 'some_random_game']);
-    assert.deepEqual(r.extra_folders, ['some-random-game']);
+    const r = computeManualCoverage(games, ['trine_2', 'some_unowned_title']);
+    assert.deepEqual(r.extra_folders, ['some_unowned_title']);
+  });
+
+  it('matches a GOG folder with a _game / _base suffix', () => {
+    const games = [
+      { id: 1, title: 'Doom 3: BFG Edition', slug: 'doom-3-bfg-edition' },
+      { id: 2, title: 'Blade of Darkness', slug: 'blade-of-darkness' },
+    ];
+    const r = computeManualCoverage(games, ['doom_3_bfg_edition_game', 'blade_of_darkness_base']);
+    assert.equal(r.present, 2);
+    assert.deepEqual(r.missing, []);
+  });
+
+  it('still matches a game literally named "…Game" via the full folder form', () => {
+    // Stripping _game must NOT break 'treasure_adventure_game' <-> "Treasure Adventure Game".
+    const games = [{ id: 1, title: 'Treasure Adventure Game', slug: 'treasure-adventure-game' }];
+    const r = computeManualCoverage(games, ['treasure_adventure_game']);
+    assert.equal(r.present, 1);
+    assert.deepEqual(r.missing, []);
   });
 
   it('handles an empty folder list (everything missing)', () => {

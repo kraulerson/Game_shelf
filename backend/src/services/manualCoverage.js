@@ -16,6 +16,22 @@ function folderSlug(name) {
   return slugify(String(name).replace(/[_-]+/g, ' '));
 }
 
+// GOG names its download folders `<slug>_game` or `<slug>_base`
+// (doom_3_bfg_edition_game, blade_of_darkness_base) — a suffix the game title
+// doesn't carry. So a folder contributes BOTH its full slug AND a
+// suffix-stripped slug. Both are kept (not just the stripped one) so a game
+// literally named "…Game" (e.g. "Treasure Adventure Game" → folder
+// 'treasure_adventure_game') still matches via the full form.
+const _GOG_FOLDER_SUFFIX = /_(?:game|base|gog)$/i;
+
+function folderSlugForms(name) {
+  const full = folderSlug(name);
+  const stripped = folderSlug(String(name).replace(_GOG_FOLDER_SUFFIX, ''));
+  const forms = [full];
+  if (stripped && stripped !== full) forms.push(stripped);
+  return forms.filter(Boolean);
+}
+
 // Owned games (id/title/slug + edition title) that have an edition on
 // `launcherName` (the lowercase Game_shelf launcher name).
 function ownedGamesForLauncher(db, launcherName) {
@@ -31,28 +47,32 @@ function ownedGamesForLauncher(db, launcherName) {
 }
 
 // Diff the owned library against the downloaded folder names. Returns
-// { total_owned, present, missing:[{id,title,slug}], extra_folders:[slug] }.
+// { total_owned, present, missing:[{id,title,slug}], extra_folders:[folderName] }.
 function computeManualCoverage(games, folderNames) {
-  const folderSlugs = new Set((folderNames || []).map(folderSlug).filter(Boolean));
-  const usedFolders = new Set();
+  // Each folder contributes 1-2 slug forms (full + GOG-suffix-stripped).
+  const folders = (folderNames || []).map((name) => ({ name, forms: folderSlugForms(name) }));
+  const allForms = new Set(folders.flatMap((f) => f.forms));
+  const usedForms = new Set();
   const missing = [];
   let present = 0;
   for (const g of games) {
-    // A game is present if any of its identifiers slugifies to a folder — the
-    // canonical slug, the title, or the launcher edition title (all the SAME
+    // A game is present if any of its identifiers slugifies to a folder form —
+    // the canonical slug, the title, or the launcher edition title (all the SAME
     // game, so no cross-game false positive).
     const candidates = [g.slug, g.title, g.edition_title]
       .filter(Boolean)
       .map((c) => (c === g.slug ? c : slugify(c)));
-    const match = candidates.find((s) => folderSlugs.has(s));
+    const match = candidates.find((s) => allForms.has(s));
     if (match) {
       present += 1;
-      usedFolders.add(match);
+      usedForms.add(match);
     } else {
       missing.push({ id: g.id, title: g.title, slug: g.slug });
     }
   }
-  const extra_folders = [...folderSlugs].filter((s) => !usedFolders.has(s));
+  // Folders whose every slug form went unmatched (downloaded but unrecognized).
+  // Report the ORIGINAL folder name so the operator can cross-reference by eye.
+  const extra_folders = folders.filter((f) => !f.forms.some((s) => usedForms.has(s))).map((f) => f.name);
   return { total_owned: games.length, present, missing, extra_folders };
 }
 
@@ -72,4 +92,10 @@ async function fetchManualCoverage(db, launcherFolder, { client = orchestrator }
   return { launcher: launcherFolder, present_folder: Boolean(data.present), ...report };
 }
 
-module.exports = { folderSlug, ownedGamesForLauncher, computeManualCoverage, fetchManualCoverage };
+module.exports = {
+  folderSlug,
+  folderSlugForms,
+  ownedGamesForLauncher,
+  computeManualCoverage,
+  fetchManualCoverage,
+};
