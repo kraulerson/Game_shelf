@@ -23,6 +23,10 @@ export default function CachePanel({ editions = [] }) {
   const [validating, setValidating] = useState({});
   // orchId -> true while a force-prefill (Repair) job for that game is in flight.
   const [forcing, setForcing] = useState({});
+  // orchId -> true while a purge (Delete from cache) job for that game is in flight.
+  const [purging, setPurging] = useState({});
+  // { orchId, label } of the game whose purge is awaiting confirmation, or null.
+  const [confirmPurge, setConfirmPurge] = useState(null);
   // #230: a poll loop must stop once the panel unmounts, or it keeps firing
   // /api/cache/jobs after the user navigates away. Canonical React pattern
   // (useEffect cleanup flips a ref the async loop checks each iteration).
@@ -85,6 +89,29 @@ export default function CachePanel({ editions = [] }) {
     }
   }
 
+  // Delete from cache = purge: the orchestrator deletes this game's cached chunks
+  // and flags it for re-prefill (the chunks re-download from the source next cycle).
+  // Reversible, but destructive enough to gate behind a confirm dialog. Enqueues a
+  // purge job and polls it to completion like Validate.
+  async function purge(orchId) {
+    setConfirmPurge(null);
+    setPurging((v) => ({ ...v, [orchId]: true }));
+    try {
+      const res = await fetch(`/api/cache/games/${orchId}/purge`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (res.ok) await pollJob(orchId, 'purge');
+    } finally {
+      setPurging((v) => {
+        const next = { ...v };
+        delete next[orchId];
+        return next;
+      });
+      invalidate();
+    }
+  }
+
   async function pollJob(orchId, kind) {
     const interval = kind === 'prefill' ? PREFILL_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
     const maxPolls = kind === 'prefill' ? PREFILL_MAX_POLLS : MAX_POLLS;
@@ -136,6 +163,7 @@ export default function CachePanel({ editions = [] }) {
           const orchId = cache?.id;
           const isValidating = Boolean(orchId && validating[orchId]);
           const isForcing = Boolean(orchId && forcing[orchId]);
+          const isPurging = Boolean(orchId && purging[orchId]);
           return (
             <div key={e.id} className="flex items-center gap-3">
               <span className="w-24 text-sm text-gray-400">{e.launcher_display_name || e.launcher_name}</span>
@@ -189,11 +217,48 @@ export default function CachePanel({ editions = [] }) {
                     {isForcing ? 'Re-downloading…' : 'Complete Re-download'}
                   </button>
                 )}
+                <button
+                  className={`${btn} bg-red-800 hover:bg-red-700`}
+                  disabled={isOffline || !orchId || isPurging}
+                  onClick={() =>
+                    setConfirmPurge({ orchId, label: e.launcher_display_name || e.launcher_name })
+                  }
+                  title="Delete this game's cached files. The game stays owned and re-downloads from the source on the next prefill."
+                >
+                  {isPurging ? 'Deleting…' : 'Delete from cache'}
+                </button>
               </div>
             </div>
           );
         })}
       </div>
+
+      {confirmPurge && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-5 max-w-sm w-full">
+            <h4 className="text-sm font-semibold text-white mb-2">Delete from cache?</h4>
+            <p className="text-gray-400 text-sm mb-4">
+              Delete <span className="text-gray-200">{confirmPurge.label}</span>&apos;s cached
+              files? This is reversible — the game stays owned and re-downloads from the source on
+              the next prefill.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmPurge(null)}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-sm rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => purge(confirmPurge.orchId)}
+                className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-sm rounded"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -225,6 +225,62 @@ describe('CachePanel', () => {
     expect(jobsCalls() - before).toBeLessThanOrEqual(1);
   }, 10000);
 
+  it('Delete from cache is confirm-gated, then posts purge and polls the job', async () => {
+    const games = {
+      games: [{ id: 9, platform: 'steam', app_id: '730', status: 'up_to_date', blocked: false }],
+    };
+    const fetchMock = vi.fn((url, opts) => {
+      if (/\/api\/cache\/games\/\d+\/purge$/.test(url) && opts?.method === 'POST') {
+        return Promise.resolve({ ok: true, json: async () => ({ job_id: 9 }) });
+      }
+      if (typeof url === 'string' && url.startsWith('/api/cache/jobs')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ jobs: [{ id: 9, kind: 'purge', state: 'succeeded' }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => games });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    wrap(<CachePanel editions={editions} />);
+    await screen.findByText('Cached');
+
+    // Clicking the trigger opens a confirm — it does NOT purge yet.
+    await userEvent.click(screen.getByRole('button', { name: /delete from cache/i }));
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      '/api/cache/games/9/purge',
+      expect.anything()
+    );
+
+    // Confirming fires the purge + polls kind=purge.
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/cache/games/9/purge',
+        expect.objectContaining({ method: 'POST' })
+      )
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/cache/jobs?game_id=9&kind=purge'),
+      expect.anything()
+    );
+  });
+
+  it('Delete from cache can be cancelled without purging', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        games: [{ id: 9, platform: 'steam', app_id: '730', status: 'up_to_date', blocked: false }],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    wrap(<CachePanel editions={editions} />);
+    await screen.findByText('Cached');
+    await userEvent.click(screen.getByRole('button', { name: /delete from cache/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/cache/games/9/purge', expect.anything());
+  });
+
   it('Prefill posts to the orchestrator game id', async () => {
     const fetchMock = vi
       .fn()

@@ -49,6 +49,7 @@ function startMock() {
       if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/prefill(\?|$)/.test(req.url)) return send(202, { job_id: 5 });
       if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/validate$/.test(req.url)) return send(202, { job_id: 6 });
       if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/manifest\/fetch$/.test(req.url)) return send(202, { job_id: 7 });
+      if (req.method === 'POST' && /\/api\/v1\/games\/\d+\/purge$/.test(req.url)) return send(202, { job_id: 9 });
       if (req.method === 'POST' && /\/api\/v1\/platforms\/\w+\/library\/sync$/.test(req.url)) return send(202, { job_id: 8 });
       send(404, { detail: 'not found' });
     }
@@ -143,6 +144,17 @@ describe('Cache proxy routes', () => {
       assert.equal(res.status, 202, action);
       assert.equal(lastReq.url, `/api/v1/games/5/${action}`);
     }
+  });
+
+  it('POST /api/cache/games/:id/purge proxies the destructive cache purge', async () => {
+    const res = await makeFetch(app, '/api/cache/games/5/purge', {
+      method: 'POST',
+      headers: { Cookie: authCookie() },
+    });
+    assert.equal(res.status, 202);
+    assert.equal(lastReq.url, '/api/v1/games/5/purge');
+    const body = await res.json();
+    assert.equal(body.job_id, 9);
   });
 
   it('POST /api/cache/games/:id/prefill?force=true threads force to the orchestrator', async () => {
