@@ -50,7 +50,10 @@ router.post('/games/:id/prefill', (req, res) =>
     params: req.query,
   })
 );
-for (const action of ['validate', 'manifest/fetch']) {
+// purge is destructive but reversible — it deletes a game's cached chunks and the
+// orchestrator flags it for re-prefill (the chunks re-download from the CDN). Same
+// no-params POST shape as validate.
+for (const action of ['validate', 'manifest/fetch', 'purge']) {
   router.post(`/games/:id/${action}`, (req, res) =>
     forward(res, 'POST', `/api/v1/games/${encodeURIComponent(req.params.id)}/${action}`)
   );
