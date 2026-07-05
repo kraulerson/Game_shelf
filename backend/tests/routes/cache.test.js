@@ -275,4 +275,58 @@ describe('Cache proxy — cross-launcher exclusions (Piece 3)', () => {
   });
 });
 
+describe('Cache proxy — manual-download coverage (#222)', () => {
+  let appM, dbM, mockM;
+  const dbPathM = path.join(__dirname, '..', 'data', 'test-cache-manual.db');
+
+  before(async () => {
+    for (const s of ['', '-wal', '-shm']) { const f = dbPathM + s; if (fs.existsSync(f)) fs.unlinkSync(f); }
+    mockM = await new Promise((resolve) => {
+      const server = http.createServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/api/v1/manual-downloads/GOG') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ launcher: 'GOG', present: true, entries: ['trine_2'] }));
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ detail: 'not found' }));
+      });
+      server.listen(0, () => resolve({ server, url: `http://127.0.0.1:${server.address().port}` }));
+    });
+    process.env.GAMESHELF_ENCRYPTION_KEY = 'a]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
+    process.env.GAMESHELF_JWT_SECRET = JWT_SECRET;
+    process.env.GAMESHELF_DB_PATH = dbPathM;
+    process.env.NODE_ENV = 'test';
+    process.env.ORCH_API_URL = mockM.url;
+    process.env.ORCH_TOKEN = 'test-orch-token';
+    delete require.cache[require.resolve('../../src/server')];
+    ({ app: appM, db: dbM } = require('../../src/server'));
+    dbM.prepare("INSERT INTO launchers (id,name,display_name,enabled,priority) VALUES (5,'gog','GOG',1,3)").run();
+    // Two owned GOG games: Trine 2 has a folder; Baldurs Gate 3 does not.
+    dbM.prepare("INSERT INTO games (id,title,slug) VALUES (1,'Trine 2','trine-2')").run();
+    dbM.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title,owned) VALUES (10,1,5,'g1','Trine 2',1)").run();
+    dbM.prepare("INSERT INTO games (id,title,slug) VALUES (2,'Baldurs Gate 3','baldurs-gate-3')").run();
+    dbM.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title,owned) VALUES (11,2,5,'g2','Baldurs Gate 3',1)").run();
+  });
+  after(() => {
+    mockM.server.close();
+    for (const s of ['', '-wal', '-shm']) { const f = dbPathM + s; if (fs.existsSync(f)) fs.unlinkSync(f); }
+  });
+
+  it('GET /api/cache/manual-coverage/GOG reports present + missing', async () => {
+    const res = await makeFetch(appM, '/api/cache/manual-coverage/GOG', { headers: { Cookie: authCookie() } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.launcher, 'GOG');
+    assert.equal(body.total_owned, 2);
+    assert.equal(body.present, 1);
+    assert.equal(body.missing.length, 1);
+    assert.equal(body.missing[0].title, 'Baldurs Gate 3');
+  });
+
+  it('rejects unauthenticated requests with 401', async () => {
+    const res = await makeFetch(appM, '/api/cache/manual-coverage/GOG');
+    assert.equal(res.status, 401);
+  });
+});
+
 module.exports = { startMock, authCookie, makeFetch };
