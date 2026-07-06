@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS game_editions (
   epic_namespace TEXT,
   epic_catalog_id TEXT,
   sandbox_type TEXT,
+  gog_slug TEXT,
   parent_edition_id INTEGER REFERENCES game_editions(id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,

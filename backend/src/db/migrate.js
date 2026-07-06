@@ -279,6 +279,13 @@ function runMigrations(dbPath) {
     console.log('[Migration] #225: added edition_tiers.is_prefill_edition');
   }
 
+  // #222: GOG product slug for exact manual-download folder matching.
+  const geColsGog = db.pragma('table_info(game_editions)');
+  if (!geColsGog.some((c) => c.name === 'gog_slug')) {
+    db.exec('ALTER TABLE game_editions ADD COLUMN gog_slug TEXT');
+    console.log('[Migration] #222: added game_editions.gog_slug');
+  }
+
   return db;
 }
 

@@ -19,7 +19,7 @@ const editions = [
 ];
 
 describe('CachePanel', () => {
-  it('renders a row per TRACKED edition with its badge (gog excluded)', async () => {
+  it('renders a tracked (lancache) row and a manual (GOG) row — #222', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -32,7 +32,9 @@ describe('CachePanel', () => {
     wrap(<CachePanel editions={editions} />);
     expect(await screen.findByText('Cached')).toBeInTheDocument();
     expect(screen.getByText('Steam')).toBeInTheDocument();
-    expect(screen.queryByText('GOG')).not.toBeInTheDocument(); // untracked excluded
+    // #222: GOG (a manual-download launcher) now renders as its own read-only row
+    // rather than being excluded from the panel.
+    expect(screen.getByText('GOG')).toBeInTheDocument();
   });
 
   it('renders "Partial · N%" for a validation_failed edition with chunk counts', async () => {
@@ -301,5 +303,27 @@ describe('CachePanel', () => {
         expect.objectContaining({ method: 'POST' })
       )
     );
+  });
+
+  it('renders a read-only Downloaded row for a GOG edition (no lancache buttons) — #222', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [] }) }));
+    const gogEditions = [
+      { id: 21, launcher_name: 'gog', launcher_game_id: '123', launcher_display_name: 'GOG' },
+    ];
+    wrap(<CachePanel editions={gogEditions} downloadStatus="downloaded" />);
+    expect(await screen.findByText('Downloaded')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^prefill$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^validate$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delete from cache/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^block$/i })).not.toBeInTheDocument();
+  });
+
+  it('renders Not downloaded for a GOG edition with download_status not_downloaded — #222', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [] }) }));
+    const gogEditions = [
+      { id: 22, launcher_name: 'gog', launcher_game_id: '456', launcher_display_name: 'GOG' },
+    ];
+    wrap(<CachePanel editions={gogEditions} downloadStatus="not_downloaded" />);
+    expect(await screen.findByText('Not downloaded')).toBeInTheDocument();
   });
 });

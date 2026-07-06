@@ -77,6 +77,32 @@ describe('GameCard cache badge', () => {
     expect(await screen.findByText('—')).toBeInTheDocument();
   });
 
+  it('shows "Downloaded" for a downloaded GOG game (#222)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [] }) }));
+    renderCard({
+      id: 4,
+      title: 'GOG Game',
+      launcher_name: 'gog',
+      launcher_game_id: 'g4',
+      download_status: 'downloaded',
+      platforms: [{ launcher_name: 'gog' }],
+    });
+    expect(await screen.findByText('Downloaded')).toBeInTheDocument();
+  });
+
+  it('shows "Not downloaded" for an owned-but-missing GOG game (#222)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [] }) }));
+    renderCard({
+      id: 5,
+      title: 'GOG Game 2',
+      launcher_name: 'gog',
+      launcher_game_id: 'g5',
+      download_status: 'not_downloaded',
+      platforms: [{ launcher_name: 'gog' }],
+    });
+    expect(await screen.findByText('Not downloaded')).toBeInTheDocument();
+  });
+
   it('renders the cache badge in the info block, not as an absolute art overlay', async () => {
     vi.stubGlobal(
       'fetch',

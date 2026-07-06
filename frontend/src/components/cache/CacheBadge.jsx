@@ -43,8 +43,12 @@ export default function CacheBadge({
   chunksCached,
   chunksTotal,
   size = 'default',
+  badge,
 }) {
-  const { icon, tone, label } = cacheBadgeFor({ status, blocked, tracked, offline, chunksCached, chunksTotal });
+  // `badge` is a pre-computed { icon, tone, label } descriptor (e.g. a GOG
+  // manual-download badge). When provided it overrides the lancache cache-status
+  // computation; otherwise the badge is derived from the cache status.
+  const { icon, tone, label } = badge || cacheBadgeFor({ status, blocked, tracked, offline, chunksCached, chunksTotal });
   const Icon = ICONS[icon];
   const sizeClasses = size === 'small' ? 'text-xs px-1.5 py-0.5 gap-0.5' : 'text-sm px-2.5 py-0.5 gap-1';
   return (

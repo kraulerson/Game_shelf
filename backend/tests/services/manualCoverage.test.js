@@ -137,3 +137,39 @@ describe('manualCoverage.fetchManualCoverage', () => {
     assert.equal(r.total_owned, 0); // no humble launcher owned games seeded
   });
 });
+
+describe('manualCoverage exact gog_slug match + downloadedGameIds', () => {
+  const { computeManualCoverage, computeDownloadedIds } = require('../../src/services/manualCoverage');
+
+  it('matches on gog_slug even when title/slug would not', () => {
+    // title "Baldur's Gate II: Enhanced Edition" slugifies to baldurs-gate-ii...,
+    // which does NOT equal the folder slug — only gog_slug does.
+    const games = [
+      { id: 1, title: "Baldur's Gate II: Enhanced Edition", slug: 'baldurs-gate-ii-ee', edition_title: null, gog_slug: 'baldurs_gate_2_enhanced_edition' },
+    ];
+    const r = computeManualCoverage(games, ['baldurs_gate_2_enhanced_edition']);
+    assert.equal(r.present, 1);
+    assert.equal(r.missing.length, 0);
+  });
+
+  it('matches gog_slug against a folder carrying a _game/_base suffix', () => {
+    const games = [{ id: 1, title: 'X', slug: 'x', edition_title: null, gog_slug: 'blade_of_darkness' }];
+    const r = computeManualCoverage(games, ['blade_of_darkness_base']);
+    assert.equal(r.present, 1);
+  });
+
+  it('falls back to fuzzy title-slug match when gog_slug is null', () => {
+    const games = [{ id: 2, title: 'Ancient Enemy', slug: 'a96de508', edition_title: null, gog_slug: null }];
+    const r = computeManualCoverage(games, ['ancient_enemy']);
+    assert.equal(r.present, 1);
+  });
+
+  it('computeDownloadedIds returns exactly the matched owned game ids', () => {
+    const games = [
+      { id: 1, title: 'X', slug: 'x', edition_title: null, gog_slug: 'baldurs_gate_2_enhanced_edition' },
+      { id: 2, title: 'Missing Game', slug: 'missing-game', edition_title: null, gog_slug: 'missing_game' },
+    ];
+    const ids = computeDownloadedIds(games, ['baldurs_gate_2_enhanced_edition']);
+    assert.deepEqual([...ids], [1]);
+  });
+});

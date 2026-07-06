@@ -6,6 +6,8 @@ const authMiddleware = require('../middleware/auth');
 const { getCacheStatusSnapshot } = require('../services/cacheSnapshot');
 const { resolveCacheLauncher } = require('../services/cacheLauncher');
 const { syncCrossLauncherExclusions } = require('../services/crossLauncherExclusions');
+const { downloadedGameIds } = require('../services/manualCoverage');
+const { getManualDownloadsSnapshot } = require('../services/manualCoverageSnapshot');
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -77,13 +79,23 @@ router.get('/filters', (req, res) => {
 });
 
 // GET /api/games/:id
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   const db = req.app.locals.db;
   const { id } = req.params;
 
   const game = db.prepare('SELECT * FROM games WHERE id = ?').get(id);
   if (!game) {
     return res.status(404).json({ error: 'Game not found' });
+  }
+
+  // #222: GOG manual-download status for this game (only if it has a GOG edition).
+  const hasGog = db.prepare(
+    "SELECT 1 FROM game_editions ge JOIN launchers l ON l.id = ge.launcher_id WHERE ge.game_id = ? AND l.name = 'gog' LIMIT 1"
+  ).get(id);
+  let download_status = null;
+  if (hasGog) {
+    const { entries: gogFolders } = await getManualDownloadsSnapshot('GOG');
+    download_status = downloadedGameIds(db, 'gog', gogFolders).has(Number(id)) ? 'downloaded' : 'not_downloaded';
   }
 
   // Get all editions with launcher and tier info
@@ -156,6 +168,7 @@ router.get('/:id', (req, res) => {
     tags,
     editions: editionsWithTier,
     has_prefill_choice,
+    download_status,
     dlc,
   });
 });
@@ -387,7 +400,7 @@ router.get('/', async (req, res) => {
     search, genre, tag, launcher, sort = 'title_asc',
     page = '1', limit = '100', duplicates, starts_with,
     release_year_min, release_year_max, playtime_min, playtime_max,
-    owned = 'true', cache_status,
+    owned = 'true', cache_status, download_status,
   } = req.query;
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -488,6 +501,34 @@ router.get('/', async (req, res) => {
       )`);
       outerParams.push(...existsParams);
     }
+  }
+
+  // #222: GOG manual-download status (a SEPARATE facet from lancache cache_status).
+  // Compute the downloaded-game set + the set of games that HAVE a GOG edition, for
+  // per-row surfacing; build a temp table only when the download_status filter is set.
+  const { entries: gogFolders } = await getManualDownloadsSnapshot('GOG');
+  const downloadedIds = downloadedGameIds(db, 'gog', gogFolders);
+  const gogGameIds = new Set(
+    db.prepare(
+      "SELECT DISTINCT ge.game_id AS id FROM game_editions ge JOIN launchers l ON l.id = ge.launcher_id WHERE l.name = 'gog' AND ge.game_id IS NOT NULL"
+    ).all().map((r) => r.id)
+  );
+  if (download_status) {
+    const dlStatuses = [...new Set(download_status.split(',').map((s) => s.trim()).filter(Boolean))];
+    db.exec('CREATE TEMP TABLE IF NOT EXISTS _manual_downloaded(game_id INTEGER PRIMARY KEY)');
+    db.exec('DELETE FROM _manual_downloaded');
+    const insDl = db.prepare('INSERT OR IGNORE INTO _manual_downloaded(game_id) VALUES (?)');
+    db.transaction((ids) => { for (const id of ids) insDl.run(id); })([...downloadedIds]);
+    const parts = [];
+    if (dlStatuses.includes('downloaded')) {
+      parts.push('g.id IN (SELECT game_id FROM _manual_downloaded)');
+    }
+    if (dlStatuses.includes('not_downloaded')) {
+      parts.push(
+        "(g.id IN (SELECT ge2.game_id FROM game_editions ge2 JOIN launchers l2 ON l2.id = ge2.launcher_id WHERE l2.name = 'gog') AND g.id NOT IN (SELECT game_id FROM _manual_downloaded))"
+      );
+    }
+    if (parts.length > 0) outerConditions.push('(' + parts.join(' OR ') + ')');
   }
 
   const outerWhere = outerConditions.length > 0 ? 'AND ' + outerConditions.join(' AND ') : '';
@@ -640,8 +681,15 @@ router.get('/', async (req, res) => {
     // gameId) the display launcher IS the only launcher, so fall back to it.
     const cacheLauncher = gameId ? resolveCacheLauncher(db, gameId) : null;
 
+    // #222: GOG manual-download status — 'downloaded' / 'not_downloaded' for a game
+    // with a GOG edition, else null (not a manual-launcher game).
+    const download_status = gogGameIds.has(gameId)
+      ? (downloadedIds.has(gameId) ? 'downloaded' : 'not_downloaded')
+      : null;
+
     return {
       id: gameId,
+      download_status,
       title: row.title || row.r_title || row.launcher_game_id,
       slug: row.slug,
       cover_url: row.cover_url,

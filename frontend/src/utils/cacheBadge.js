@@ -46,6 +46,16 @@ export function cacheBadgeFor({ status, blocked, tracked, offline, chunksCached,
   return STATUS_MAP[status] || STATUS_MAP.unknown;
 }
 
+// Manual-download launchers (GOG/Humble/Itch/Amazon) aren't lancache-cached —
+// they have a downloaded/not-downloaded status instead of a cache status. This is
+// a SEPARATE badge path from cacheBadgeFor (which is lancache-only); GOG must NOT
+// be added to TRACKED_LAUNCHERS (that would render lancache action buttons).
+export function manualDownloadBadge(downloadStatus) {
+  if (downloadStatus === 'downloaded') return { icon: 'CheckCircle', tone: 'green', label: 'Downloaded' };
+  if (downloadStatus === 'not_downloaded') return { icon: 'Circle', tone: 'gray', label: 'Not downloaded' };
+  return null;
+}
+
 // Tally a games list into the user-facing buckets shown on the dashboard stats.
 export function cacheCounts(games = []) {
   const list = Array.isArray(games) ? games : [];
