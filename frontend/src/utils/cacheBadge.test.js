@@ -175,3 +175,19 @@ describe('cacheCounts — malformed-entry tolerance (F17)', () => {
     expect(cacheCounts(null)).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, failed: 0, blocked: 0 });
   });
 });
+
+import { manualDownloadBadge } from './cacheBadge';
+
+describe('manualDownloadBadge (#222 GOG manual-download status)', () => {
+  it('maps downloaded -> green Downloaded', () => {
+    expect(manualDownloadBadge('downloaded')).toEqual({ icon: 'CheckCircle', tone: 'green', label: 'Downloaded' });
+  });
+  it('maps not_downloaded -> gray Not downloaded', () => {
+    expect(manualDownloadBadge('not_downloaded')).toEqual({ icon: 'Circle', tone: 'gray', label: 'Not downloaded' });
+  });
+  it('returns null for null/undefined/unknown', () => {
+    expect(manualDownloadBadge(null)).toBeNull();
+    expect(manualDownloadBadge(undefined)).toBeNull();
+    expect(manualDownloadBadge('whatever')).toBeNull();
+  });
+});
