@@ -15,6 +15,12 @@ const CACHE_STATUS_OPTIONS = [
   { key: 'unknown', label: 'Unknown' },
 ];
 
+// #222: manual-download status (GOG etc.) — a SEPARATE facet from lancache cache status.
+const DOWNLOAD_STATUS_OPTIONS = [
+  { key: 'downloaded', label: 'Downloaded' },
+  { key: 'not_downloaded', label: 'Not downloaded' },
+];
+
 export default function FilterPanel({ open, onClose }) {
   const ref = useRef(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -43,6 +49,7 @@ export default function FilterPanel({ open, onClose }) {
   const selectedTags = (searchParams.get('tag') || '').split(',').filter(Boolean);
   const selectedLaunchers = (searchParams.get('launcher') || '').split(',').filter(Boolean);
   const selectedCacheStatuses = (searchParams.get('cache_status') || '').split(',').filter(Boolean);
+  const selectedDownloadStatuses = (searchParams.get('download_status') || '').split(',').filter(Boolean);
 
   function toggleFilter(key, value) {
     const current = (searchParams.get(key) || '').split(',').filter(Boolean);
@@ -117,6 +124,22 @@ export default function FilterPanel({ open, onClose }) {
               type="checkbox"
               checked={selectedCacheStatuses.includes(opt.key)}
               onChange={() => toggleFilter('cache_status', opt.key)}
+              className="rounded"
+            />
+            {opt.label}
+          </label>
+        ))}
+      </div>
+
+      {/* Download status (#222: GOG/manual-download launchers) */}
+      <div className="mb-4">
+        <div className="text-sm text-gray-400 mb-2">Download status</div>
+        {DOWNLOAD_STATUS_OPTIONS.map(opt => (
+          <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-300 py-0.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selectedDownloadStatuses.includes(opt.key)}
+              onChange={() => toggleFilter('download_status', opt.key)}
               className="rounded"
             />
             {opt.label}
