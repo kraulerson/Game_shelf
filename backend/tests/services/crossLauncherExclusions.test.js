@@ -54,6 +54,13 @@ describe('crossLauncherExclusions.computeSteamCoveredEpicAppIds', () => {
     db.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title) VALUES (600,60,1,'397540','BL3 (Steam)')").run();
     db.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title) VALUES (601,60,2,'epic-bl3-a','BL3 (Epic)')").run();
     db.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title) VALUES (602,60,2,'epic-bl3-b','BL3 Deluxe (Epic)')").run();
+
+    // Game 70: Steam + Epic, operator OVERRODE prefill to the Epic edition ->
+    // its Epic app_id must NOT be covered (Epic should get prefilled instead).
+    db.prepare("INSERT INTO games (id,title,slug) VALUES (70,'Override Game','override-game')").run();
+    db.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title) VALUES (700,70,1,'700steam','OG (Steam)')").run();
+    db.prepare("INSERT INTO game_editions (id,game_id,launcher_id,launcher_game_id,title) VALUES (701,70,2,'epic-override','OG (Epic)')").run();
+    db.prepare("INSERT INTO edition_tiers (game_edition_id, is_prefill_edition) VALUES (701, 1)").run();
   });
 
   after(() => {
@@ -97,6 +104,12 @@ describe('crossLauncherExclusions.computeSteamCoveredEpicAppIds', () => {
 
   it('returns exactly the covered Epic set', () => {
     assert.deepEqual(compute(db).sort(), ['epic-bl3-a', 'epic-bl3-b', 'epic-cs']);
+  });
+
+  it('excludes an Epic edition the operator chose to prefill (is_prefill_edition=1)', () => {
+    const ids = compute(db);
+    assert.ok(!ids.includes('epic-override'), 'overridden Epic edition is NOT in the covered set');
+    assert.ok(ids.includes('epic-cs'), 'a normal Steam+Epic game is still covered by default');
   });
 });
 

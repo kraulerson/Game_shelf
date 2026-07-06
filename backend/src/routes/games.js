@@ -5,6 +5,7 @@ const pathMod = require('node:path');
 const authMiddleware = require('../middleware/auth');
 const { getCacheStatusSnapshot } = require('../services/cacheSnapshot');
 const { resolveCacheLauncher } = require('../services/cacheLauncher');
+const { syncCrossLauncherExclusions } = require('../services/crossLauncherExclusions');
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -92,7 +93,8 @@ router.get('/:id', (req, res) => {
            ge.title as edition_title,
            l.name as launcher_name, l.display_name as launcher_display_name, l.priority,
            COALESCE(et.tier, 0) as tier,
-           COALESCE(et.is_display_edition, 0) as is_display_override
+           COALESCE(et.is_display_edition, 0) as is_display_override,
+           COALESCE(et.is_prefill_edition, 0) as is_prefill_override
     FROM game_editions ge
     JOIN launchers l ON l.id = ge.launcher_id
     LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
@@ -112,6 +114,15 @@ router.get('/:id', (req, res) => {
 
   // Display edition is first row (sorted by override > tier > priority)
   const displayEdition = editions[0];
+  // #225: resolved prefill edition = explicit override, else the Steam edition
+  // (default). has_prefill_choice = game owned on BOTH Steam and Epic.
+  const hasSteamEdition = editions.some(e => e.launcher_name === 'steam');
+  const hasEpicEdition = editions.some(e => e.launcher_name === 'epic');
+  const has_prefill_choice = hasSteamEdition && hasEpicEdition;
+  const prefillEdition =
+    editions.find(e => e.is_prefill_override === 1) ||
+    editions.find(e => e.launcher_name === 'steam') ||
+    null;
   const editionsWithTier = editions.map(e => ({
     id: e.id,
     launcher_name: e.launcher_name,
@@ -124,6 +135,7 @@ router.get('/:id', (req, res) => {
     tier: e.tier,
     tier_label: getTierLabel(e.tier),
     is_display_edition: displayEdition ? e.id === displayEdition.id : false,
+    is_prefill_edition: prefillEdition ? e.id === prefillEdition.id : false,
   }));
 
   const genres = db.prepare(`
@@ -143,6 +155,7 @@ router.get('/:id', (req, res) => {
     genres,
     tags,
     editions: editionsWithTier,
+    has_prefill_choice,
     dlc,
   });
 });
@@ -229,6 +242,53 @@ router.post('/:id/display-edition', (req, res) => {
   });
   setDisplay(id, edition_id);
 
+  res.json({ ok: true });
+});
+
+// POST /api/games/:id/prefill-edition — override which edition gets prefilled
+// (separate from the display edition). Only meaningful for a Steam+Epic game:
+// setting the Epic edition stops it being cross-launcher-excluded so Epic caches
+// instead of relying on Steam's cron. edition_id:null clears the override.
+router.post('/:id/prefill-edition', (req, res) => {
+  const db = req.app.locals.db;
+  const { id } = req.params;
+  const { edition_id } = req.body || {};
+
+  const game = db.prepare('SELECT id FROM games WHERE id = ?').get(id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+
+  const clearAll = db.prepare(`
+    UPDATE edition_tiers SET is_prefill_edition = 0
+    WHERE game_edition_id IN (SELECT id FROM game_editions WHERE game_id = ?)
+  `);
+
+  if (edition_id == null) {
+    clearAll.run(id); // revert to default (Steam)
+  } else {
+    const ed = db.prepare(`
+      SELECT ge.id, l.name AS launcher
+        FROM game_editions ge JOIN launchers l ON l.id = ge.launcher_id
+       WHERE ge.id = ? AND ge.game_id = ?
+    `).get(edition_id, id);
+    if (!ed) return res.status(400).json({ error: 'Edition does not belong to this game' });
+    if (ed.launcher !== 'epic')
+      return res.status(400).json({ error: 'Prefill override only applies to an Epic edition' });
+    const hasSteam = db.prepare(`
+      SELECT 1 FROM game_editions ge JOIN launchers l ON l.id = ge.launcher_id
+       WHERE ge.game_id = ? AND l.name = 'steam' LIMIT 1
+    `).get(id);
+    if (!hasSteam)
+      return res.status(400).json({ error: 'Prefill override only applies when the game is also on Steam' });
+    db.transaction(() => {
+      clearAll.run(id);
+      db.prepare('INSERT OR IGNORE INTO edition_tiers (game_edition_id) VALUES (?)').run(edition_id);
+      db.prepare('UPDATE edition_tiers SET is_prefill_edition = 1 WHERE game_edition_id = ?').run(edition_id);
+    })();
+  }
+
+  // Actuate promptly; fire-and-forget (the daily cron is the backstop, and this
+  // must not fail the request if the orchestrator is offline).
+  syncCrossLauncherExclusions(db).catch(() => {});
   res.json({ ok: true });
 });
 

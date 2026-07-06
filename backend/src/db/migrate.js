@@ -271,6 +271,14 @@ function runMigrations(dbPath) {
     }
   }
 
+  // #225: per-game prefill-edition override (mirrors is_display_edition). Guarded
+  // ADD COLUMN so it's idempotent on existing DBs (fresh DBs get it from schema.sql).
+  const etCols = db.pragma('table_info(edition_tiers)');
+  if (!etCols.some((c) => c.name === 'is_prefill_edition')) {
+    db.exec('ALTER TABLE edition_tiers ADD COLUMN is_prefill_edition INTEGER DEFAULT 0');
+    console.log('[Migration] #225: added edition_tiers.is_prefill_edition');
+  }
+
   return db;
 }
 

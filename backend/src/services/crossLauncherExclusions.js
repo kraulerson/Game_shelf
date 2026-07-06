@@ -22,8 +22,10 @@ function computeSteamCoveredEpicAppIds(db) {
       `SELECT DISTINCT CAST(ge.launcher_game_id AS TEXT) AS app_id
          FROM game_editions ge
          JOIN launchers le ON le.id = ge.launcher_id AND le.name = 'epic'
+         LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
         WHERE ge.game_id IS NOT NULL
           AND ge.launcher_game_id IS NOT NULL
+          AND COALESCE(et.is_prefill_edition, 0) = 0
           AND EXISTS (
             SELECT 1 FROM game_editions ge2
               JOIN launchers ls ON ls.id = ge2.launcher_id AND ls.name = 'steam'
