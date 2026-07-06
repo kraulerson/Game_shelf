@@ -447,6 +447,23 @@ export default function GameDetail() {
                         Set as display
                       </button>
                     )}
+                    {game.has_prefill_choice && !edition.is_prefill_edition && (
+                      <button
+                        onClick={async () => {
+                          await fetch(`/api/games/${game.id}/prefill-edition`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ edition_id: edition.id }),
+                          });
+                          queryClient.invalidateQueries({ queryKey: ['game', id] });
+                        }}
+                        className="text-xs text-gray-500 hover:text-blue-400"
+                        title="Cache this launcher's copy instead of the default (Steam). Display edition is unchanged."
+                      >
+                        Prefill this edition
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
