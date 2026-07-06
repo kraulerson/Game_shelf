@@ -37,7 +37,8 @@ function folderSlugForms(name) {
 function ownedGamesForLauncher(db, launcherName) {
   return db
     .prepare(
-      `SELECT DISTINCT g.id AS id, g.title AS title, g.slug AS slug, ge.title AS edition_title
+      `SELECT DISTINCT g.id AS id, g.title AS title, g.slug AS slug,
+              ge.title AS edition_title, ge.gog_slug AS gog_slug
          FROM game_editions ge
          JOIN launchers l ON l.id = ge.launcher_id AND l.name = ?
          JOIN games g ON g.id = ge.game_id
@@ -46,34 +47,72 @@ function ownedGamesForLauncher(db, launcherName) {
     .all(launcherName);
 }
 
+// Raw (un-slugified) folder forms for exact gog_slug comparison: the GOG product
+// slug is stored raw (underscored), and gogrepoc names folders after it — so we
+// compare the stored slug directly against the folder name and its
+// GOG-suffix-stripped form (both lowercased).
+function folderRawForms(name) {
+  const raw = String(name).toLowerCase();
+  const stripped = raw.replace(_GOG_FOLDER_SUFFIX, '');
+  return stripped !== raw ? [raw, stripped] : [raw];
+}
+
+// Shared matcher: which owned game ids are present in the folder list, and which
+// folder forms were consumed (for extra_folders). Exact gog_slug match takes
+// precedence; falls back to the fuzzy slug/title/edition-title match.
+function matchGames(games, folderNames) {
+  const folders = (folderNames || []).map((name) => ({
+    name,
+    forms: folderSlugForms(name), // slugified (dashed)
+    raw: folderRawForms(name), // raw (underscored)
+  }));
+  const allForms = new Set(folders.flatMap((f) => f.forms));
+  const rawForms = new Set(folders.flatMap((f) => f.raw));
+  const presentIds = new Set();
+  const usedForms = new Set();
+  for (const g of games) {
+    let match = null;
+    if (g.gog_slug) {
+      const gs = String(g.gog_slug).toLowerCase();
+      if (rawForms.has(gs)) match = gs;
+    }
+    if (match === null) {
+      const candidates = [g.slug, g.title, g.edition_title]
+        .filter(Boolean)
+        .map((c) => (c === g.slug ? c : slugify(c)));
+      match = candidates.find((s) => allForms.has(s)) ?? null;
+    }
+    if (match !== null) {
+      presentIds.add(g.id);
+      usedForms.add(match);
+    }
+  }
+  return { presentIds, usedForms, folders };
+}
+
+// The set of owned game ids present in the folder list (pure — no db).
+function computeDownloadedIds(games, folderNames) {
+  return matchGames(games, folderNames).presentIds;
+}
+
+// db-bound: owned game ids for `launcherName` present in `folderNames`.
+function downloadedGameIds(db, launcherName, folderNames) {
+  return computeDownloadedIds(ownedGamesForLauncher(db, launcherName), folderNames);
+}
+
 // Diff the owned library against the downloaded folder names. Returns
 // { total_owned, present, missing:[{id,title,slug}], extra_folders:[folderName] }.
 function computeManualCoverage(games, folderNames) {
-  // Each folder contributes 1-2 slug forms (full + GOG-suffix-stripped).
-  const folders = (folderNames || []).map((name) => ({ name, forms: folderSlugForms(name) }));
-  const allForms = new Set(folders.flatMap((f) => f.forms));
-  const usedForms = new Set();
-  const missing = [];
-  let present = 0;
-  for (const g of games) {
-    // A game is present if any of its identifiers slugifies to a folder form —
-    // the canonical slug, the title, or the launcher edition title (all the SAME
-    // game, so no cross-game false positive).
-    const candidates = [g.slug, g.title, g.edition_title]
-      .filter(Boolean)
-      .map((c) => (c === g.slug ? c : slugify(c)));
-    const match = candidates.find((s) => allForms.has(s));
-    if (match) {
-      present += 1;
-      usedForms.add(match);
-    } else {
-      missing.push({ id: g.id, title: g.title, slug: g.slug });
-    }
-  }
-  // Folders whose every slug form went unmatched (downloaded but unrecognized).
-  // Report the ORIGINAL folder name so the operator can cross-reference by eye.
-  const extra_folders = folders.filter((f) => !f.forms.some((s) => usedForms.has(s))).map((f) => f.name);
-  return { total_owned: games.length, present, missing, extra_folders };
+  const { presentIds, usedForms, folders } = matchGames(games, folderNames);
+  const missing = games
+    .filter((g) => !presentIds.has(g.id))
+    .map((g) => ({ id: g.id, title: g.title, slug: g.slug }));
+  // Folders whose every form (slug or raw) went unmatched (downloaded but
+  // unrecognized). Report the ORIGINAL folder name for eyeball cross-reference.
+  const extra_folders = folders
+    .filter((f) => !f.forms.some((s) => usedForms.has(s)) && !f.raw.some((s) => usedForms.has(s)))
+    .map((f) => f.name);
+  return { total_owned: games.length, present: presentIds.size, missing, extra_folders };
 }
 
 // End-to-end: fetch the folder listing from the orchestrator and diff it against
@@ -95,7 +134,10 @@ async function fetchManualCoverage(db, launcherFolder, { client = orchestrator }
 module.exports = {
   folderSlug,
   folderSlugForms,
+  folderRawForms,
   ownedGamesForLauncher,
+  computeDownloadedIds,
+  downloadedGameIds,
   computeManualCoverage,
   fetchManualCoverage,
 };
