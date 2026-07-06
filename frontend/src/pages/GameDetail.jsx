@@ -384,7 +384,9 @@ export default function GameDetail() {
         </div>
 
         {/* Lancache cache status (F15) */}
-        {game.editions?.length > 0 && <CachePanel editions={game.editions} />}
+        {game.editions?.length > 0 && (
+          <CachePanel editions={game.editions} downloadStatus={game.download_status} />
+        )}
 
         {/* Versions & Editions */}
         {game.editions?.length > 0 && (

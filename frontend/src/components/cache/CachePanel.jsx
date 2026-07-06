@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import CacheBadge from './CacheBadge';
 import { useCacheStatus } from '../../hooks/useCacheStatus';
-import { launcherToPlatform } from '../../utils/cacheBadge';
+import { launcherToPlatform, manualDownloadBadge } from '../../utils/cacheBadge';
 
 const POLL_INTERVAL_MS = 1500;
 const MAX_POLLS = 60; // ~90s ceiling — fine for the fast disk-stat validate
@@ -16,7 +16,7 @@ const PREFILL_MAX_POLLS = 240; // ~12 min ceiling
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export default function CachePanel({ editions = [] }) {
+export default function CachePanel({ editions = [], downloadStatus }) {
   const queryClient = useQueryClient();
   const { statusFor, isOffline } = useCacheStatus();
   // orchId -> true while a validate job for that game is in flight.
@@ -33,11 +33,13 @@ export default function CachePanel({ editions = [] }) {
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
-  const tracked = editions
-    .map((e) => ({ e, platform: launcherToPlatform(e.launcher_name) }))
-    .filter((x) => x.platform);
+  const mapped = editions.map((e) => ({ e, platform: launcherToPlatform(e.launcher_name) }));
+  const tracked = mapped.filter((x) => x.platform);
+  // #222: manual-download launchers (GOG etc.) aren't lancache-cached — they get a
+  // read-only Downloaded/Not-downloaded row with no prefill/validate/purge actions.
+  const manual = mapped.filter((x) => !x.platform);
 
-  if (tracked.length === 0) return null;
+  if (tracked.length === 0 && manual.length === 0) return null;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['cacheStatus'] });
 
@@ -231,6 +233,15 @@ export default function CachePanel({ editions = [] }) {
             </div>
           );
         })}
+        {manual.map(({ e }) => (
+          <div key={e.id} className="flex items-center gap-3">
+            <span className="w-24 text-sm text-gray-400">{e.launcher_display_name || e.launcher_name}</span>
+            <CacheBadge
+              tracked
+              badge={manualDownloadBadge(downloadStatus) || { icon: 'Minus', tone: 'neutral', label: '—' }}
+            />
+          </div>
+        ))}
       </div>
 
       {confirmPurge && (
