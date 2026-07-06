@@ -89,4 +89,34 @@ describe('POST /api/games/:id/prefill-edition', () => {
     const r = await post(9999, { edition_id: 1 });
     assert.equal(r.status, 404);
   });
+
+  const getGame = (id) => makeFetch(app, `/api/games/${id}`, { headers: { Cookie: authCookie() } });
+
+  it('GET exposes has_prefill_choice + default prefill=Steam', async () => {
+    await post(10, { edition_id: null }); // ensure default
+    const r = await getGame(10);
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.has_prefill_choice, true);
+    const steam = body.editions.find((e) => e.launcher_name === 'steam');
+    const epic = body.editions.find((e) => e.launcher_name === 'epic');
+    assert.equal(steam.is_prefill_edition, true); // default: Steam
+    assert.equal(epic.is_prefill_edition, false);
+  });
+
+  it('GET reflects an Epic prefill override', async () => {
+    await post(10, { edition_id: 101 });
+    const r = await getGame(10);
+    const body = await r.json();
+    const epic = body.editions.find((e) => e.launcher_name === 'epic');
+    const steam = body.editions.find((e) => e.launcher_name === 'steam');
+    assert.equal(epic.is_prefill_edition, true);
+    assert.equal(steam.is_prefill_edition, false);
+  });
+
+  it('GET has_prefill_choice=false for an Epic-only game', async () => {
+    const r = await getGame(20);
+    const body = await r.json();
+    assert.equal(body.has_prefill_choice, false);
+  });
 });

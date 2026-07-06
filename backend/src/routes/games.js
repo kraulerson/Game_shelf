@@ -93,7 +93,8 @@ router.get('/:id', (req, res) => {
            ge.title as edition_title,
            l.name as launcher_name, l.display_name as launcher_display_name, l.priority,
            COALESCE(et.tier, 0) as tier,
-           COALESCE(et.is_display_edition, 0) as is_display_override
+           COALESCE(et.is_display_edition, 0) as is_display_override,
+           COALESCE(et.is_prefill_edition, 0) as is_prefill_override
     FROM game_editions ge
     JOIN launchers l ON l.id = ge.launcher_id
     LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
@@ -113,6 +114,15 @@ router.get('/:id', (req, res) => {
 
   // Display edition is first row (sorted by override > tier > priority)
   const displayEdition = editions[0];
+  // #225: resolved prefill edition = explicit override, else the Steam edition
+  // (default). has_prefill_choice = game owned on BOTH Steam and Epic.
+  const hasSteamEdition = editions.some(e => e.launcher_name === 'steam');
+  const hasEpicEdition = editions.some(e => e.launcher_name === 'epic');
+  const has_prefill_choice = hasSteamEdition && hasEpicEdition;
+  const prefillEdition =
+    editions.find(e => e.is_prefill_override === 1) ||
+    editions.find(e => e.launcher_name === 'steam') ||
+    null;
   const editionsWithTier = editions.map(e => ({
     id: e.id,
     launcher_name: e.launcher_name,
@@ -125,6 +135,7 @@ router.get('/:id', (req, res) => {
     tier: e.tier,
     tier_label: getTierLabel(e.tier),
     is_display_edition: displayEdition ? e.id === displayEdition.id : false,
+    is_prefill_edition: prefillEdition ? e.id === prefillEdition.id : false,
   }));
 
   const genres = db.prepare(`
@@ -144,6 +155,7 @@ router.get('/:id', (req, res) => {
     genres,
     tags,
     editions: editionsWithTier,
+    has_prefill_choice,
     dlc,
   });
 });
