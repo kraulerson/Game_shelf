@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import LauncherBadge from './LauncherBadge';
 import CacheBadge from './cache/CacheBadge';
 import { useCacheStatus } from '../hooks/useCacheStatus';
-import { launcherToPlatform } from '../utils/cacheBadge';
+import { launcherToPlatform, manualDownloadBadge } from '../utils/cacheBadge';
 
 function getInitials(title) {
   if (!title) return '?';
@@ -30,6 +30,10 @@ export default function GameCard({ game }) {
   const cache = platform
     ? statusFor(platform, game.cache_launcher_game_id || game.launcher_game_id)
     : undefined;
+  // #222: a game with no lancache platform (e.g. GOG-only) shows its manual
+  // download status instead of the neutral dash. Multi-launcher games (Steam+GOG)
+  // keep the lancache badge — download state shows on the game-detail page.
+  const manualBadge = platform ? null : manualDownloadBadge(game.download_status);
 
   return (
     <div
@@ -94,6 +98,7 @@ export default function GameCard({ game }) {
             blocked={cache?.blocked}
             tracked={Boolean(platform)}
             offline={isOffline}
+            badge={manualBadge}
             size="small"
           />
         </div>
