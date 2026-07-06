@@ -56,14 +56,15 @@ async function syncLauncher(launcherName, db, otpCode) {
     // Upsert game_editions
     const upsert = db.prepare(`
       INSERT INTO game_editions (launcher_id, launcher_game_id, title, playtime_minutes, owned,
-                                  epic_namespace, epic_catalog_id, sandbox_type)
-      VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                                  epic_namespace, epic_catalog_id, sandbox_type, gog_slug)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
       ON CONFLICT(launcher_id, launcher_game_id) DO UPDATE SET
         title = excluded.title,
         playtime_minutes = excluded.playtime_minutes,
         epic_namespace = excluded.epic_namespace,
         epic_catalog_id = excluded.epic_catalog_id,
         sandbox_type = excluded.sandbox_type,
+        gog_slug = COALESCE(excluded.gog_slug, game_editions.gog_slug),
         owned = 1
     `);
 
@@ -82,7 +83,8 @@ async function syncLauncher(launcherName, db, otpCode) {
           game.playtime_minutes,
           game.epic_namespace || null,
           game.epic_catalog_id || null,
-          game.sandbox_type || null
+          game.sandbox_type || null,
+          game.gog_slug || null
         );
         if (result.changes > 0) gamesUpdated++;
       }

@@ -117,6 +117,7 @@ class GOGLauncher extends BaseLauncher {
           launcher_game_id: id.toString(),
           title,
           playtime_minutes: 0,
+          gog_slug: productRes.data.slug || null,
         });
       } catch (err) {
         console.warn(`[GOG] Failed to fetch product ${id}: ${err.message}`);
