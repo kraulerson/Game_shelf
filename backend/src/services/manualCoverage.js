@@ -6,7 +6,7 @@
 // owned library per launcher against those folders (matched by slug) and reports
 // which owned games were never downloaded.
 
-const { slugify } = require('./metadata/titleMatcher');
+const { slugify, simplifyTitle } = require('./metadata/titleMatcher');
 const orchestrator = require('./orchestrator');
 
 // Folder names use launcher slugs with '_' / '-' separators (GOG:
@@ -90,60 +90,87 @@ function normalizeFileEntry(name) {
   return slugify(s);
 }
 
-// Shared matcher: which owned game ids are present in the folder list, and which
-// folder forms were consumed (for extra_folders). Exact gog_slug match takes
-// precedence; falls back to the fuzzy slug/title/edition-title match.
-function matchGames(games, folderNames) {
-  const folders = (folderNames || []).map((name) => ({
+// Entry -> slug form(s). Dir launchers (GOG/Amazon) keep the folder-slug forms
+// (with GOG _game/_base handling); file launchers (Humble/Itch) normalize the
+// loose installer filename.
+function entryForms(name, mode) {
+  return mode === 'file' ? [normalizeFileEntry(name)] : folderSlugForms(name);
+}
+
+// Shared matcher: which owned game ids are present in the entry list, and which
+// forms/aliases were consumed (for extra_folders). Precedence: alias map (exact
+// entry name -> game slug) > exact gog_slug (dir) > fuzzy slug/title/edition-title
+// /subtitle-stripped title. `mode`='dir'|'file'; `aliases` is {entryName: slug}.
+function matchGames(games, entries, { mode = 'dir', aliases = {} } = {}) {
+  const list = (entries || []).map((name) => ({
     name,
-    forms: folderSlugForms(name), // slugified (dashed)
-    raw: folderRawForms(name), // raw (underscored)
+    forms: entryForms(name, mode), // slugified (dashed)
+    raw: mode === 'file' ? [] : folderRawForms(name), // raw (underscored) — dir only
+    aliasSlug: aliases[name] ? String(aliases[name]).toLowerCase() : null,
   }));
-  const allForms = new Set(folders.flatMap((f) => f.forms));
-  const rawForms = new Set(folders.flatMap((f) => f.raw));
+  const allForms = new Set(list.flatMap((f) => f.forms));
+  const rawForms = new Set(list.flatMap((f) => f.raw));
+  const aliasSlugs = new Set(list.map((f) => f.aliasSlug).filter(Boolean));
   const presentIds = new Set();
   const usedForms = new Set();
+  const usedAliasSlugs = new Set();
   for (const g of games) {
-    let match = null;
-    if (g.gog_slug) {
-      const gs = String(g.gog_slug).toLowerCase();
-      if (rawForms.has(gs)) match = gs;
+    let matched = false;
+    const gslug = g.slug ? String(g.slug).toLowerCase() : null;
+    // 1. alias: an on-disk entry explicitly maps to this game's slug
+    if (gslug && aliasSlugs.has(gslug)) {
+      matched = true;
+      usedAliasSlugs.add(gslug);
     }
-    if (match === null) {
-      const candidates = [g.slug, g.title, g.edition_title]
+    // 2. GOG raw-slug exact match (dir mode)
+    if (!matched && g.gog_slug) {
+      const gs = String(g.gog_slug).toLowerCase();
+      if (rawForms.has(gs)) {
+        matched = true;
+        usedForms.add(gs);
+      }
+    }
+    // 3. fuzzy: slug / title / edition_title / subtitle-stripped title
+    if (!matched) {
+      const cands = [g.slug, g.title, g.edition_title, g.title ? simplifyTitle(g.title) : null]
         .filter(Boolean)
         .map((c) => (c === g.slug ? c : slugify(c)));
-      match = candidates.find((s) => allForms.has(s)) ?? null;
+      const hit = cands.find((s) => allForms.has(s));
+      if (hit) {
+        matched = true;
+        usedForms.add(hit);
+      }
     }
-    if (match !== null) {
-      presentIds.add(g.id);
-      usedForms.add(match);
-    }
+    if (matched) presentIds.add(g.id);
   }
-  return { presentIds, usedForms, folders };
+  return { presentIds, usedForms, usedAliasSlugs, folders: list };
 }
 
-// The set of owned game ids present in the folder list (pure — no db).
-function computeDownloadedIds(games, folderNames) {
-  return matchGames(games, folderNames).presentIds;
+// The set of owned game ids present in the entry list (pure — no db).
+function computeDownloadedIds(games, entries, opts = {}) {
+  return matchGames(games, entries, opts).presentIds;
 }
 
-// db-bound: owned game ids for `launcherName` present in `folderNames`.
-function downloadedGameIds(db, launcherName, folderNames) {
-  return computeDownloadedIds(ownedGamesForLauncher(db, launcherName), folderNames);
+// db-bound: owned game ids for `launcherName` present in `entries`.
+function downloadedGameIds(db, launcherName, entries, opts = {}) {
+  return computeDownloadedIds(ownedGamesForLauncher(db, launcherName), entries, opts);
 }
 
-// Diff the owned library against the downloaded folder names. Returns
-// { total_owned, present, missing:[{id,title,slug}], extra_folders:[folderName] }.
-function computeManualCoverage(games, folderNames) {
-  const { presentIds, usedForms, folders } = matchGames(games, folderNames);
+// Diff the owned library against the downloaded entry names. Returns
+// { total_owned, present, missing:[{id,title,slug}], extra_folders:[entryName] }.
+function computeManualCoverage(games, entries, opts = {}) {
+  const { presentIds, usedForms, usedAliasSlugs, folders } = matchGames(games, entries, opts);
   const missing = games
     .filter((g) => !presentIds.has(g.id))
     .map((g) => ({ id: g.id, title: g.title, slug: g.slug }));
-  // Folders whose every form (slug or raw) went unmatched (downloaded but
-  // unrecognized). Report the ORIGINAL folder name for eyeball cross-reference.
+  // Entries whose every form (slug/raw) AND alias slug went unused (downloaded but
+  // unrecognized). Report the ORIGINAL entry name for eyeball cross-reference.
   const extra_folders = folders
-    .filter((f) => !f.forms.some((s) => usedForms.has(s)) && !f.raw.some((s) => usedForms.has(s)))
+    .filter((f) => {
+      const formsUsed = f.forms.some((s) => usedForms.has(s)) || f.raw.some((s) => usedForms.has(s));
+      const aliasUsed = f.aliasSlug && usedAliasSlugs.has(f.aliasSlug);
+      return !formsUsed && !aliasUsed;
+    })
     .map((f) => f.name);
   return { total_owned: games.length, present: presentIds.size, missing, extra_folders };
 }

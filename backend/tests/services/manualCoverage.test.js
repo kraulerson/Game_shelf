@@ -196,3 +196,57 @@ describe('manualCoverage.normalizeFileEntry (file-mode)', () => {
     });
   }
 });
+
+describe('manualCoverage file-mode + aliases + simplifyTitle', () => {
+  const { computeDownloadedIds, computeManualCoverage } = require('../../src/services/manualCoverage');
+
+  it('file-mode matches a normalized filename to an owned title', () => {
+    const games = [{ id: 1, title: 'Toki Tori', slug: 'toki-tori' }];
+    const ids = computeDownloadedIds(
+      games,
+      ['TokiTori_2013-07-03_Windows_1372878397.zip'],
+      { mode: 'file' }
+    );
+    assert.ok(ids.has(1));
+  });
+
+  it('file-mode matches a subtitle-less filename via simplifyTitle', () => {
+    const games = [
+      { id: 2, title: "Lone Survivor: The Director's Cut", slug: 'lone-survivor-the-directors-cut' },
+    ];
+    const ids = computeDownloadedIds(games, ['LoneSurvivor-PC.zip'], { mode: 'file' });
+    assert.ok(ids.has(2));
+  });
+
+  it('alias covers an opaque filename (game present only if its slug === alias slug)', () => {
+    const games = [
+      { id: 3, title: 'Steel Storm: Burning Retribution', slug: 'steel-storm-burning-retribution' },
+      { id: 4, title: 'Unrelated', slug: 'unrelated' },
+    ];
+    const opts = {
+      mode: 'file',
+      aliases: { 'steelstorm-br-2.00.02818-release.exe': 'steel-storm-burning-retribution' },
+    };
+    const ids = computeDownloadedIds(games, ['steelstorm-br-2.00.02818-release.exe'], opts);
+    assert.deepEqual([...ids], [3]);
+  });
+
+  it('an alias entry that matches a game is NOT reported as extra', () => {
+    const games = [
+      { id: 3, title: 'Steel Storm: Burning Retribution', slug: 'steel-storm-burning-retribution' },
+    ];
+    const opts = {
+      mode: 'file',
+      aliases: { 'steelstorm-br-2.00.02818-release.exe': 'steel-storm-burning-retribution' },
+    };
+    const r = computeManualCoverage(games, ['steelstorm-br-2.00.02818-release.exe'], opts);
+    assert.equal(r.present, 1);
+    assert.deepEqual(r.extra_folders, []);
+  });
+
+  it('an unmatched file is reported as extra_folders (original name)', () => {
+    const games = [{ id: 1, title: 'Toki Tori', slug: 'toki-tori' }];
+    const r = computeManualCoverage(games, ['DitV-Windows.zip'], { mode: 'file' });
+    assert.deepEqual(r.extra_folders, ['DitV-Windows.zip']);
+  });
+});
