@@ -70,20 +70,25 @@ const _DATE = /\d{4}[-_.]\d{2}[-_.]\d{2}/g; // bounded by _/-, not \b (both word
 // letter class excludes v/V so a standalone version marker (`v1.0.0`) isn't itself
 // split into a stray "v" + digits.
 const _GLUED_VER = /([A-UW-Za-uw-z])(v?\d+(?:[._]\d+)+)/g;
+// A bare (dot-less) version glued to the end of a word — `Machinariumv2` -> `Machinarium v2`
+// so _VER2 can then strip it. Only when the vN isn't followed by more word chars.
+const _GLUED_VER1 = /([A-Za-z])(v\d+)(?![A-Za-z0-9])/gi;
 const _CAMEL1 = /([a-z])([A-Z])/g; // lowercase->Upper ONLY (keeps 2D / Cub3D)
 const _CAMEL2 = /([A-Z]+)([A-Z][a-z])/g; // HTTPServer -> HTTP Server
 const _SEP = /[_-]+/g;
 const _VER = /v?\d+(?:[._]\d+)+[a-z]?/g; // dotted version incl trailing letter (0.3.5b); no /i so it won't eat an UpperCase word after (…v1.3.0Setup)
 const _VER2 = /\bv\d+\b/gi; // v2
 const _LONGID = /\b\d{5,}\b/g; // build/epoch ids
-const _PLATFORM =
-  /\b(?:windows?|win64|win32|win|pc|osx|macos|mac|linux|x64|x86|64bit|32bit|64|32|setup|installer|install|release|build|final|full|std|en|eng|remaster|classic)\b/gi;
+// Only OS/arch/packaging tokens — NOT English words that are real title tokens
+// (final/full/build/release/classic/installer/remaster/… would corrupt titles).
+const _PLATFORM = /\b(?:windows?|win64|win32|win|pc|osx|macos|mac|linux|x64|x86|64bit|32bit|64|32|setup)\b/gi;
 
 function normalizeFileEntry(name) {
   let s = String(name).replace(_EXT, '');
   s = s.replace(_BRACKET, ' ');
   s = s.replace(_DATE, ' ');
   s = s.replace(_GLUED_VER, '$1 $2');
+  s = s.replace(_GLUED_VER1, '$1 $2');
   s = s.replace(_CAMEL1, '$1 $2').replace(_CAMEL2, '$1 $2');
   s = s.replace(_SEP, ' ');
   s = s.replace(_VER, ' ').replace(_VER2, ' ');
@@ -113,6 +118,15 @@ function matchGames(games, entries, { mode = 'dir', aliases = {} } = {}) {
   const allForms = new Set(list.flatMap((f) => f.forms));
   const rawForms = new Set(list.flatMap((f) => f.raw));
   const aliasSlugs = new Set(list.map((f) => f.aliasSlug).filter(Boolean));
+  // Count subtitle-stripped title slugs so an ambiguous shared base (two games that
+  // differ only by subtitle) can't let ONE entry mark BOTH present. Only a UNIQUE
+  // simplifyTitle form is used as a fuzzy candidate below.
+  const simplifyCounts = new Map();
+  for (const g of games) {
+    if (!g.title) continue;
+    const s = slugify(simplifyTitle(g.title));
+    if (s) simplifyCounts.set(s, (simplifyCounts.get(s) || 0) + 1);
+  }
   const presentIds = new Set();
   const usedForms = new Set();
   const usedAliasSlugs = new Set();
@@ -132,11 +146,13 @@ function matchGames(games, entries, { mode = 'dir', aliases = {} } = {}) {
         usedForms.add(gs);
       }
     }
-    // 3. fuzzy: slug / title / edition_title / subtitle-stripped title
+    // 3. fuzzy: slug / title / edition_title / subtitle-stripped title (unique only)
     if (!matched) {
-      const cands = [g.slug, g.title, g.edition_title, g.title ? simplifyTitle(g.title) : null]
+      const simp = g.title ? slugify(simplifyTitle(g.title)) : null;
+      const cands = [g.slug, g.title, g.edition_title]
         .filter(Boolean)
         .map((c) => (c === g.slug ? c : slugify(c)));
+      if (simp && simplifyCounts.get(simp) === 1) cands.push(simp);
       const hit = cands.find((s) => allForms.has(s));
       if (hit) {
         matched = true;
