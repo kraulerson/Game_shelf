@@ -57,6 +57,39 @@ function folderRawForms(name) {
   return stripped !== raw ? [raw, stripped] : [raw];
 }
 
+// Loose-file launchers (Humble/Itch) store installer/archive FILES, not per-game
+// folders: `AndYetItMovesv1.3.0Setup.exe`, `Totem 1.06.zip`. Normalize a filename
+// down to a title slug by stripping extension/version/platform noise and splitting
+// camelCase. Ordered — each rule fixes a real observed filename (#222).
+const _EXT = /\.(exe|zip|rar|7z|msi|bin|sh|dmg|pkg|tar|gz|iso)$/i;
+const _BRACKET = /[([{][^)\]}]*[)\]}]/g;
+const _DATE = /\d{4}[-_.]\d{2}[-_.]\d{2}/g; // bounded by _/-, not \b (both word chars)
+// Split a version glued to the END of a word (Movesv1.3.0 -> Moves v1.3.0). The
+// letter class excludes v/V so a standalone version marker (`v1.0.0`) isn't itself
+// split into a stray "v" + digits.
+const _GLUED_VER = /([A-UW-Za-uw-z])(v?\d+(?:[._]\d+)+)/g;
+const _CAMEL1 = /([a-z])([A-Z])/g; // lowercase->Upper ONLY (keeps 2D / Cub3D)
+const _CAMEL2 = /([A-Z]+)([A-Z][a-z])/g; // HTTPServer -> HTTP Server
+const _SEP = /[_-]+/g;
+const _VER = /v?\d+(?:[._]\d+)+[a-z]?/g; // dotted version incl trailing letter (0.3.5b); no /i so it won't eat an UpperCase word after (…v1.3.0Setup)
+const _VER2 = /\bv\d+\b/gi; // v2
+const _LONGID = /\b\d{5,}\b/g; // build/epoch ids
+const _PLATFORM =
+  /\b(?:windows?|win64|win32|win|pc|osx|macos|mac|linux|x64|x86|64bit|32bit|64|32|setup|installer|install|release|build|final|full|std|en|eng|remaster|classic)\b/gi;
+
+function normalizeFileEntry(name) {
+  let s = String(name).replace(_EXT, '');
+  s = s.replace(_BRACKET, ' ');
+  s = s.replace(_DATE, ' ');
+  s = s.replace(_GLUED_VER, '$1 $2');
+  s = s.replace(_CAMEL1, '$1 $2').replace(_CAMEL2, '$1 $2');
+  s = s.replace(_SEP, ' ');
+  s = s.replace(_VER, ' ').replace(_VER2, ' ');
+  s = s.replace(_LONGID, ' ');
+  s = s.replace(_PLATFORM, ' ');
+  return slugify(s);
+}
+
 // Shared matcher: which owned game ids are present in the folder list, and which
 // folder forms were consumed (for extra_folders). Exact gog_slug match takes
 // precedence; falls back to the fuzzy slug/title/edition-title match.
@@ -135,6 +168,7 @@ module.exports = {
   folderSlug,
   folderSlugForms,
   folderRawForms,
+  normalizeFileEntry,
   ownedGamesForLauncher,
   computeDownloadedIds,
   downloadedGameIds,

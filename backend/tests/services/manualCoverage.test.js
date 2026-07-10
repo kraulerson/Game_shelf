@@ -173,3 +173,26 @@ describe('manualCoverage exact gog_slug match + downloadedGameIds', () => {
     assert.deepEqual([...ids], [1]);
   });
 });
+
+describe('manualCoverage.normalizeFileEntry (file-mode)', () => {
+  const { normalizeFileEntry } = require('../../src/services/manualCoverage');
+  const cases = [
+    ['AndYetItMovesv1.3.0Setup.exe', 'and-yet-it-moves'],
+    ['LoneSurvivor-PC.zip', 'lone-survivor'],
+    ['TokiTori_2013-07-03_Windows_1372878397.zip', 'toki-tori'],
+    ['voxatron_0.3.5b_setup.exe', 'voxatron'],
+    ['2D TreasureHunter.zip', '2d-treasure-hunter'],
+    ['Cub3D - A Perspective Shifting Puzzle RPG.zip', 'cub3d-a-perspective-shifting-puzzle-rpg'],
+    ['fumiko-windows-64.zip', 'fumiko'],
+    ['frisbros-window-64.zip', 'frisbros'],
+    ['BladesAdrift.zip', 'blades-adrift'],
+    ['Annulus 2.31.zip', 'annulus'],
+    ['rumble_v1.0.0_win64.zip', 'rumble'],
+    ['Totem 1.06.zip', 'totem'],
+  ];
+  for (const [input, expected] of cases) {
+    it(`normalizes ${input} -> ${expected}`, () => {
+      assert.equal(normalizeFileEntry(input), expected);
+    });
+  }
+});
