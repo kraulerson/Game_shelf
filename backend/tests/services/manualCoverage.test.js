@@ -272,3 +272,33 @@ describe('manualCoverage.fetchManualCoverage registry resolution', () => {
     assert.equal(r.launcher, 'Humble Bundle');
   });
 });
+
+describe('manualCoverage.manualDownloadSets (union over registry)', () => {
+  const { manualDownloadSets } = require('../../src/services/manualCoverage');
+  it('unions downloaded ids across launchers (dir + file modes) and collects manual game ids', async () => {
+    const owned = {
+      gog: [{ id: 10, title: 'Trine 2', slug: 'trine-2', gog_slug: null, edition_title: null }],
+      amazon: [{ id: 20, title: 'Abandon Ship', slug: 'abandon-ship', gog_slug: null, edition_title: null }],
+      humble: [{ id: 30, title: 'Toki Tori', slug: 'toki-tori', gog_slug: null, edition_title: null }],
+      itchio: [{ id: 40, title: 'Fumiko!', slug: 'fumiko', gog_slug: null, edition_title: null }],
+    };
+    const db = {
+      prepare: (sql) => ({
+        all: (...args) => {
+          if (/DISTINCT ge\.game_id/.test(sql)) return [10, 20, 30, 40].map((id) => ({ id }));
+          return owned[args[args.length - 1]] || []; // ownedGamesForLauncher(db, name)
+        },
+      }),
+    };
+    const entriesByFolder = {
+      GOG: ['trine_2'],
+      'Amazon Games': ['Abandon Ship'],
+      'Humble Bundle': ['TokiTori_2013-07-03_Windows_1372878397.zip'],
+      'Itch.io': ['fumiko-windows-64.zip'],
+    };
+    const getSnapshot = async (folder) => ({ present: true, entries: entriesByFolder[folder] || [], stale: false });
+    const { downloadedIds, manualGameIds } = await manualDownloadSets(db, getSnapshot);
+    assert.deepEqual([...downloadedIds].sort((a, b) => a - b), [10, 20, 30, 40]);
+    assert.deepEqual([...manualGameIds].sort((a, b) => a - b), [10, 20, 30, 40]);
+  });
+});

@@ -8,7 +8,7 @@
 
 const { slugify, simplifyTitle } = require('./metadata/titleMatcher');
 const orchestrator = require('./orchestrator');
-const { manualLauncherByFolder } = require('./manualLaunchers');
+const { MANUAL_LAUNCHERS, manualLauncherByFolder } = require('./manualLaunchers');
 const { aliasesFor } = require('./manualDownloadAliases');
 
 // Folder names use launcher slugs with '_' / '-' separators (GOG:
@@ -198,6 +198,31 @@ async function fetchManualCoverage(db, launcherFolder, { client = orchestrator }
   return { launcher: launcherFolder, present_folder: Boolean(data.present), ...report };
 }
 
+// Union download-status sets over every manual launcher (#222). `getSnapshot` is
+// manualCoverageSnapshot.getManualDownloadsSnapshot (folder, {includeFiles}).
+// Returns { downloadedIds, manualGameIds } — the games actually downloaded, and
+// the games that HAVE an owned edition on any manual launcher (for surfacing).
+async function manualDownloadSets(db, getSnapshot) {
+  const downloadedIds = new Set();
+  for (const { name, folder, mode } of MANUAL_LAUNCHERS) {
+    const { entries } = await getSnapshot(folder, { includeFiles: mode === 'file' });
+    const ids = downloadedGameIds(db, name, entries, { mode, aliases: aliasesFor(name) });
+    for (const id of ids) downloadedIds.add(id);
+  }
+  const names = MANUAL_LAUNCHERS.map((l) => l.name);
+  const manualGameIds = new Set(
+    db
+      .prepare(
+        `SELECT DISTINCT ge.game_id AS id FROM game_editions ge
+           JOIN launchers l ON l.id = ge.launcher_id
+          WHERE l.name IN (${names.map(() => '?').join(',')}) AND ge.game_id IS NOT NULL`
+      )
+      .all(...names)
+      .map((r) => r.id)
+  );
+  return { downloadedIds, manualGameIds };
+}
+
 module.exports = {
   folderSlug,
   folderSlugForms,
@@ -207,5 +232,6 @@ module.exports = {
   computeDownloadedIds,
   downloadedGameIds,
   computeManualCoverage,
+  manualDownloadSets,
   fetchManualCoverage,
 };
