@@ -6,7 +6,8 @@ const authMiddleware = require('../middleware/auth');
 const { getCacheStatusSnapshot } = require('../services/cacheSnapshot');
 const { resolveCacheLauncher } = require('../services/cacheLauncher');
 const { syncCrossLauncherExclusions } = require('../services/crossLauncherExclusions');
-const { downloadedGameIds } = require('../services/manualCoverage');
+const { manualDownloadSets } = require('../services/manualCoverage');
+const { MANUAL_LAUNCHERS } = require('../services/manualLaunchers');
 const { getManualDownloadsSnapshot } = require('../services/manualCoverageSnapshot');
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -88,15 +89,16 @@ router.get('/:id', async (req, res) => {
     return res.status(404).json({ error: 'Game not found' });
   }
 
-  // #222: GOG manual-download status for this game (only if it has a GOG edition).
-  const hasGog = db.prepare(
-    "SELECT 1 FROM game_editions ge JOIN launchers l ON l.id = ge.launcher_id WHERE ge.game_id = ? AND l.name = 'gog' LIMIT 1"
-  ).get(id);
-  let download_status = null;
-  if (hasGog) {
-    const { entries: gogFolders } = await getManualDownloadsSnapshot('GOG');
-    download_status = downloadedGameIds(db, 'gog', gogFolders).has(Number(id)) ? 'downloaded' : 'not_downloaded';
-  }
+  // #222: manual-download status for this game across every manual launcher
+  // (GOG/Amazon/Humble/Itch). 'downloaded'/'not_downloaded' if the game has an
+  // owned edition on any manual launcher, else null.
+  const { downloadedIds: mdDownloaded, manualGameIds: mdOwned } = await manualDownloadSets(
+    db,
+    getManualDownloadsSnapshot
+  );
+  const download_status = mdOwned.has(Number(id))
+    ? (mdDownloaded.has(Number(id)) ? 'downloaded' : 'not_downloaded')
+    : null;
 
   // Get all editions with launcher and tier info
   const { getTierLabel } = require('../utils/editionTier');
@@ -503,16 +505,11 @@ router.get('/', async (req, res) => {
     }
   }
 
-  // #222: GOG manual-download status (a SEPARATE facet from lancache cache_status).
-  // Compute the downloaded-game set + the set of games that HAVE a GOG edition, for
-  // per-row surfacing; build a temp table only when the download_status filter is set.
-  const { entries: gogFolders } = await getManualDownloadsSnapshot('GOG');
-  const downloadedIds = downloadedGameIds(db, 'gog', gogFolders);
-  const gogGameIds = new Set(
-    db.prepare(
-      "SELECT DISTINCT ge.game_id AS id FROM game_editions ge JOIN launchers l ON l.id = ge.launcher_id WHERE l.name = 'gog' AND ge.game_id IS NOT NULL"
-    ).all().map((r) => r.id)
-  );
+  // #222: manual-download status (a SEPARATE facet from lancache cache_status) across
+  // every manual launcher (GOG/Amazon/Humble/Itch). Compute the union downloaded set
+  // + the set of games owned on any manual launcher, for per-row surfacing; build a
+  // temp table only when the download_status filter is set.
+  const { downloadedIds, manualGameIds } = await manualDownloadSets(db, getManualDownloadsSnapshot);
   if (download_status) {
     const dlStatuses = [...new Set(download_status.split(',').map((s) => s.trim()).filter(Boolean))];
     db.exec('CREATE TEMP TABLE IF NOT EXISTS _manual_downloaded(game_id INTEGER PRIMARY KEY)');
@@ -524,8 +521,12 @@ router.get('/', async (req, res) => {
       parts.push('g.id IN (SELECT game_id FROM _manual_downloaded)');
     }
     if (dlStatuses.includes('not_downloaded')) {
+      // MANUAL_LAUNCHERS names are a trusted compile-time constant (not user input),
+      // so inlining them as quoted literals is injection-safe and keeps the outer
+      // query's bound-param order unchanged.
+      const namesSql = MANUAL_LAUNCHERS.map((l) => `'${l.name}'`).join(',');
       parts.push(
-        "(g.id IN (SELECT ge2.game_id FROM game_editions ge2 JOIN launchers l2 ON l2.id = ge2.launcher_id WHERE l2.name = 'gog') AND g.id NOT IN (SELECT game_id FROM _manual_downloaded))"
+        `(g.id IN (SELECT ge2.game_id FROM game_editions ge2 JOIN launchers l2 ON l2.id = ge2.launcher_id WHERE l2.name IN (${namesSql})) AND g.id NOT IN (SELECT game_id FROM _manual_downloaded))`
       );
     }
     if (parts.length > 0) outerConditions.push('(' + parts.join(' OR ') + ')');
@@ -681,9 +682,9 @@ router.get('/', async (req, res) => {
     // gameId) the display launcher IS the only launcher, so fall back to it.
     const cacheLauncher = gameId ? resolveCacheLauncher(db, gameId) : null;
 
-    // #222: GOG manual-download status — 'downloaded' / 'not_downloaded' for a game
-    // with a GOG edition, else null (not a manual-launcher game).
-    const download_status = gogGameIds.has(gameId)
+    // #222: manual-download status — 'downloaded' / 'not_downloaded' for a game owned
+    // on any manual launcher (GOG/Amazon/Humble/Itch), else null.
+    const download_status = manualGameIds.has(gameId)
       ? (downloadedIds.has(gameId) ? 'downloaded' : 'not_downloaded')
       : null;
 

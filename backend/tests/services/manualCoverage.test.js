@@ -173,3 +173,132 @@ describe('manualCoverage exact gog_slug match + downloadedGameIds', () => {
     assert.deepEqual([...ids], [1]);
   });
 });
+
+describe('manualCoverage.normalizeFileEntry (file-mode)', () => {
+  const { normalizeFileEntry } = require('../../src/services/manualCoverage');
+  const cases = [
+    ['AndYetItMovesv1.3.0Setup.exe', 'and-yet-it-moves'],
+    ['LoneSurvivor-PC.zip', 'lone-survivor'],
+    ['TokiTori_2013-07-03_Windows_1372878397.zip', 'toki-tori'],
+    ['voxatron_0.3.5b_setup.exe', 'voxatron'],
+    ['2D TreasureHunter.zip', '2d-treasure-hunter'],
+    ['Cub3D - A Perspective Shifting Puzzle RPG.zip', 'cub3d-a-perspective-shifting-puzzle-rpg'],
+    ['fumiko-windows-64.zip', 'fumiko'],
+    ['frisbros-window-64.zip', 'frisbros'],
+    ['BladesAdrift.zip', 'blades-adrift'],
+    ['Annulus 2.31.zip', 'annulus'],
+    ['rumble_v1.0.0_win64.zip', 'rumble'],
+    ['Totem 1.06.zip', 'totem'],
+  ];
+  for (const [input, expected] of cases) {
+    it(`normalizes ${input} -> ${expected}`, () => {
+      assert.equal(normalizeFileEntry(input), expected);
+    });
+  }
+});
+
+describe('manualCoverage file-mode + aliases + simplifyTitle', () => {
+  const { computeDownloadedIds, computeManualCoverage } = require('../../src/services/manualCoverage');
+
+  it('file-mode matches a normalized filename to an owned title', () => {
+    const games = [{ id: 1, title: 'Toki Tori', slug: 'toki-tori' }];
+    const ids = computeDownloadedIds(
+      games,
+      ['TokiTori_2013-07-03_Windows_1372878397.zip'],
+      { mode: 'file' }
+    );
+    assert.ok(ids.has(1));
+  });
+
+  it('file-mode matches a subtitle-less filename via simplifyTitle', () => {
+    const games = [
+      { id: 2, title: "Lone Survivor: The Director's Cut", slug: 'lone-survivor-the-directors-cut' },
+    ];
+    const ids = computeDownloadedIds(games, ['LoneSurvivor-PC.zip'], { mode: 'file' });
+    assert.ok(ids.has(2));
+  });
+
+  it('alias covers an opaque filename (game present only if its slug === alias slug)', () => {
+    const games = [
+      { id: 3, title: 'Steel Storm: Burning Retribution', slug: 'steel-storm-burning-retribution' },
+      { id: 4, title: 'Unrelated', slug: 'unrelated' },
+    ];
+    const opts = {
+      mode: 'file',
+      aliases: { 'steelstorm-br-2.00.02818-release.exe': 'steel-storm-burning-retribution' },
+    };
+    const ids = computeDownloadedIds(games, ['steelstorm-br-2.00.02818-release.exe'], opts);
+    assert.deepEqual([...ids], [3]);
+  });
+
+  it('an alias entry that matches a game is NOT reported as extra', () => {
+    const games = [
+      { id: 3, title: 'Steel Storm: Burning Retribution', slug: 'steel-storm-burning-retribution' },
+    ];
+    const opts = {
+      mode: 'file',
+      aliases: { 'steelstorm-br-2.00.02818-release.exe': 'steel-storm-burning-retribution' },
+    };
+    const r = computeManualCoverage(games, ['steelstorm-br-2.00.02818-release.exe'], opts);
+    assert.equal(r.present, 1);
+    assert.deepEqual(r.extra_folders, []);
+  });
+
+  it('an unmatched file is reported as extra_folders (original name)', () => {
+    const games = [{ id: 1, title: 'Toki Tori', slug: 'toki-tori' }];
+    const r = computeManualCoverage(games, ['DitV-Windows.zip'], { mode: 'file' });
+    assert.deepEqual(r.extra_folders, ['DitV-Windows.zip']);
+  });
+});
+
+describe('manualCoverage.fetchManualCoverage registry resolution', () => {
+  const { fetchManualCoverage } = require('../../src/services/manualCoverage');
+  it('resolves file-mode + include_files + owned launcher from the folder name', async () => {
+    const db = {
+      prepare: () => ({
+        all: () => [{ id: 1, title: 'Toki Tori', slug: 'toki-tori', edition_title: null, gog_slug: null }],
+      }),
+    };
+    let seenPath;
+    const client = {
+      callOrchestrator: async (m, p) => {
+        seenPath = p;
+        return { status: 200, data: { present: true, entries: ['TokiTori_2013-07-03_Windows_1372878397.zip'] } };
+      },
+    };
+    const r = await fetchManualCoverage(db, 'Humble Bundle', { client });
+    assert.equal(seenPath, '/api/v1/manual-downloads/Humble%20Bundle?include_files=true');
+    assert.equal(r.present, 1);
+    assert.equal(r.launcher, 'Humble Bundle');
+  });
+});
+
+describe('manualCoverage.manualDownloadSets (union over registry)', () => {
+  const { manualDownloadSets } = require('../../src/services/manualCoverage');
+  it('unions downloaded ids across launchers (dir + file modes) and collects manual game ids', async () => {
+    const owned = {
+      gog: [{ id: 10, title: 'Trine 2', slug: 'trine-2', gog_slug: null, edition_title: null }],
+      amazon: [{ id: 20, title: 'Abandon Ship', slug: 'abandon-ship', gog_slug: null, edition_title: null }],
+      humble: [{ id: 30, title: 'Toki Tori', slug: 'toki-tori', gog_slug: null, edition_title: null }],
+      itchio: [{ id: 40, title: 'Fumiko!', slug: 'fumiko', gog_slug: null, edition_title: null }],
+    };
+    const db = {
+      prepare: (sql) => ({
+        all: (...args) => {
+          if (/DISTINCT ge\.game_id/.test(sql)) return [10, 20, 30, 40].map((id) => ({ id }));
+          return owned[args[args.length - 1]] || []; // ownedGamesForLauncher(db, name)
+        },
+      }),
+    };
+    const entriesByFolder = {
+      GOG: ['trine_2'],
+      'Amazon Games': ['Abandon Ship'],
+      'Humble Bundle': ['TokiTori_2013-07-03_Windows_1372878397.zip'],
+      'Itch.io': ['fumiko-windows-64.zip'],
+    };
+    const getSnapshot = async (folder) => ({ present: true, entries: entriesByFolder[folder] || [], stale: false });
+    const { downloadedIds, manualGameIds } = await manualDownloadSets(db, getSnapshot);
+    assert.deepEqual([...downloadedIds].sort((a, b) => a - b), [10, 20, 30, 40]);
+    assert.deepEqual([...manualGameIds].sort((a, b) => a - b), [10, 20, 30, 40]);
+  });
+});
