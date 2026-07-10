@@ -8,6 +8,8 @@
 
 const { slugify, simplifyTitle } = require('./metadata/titleMatcher');
 const orchestrator = require('./orchestrator');
+const { manualLauncherByFolder } = require('./manualLaunchers');
+const { aliasesFor } = require('./manualDownloadAliases');
 
 // Folder names use launcher slugs with '_' / '-' separators (GOG:
 // 'alien_breed_2_assault'). slugify() strips those chars, so turn them into
@@ -175,19 +177,24 @@ function computeManualCoverage(games, entries, opts = {}) {
   return { total_owned: games.length, present: presentIds.size, missing, extra_folders };
 }
 
-// End-to-end: fetch the folder listing from the orchestrator and diff it against
-// the owned library. `launcherFolder` is the on-disk folder name (e.g. 'GOG');
-// the owned query uses its lowercase as the Game_shelf launcher name.
+// End-to-end: fetch the entry listing from the orchestrator and diff it against
+// the owned library. `launcherFolder` is the on-disk folder name (e.g. 'GOG',
+// 'Amazon Games'). The registry supplies the Game_shelf launcher name, the scan
+// mode (dir vs file), and the alias map; file-mode requests include_files.
 async function fetchManualCoverage(db, launcherFolder, { client = orchestrator } = {}) {
+  const reg = manualLauncherByFolder(launcherFolder);
+  const name = reg ? reg.name : String(launcherFolder).toLowerCase();
+  const mode = reg ? reg.mode : 'dir';
+  const qs = mode === 'file' ? '?include_files=true' : '';
   const { status, data } = await client.callOrchestrator(
     'GET',
-    `/api/v1/manual-downloads/${encodeURIComponent(launcherFolder)}`
+    `/api/v1/manual-downloads/${encodeURIComponent(launcherFolder)}${qs}`
   );
   if (status !== 200) {
     throw Object.assign(new Error('manual-downloads fetch failed'), { status, body: data });
   }
-  const games = ownedGamesForLauncher(db, String(launcherFolder).toLowerCase());
-  const report = computeManualCoverage(games, data.entries || []);
+  const games = ownedGamesForLauncher(db, name);
+  const report = computeManualCoverage(games, data.entries || [], { mode, aliases: aliasesFor(name) });
   return { launcher: launcherFolder, present_folder: Boolean(data.present), ...report };
 }
 

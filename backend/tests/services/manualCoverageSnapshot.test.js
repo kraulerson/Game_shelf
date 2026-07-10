@@ -51,3 +51,22 @@ describe('manualCoverageSnapshot', () => {
     assert.equal(e.stale, true);
   });
 });
+
+describe('manualCoverageSnapshot include_files', () => {
+  it('appends include_files=true and caches per (launcher, includeFiles)', async () => {
+    const paths = [];
+    const client = {
+      callOrchestrator: async (method, path) => {
+        paths.push(path);
+        return { status: 200, data: { present: true, entries: ['f.zip'] } };
+      },
+    };
+    const snap = makeManualDownloadsSnapshot({ client, ttlMs: 60000, now: () => 0 });
+    await snap.get('Itch.io', { includeFiles: true });
+    await snap.get('Itch.io'); // no files -> different cache key -> separate fetch
+    assert.deepEqual(paths, [
+      '/api/v1/manual-downloads/Itch.io?include_files=true',
+      '/api/v1/manual-downloads/Itch.io',
+    ]);
+  });
+});

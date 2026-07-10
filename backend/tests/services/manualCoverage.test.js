@@ -250,3 +250,25 @@ describe('manualCoverage file-mode + aliases + simplifyTitle', () => {
     assert.deepEqual(r.extra_folders, ['DitV-Windows.zip']);
   });
 });
+
+describe('manualCoverage.fetchManualCoverage registry resolution', () => {
+  const { fetchManualCoverage } = require('../../src/services/manualCoverage');
+  it('resolves file-mode + include_files + owned launcher from the folder name', async () => {
+    const db = {
+      prepare: () => ({
+        all: () => [{ id: 1, title: 'Toki Tori', slug: 'toki-tori', edition_title: null, gog_slug: null }],
+      }),
+    };
+    let seenPath;
+    const client = {
+      callOrchestrator: async (m, p) => {
+        seenPath = p;
+        return { status: 200, data: { present: true, entries: ['TokiTori_2013-07-03_Windows_1372878397.zip'] } };
+      },
+    };
+    const r = await fetchManualCoverage(db, 'Humble Bundle', { client });
+    assert.equal(seenPath, '/api/v1/manual-downloads/Humble%20Bundle?include_files=true');
+    assert.equal(r.present, 1);
+    assert.equal(r.launcher, 'Humble Bundle');
+  });
+});
