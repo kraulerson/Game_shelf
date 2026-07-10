@@ -302,3 +302,49 @@ describe('manualCoverage.manualDownloadSets (union over registry)', () => {
     assert.deepEqual([...manualGameIds].sort((a, b) => a - b), [10, 20, 30, 40]);
   });
 });
+
+describe('manualCoverage review-fix regressions (#222)', () => {
+  const { normalizeFileEntry, computeManualCoverage } = require('../../src/services/manualCoverage');
+
+  // SEV-2: _PLATFORM must not strip real English title words.
+  it('does not strip English title words (final/classic/installer)', () => {
+    assert.equal(normalizeFileEntry('The Final Station v1.3.exe'), 'the-final-station');
+    assert.equal(normalizeFileEntry('Classic Racer.zip'), 'classic-racer');
+    assert.equal(normalizeFileEntry('Installer Simulator.zip'), 'installer-simulator');
+  });
+
+  // "full" is no longer eaten by _PLATFORM; "Remastered" is an edition suffix that
+  // slugify strips on BOTH the file and the owned title, so the game still matches.
+  it('matches "Full Throttle Remastered" (full kept, edition suffix symmetric)', () => {
+    const r = computeManualCoverage(
+      [{ id: 1, title: 'Full Throttle Remastered', slug: 'full-throttle-remastered' }],
+      ['Full Throttle Remastered.zip'],
+      { mode: 'file' }
+    );
+    assert.equal(r.present, 1);
+  });
+
+  // SEV-2: a bare glued version (vN, no dot) must be stripped.
+  it('strips a bare glued version like Machinariumv2', () => {
+    assert.equal(normalizeFileEntry('Machinariumv2.zip'), 'machinarium');
+    assert.equal(normalizeFileEntry('SETIv2.zip'), 'seti');
+  });
+
+  // SEV-3: an ambiguous shared simplifyTitle base must NOT let one entry mark two games.
+  it('does not over-match two games sharing a subtitle-stripped base', () => {
+    const games = [
+      { id: 1, title: 'Broken Sword: The Shadow of the Templars', slug: 'broken-sword-the-shadow-of-the-templars' },
+      { id: 2, title: 'Broken Sword: The Smoking Mirror', slug: 'broken-sword-the-smoking-mirror' },
+    ];
+    const r = computeManualCoverage(games, ['broken_sword'], { mode: 'file' });
+    assert.equal(r.present, 0); // ambiguous simplify not used -> neither falsely present
+    assert.equal(r.missing.length, 2);
+  });
+
+  // A UNIQUE simplifyTitle base still rescues a subtitle-less filename.
+  it('still uses a unique simplifyTitle base', () => {
+    const games = [{ id: 3, title: "Lone Survivor: The Director's Cut", slug: 'lone-survivor-the-directors-cut' }];
+    const r = computeManualCoverage(games, ['LoneSurvivor-PC.zip'], { mode: 'file' });
+    assert.equal(r.present, 1);
+  });
+});
