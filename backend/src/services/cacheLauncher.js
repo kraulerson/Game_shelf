@@ -28,6 +28,13 @@ const CANONICAL_ORDER_SQL = `CASE l.name
   WHEN 'amazon' THEN 9
   ELSE 99 END`;
 
+// A launcher's EFFECTIVE display priority. priority is user-set (1 = highest); the
+// default 0 means "unranked" and must sort LAST — otherwise a never-ranked launcher
+// (0) outranks every explicitly-ranked one and hijacks the badge/display. When 0 is
+// pushed last, CANONICAL_ORDER_SQL (Steam>Epic>...>Amazon) governs unranked launchers,
+// so lancache launchers win by default. Assumes the launchers table is aliased `l`.
+const EFFECTIVE_PRIORITY_SQL = `CASE WHEN l.priority = 0 THEN 999 ELSE l.priority END`;
+
 /**
  * Resolve the launcher (name + launcher_game_id) whose cache status should be
  * shown for a grouped game.
@@ -45,7 +52,7 @@ function resolveCacheLauncher(db, gameId) {
        LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
        WHERE ge.game_id = ? AND ge.owned = 1 AND ge.parent_edition_id IS NULL
        ORDER BY COALESCE(et.is_display_edition, 0) DESC,
-                l.priority ASC,
+                ${EFFECTIVE_PRIORITY_SQL} ASC,
                 ${CANONICAL_ORDER_SQL} ASC,
                 COALESCE(et.tier, 0) DESC,
                 ge.id ASC
@@ -55,4 +62,4 @@ function resolveCacheLauncher(db, gameId) {
   return row || null;
 }
 
-module.exports = { resolveCacheLauncher, CANONICAL_ORDER_SQL };
+module.exports = { resolveCacheLauncher, CANONICAL_ORDER_SQL, EFFECTIVE_PRIORITY_SQL };
