@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const pathMod = require('node:path');
 const authMiddleware = require('../middleware/auth');
 const { getCacheStatusSnapshot } = require('../services/cacheSnapshot');
-const { resolveCacheLauncher } = require('../services/cacheLauncher');
+const { resolveCacheLauncher, EFFECTIVE_PRIORITY_SQL } = require('../services/cacheLauncher');
 const { syncCrossLauncherExclusions } = require('../services/crossLauncherExclusions');
 const { manualDownloadSets } = require('../services/manualCoverage');
 const { MANUAL_LAUNCHERS } = require('../services/manualLaunchers');
@@ -54,7 +54,7 @@ router.get('/filters', (req, res) => {
     FROM launchers l
     JOIN game_editions ge ON ge.launcher_id = l.id AND ge.owned = 1 AND ge.parent_edition_id IS NULL
     WHERE l.enabled = 1
-    GROUP BY l.name ORDER BY l.priority ASC
+    GROUP BY l.name ORDER BY ${EFFECTIVE_PRIORITY_SQL} ASC
   `).all();
 
   const yearRange = db.prepare(`
@@ -113,7 +113,7 @@ router.get('/:id', async (req, res) => {
     JOIN launchers l ON l.id = ge.launcher_id
     LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
     WHERE ge.game_id = ? AND ge.parent_edition_id IS NULL
-    ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, l.priority ASC
+    ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, ${EFFECTIVE_PRIORITY_SQL} ASC
   `).all(id);
 
   // DLC items for this game
@@ -604,7 +604,7 @@ router.get('/', async (req, res) => {
                COALESCE(et.is_display_edition, 0) as is_display_override,
                ROW_NUMBER() OVER (
                  PARTITION BY COALESCE(ge.game_id, ge.id * -1)
-                 ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, l.priority ASC
+                 ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, ${EFFECTIVE_PRIORITY_SQL} ASC
                ) as rn
         FROM game_editions ge
         JOIN launchers l ON l.id = ge.launcher_id
@@ -630,7 +630,7 @@ router.get('/', async (req, res) => {
                l.name as launcher_name, l.display_name as launcher_display_name, l.priority,
                ROW_NUMBER() OVER (
                  PARTITION BY COALESCE(ge.game_id, ge.id * -1)
-                 ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, l.priority ASC
+                 ORDER BY COALESCE(et.is_display_edition, 0) DESC, COALESCE(et.tier, 0) DESC, ${EFFECTIVE_PRIORITY_SQL} ASC
                ) as rn
         FROM game_editions ge
         JOIN launchers l ON l.id = ge.launcher_id
@@ -655,7 +655,7 @@ router.get('/', async (req, res) => {
     FROM game_editions ge
     JOIN launchers l ON l.id = ge.launcher_id
     WHERE ge.game_id = ? AND ge.owned = 1 AND ge.parent_edition_id IS NULL
-    ORDER BY l.priority ASC
+    ORDER BY ${EFFECTIVE_PRIORITY_SQL} ASC
   `);
   const genresStmt = db.prepare(`
     SELECT gr.name FROM genres gr

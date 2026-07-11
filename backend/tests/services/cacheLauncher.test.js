@@ -61,6 +61,14 @@ describe('resolveCacheLauncher (#223 multi-launcher cache badge)', () => {
     db.prepare("INSERT INTO games (id,title,slug) VALUES (400,'Conflict','conflict')").run();
     insEd.run(4000, 400, 4, 'ea-conflict', 'Conflict');
     insEd.run(4001, 400, 5, 'amazon-conflict', 'Conflict');
+
+    // 500 Ranked-vs-unranked: EA (priority 5, explicit) + GOG (priority 0, the
+    // default 'unranked'). The unranked launcher must sort LAST even though 0 < 5
+    // numerically — the prod bug where Amazon sat at the default 0 and outranked
+    // Steam. EA must win.
+    db.prepare("INSERT INTO games (id,title,slug) VALUES (500,'Ranked','ranked')").run();
+    insEd.run(5000, 500, 4, 'ea-ranked', 'Ranked'); // ea, priority 5
+    insEd.run(5001, 500, 3, 'gog-ranked', 'Ranked'); // gog, priority 0
   });
 
   after(() => {
@@ -91,6 +99,14 @@ describe('resolveCacheLauncher (#223 multi-launcher cache badge)', () => {
     const r = resolveCacheLauncher(db, 400);
     assert.equal(r.launcher_name, 'amazon');
     assert.equal(r.launcher_game_id, 'amazon-conflict');
+  });
+
+  it('sorts an unranked launcher (priority 0) LAST, after an explicitly-ranked one', () => {
+    // GOG is priority 0 (unranked); EA is priority 5. Pre-fix, 0 sorted first and
+    // GOG won. Post-fix, 0 => 999 so EA wins. (The prod Amazon=0-beats-Steam bug.)
+    const r = resolveCacheLauncher(db, 500);
+    assert.equal(r.launcher_name, 'ea');
+    assert.equal(r.launcher_game_id, 'ea-ranked');
   });
 
   it('returns null for a null/absent gameId', () => {
