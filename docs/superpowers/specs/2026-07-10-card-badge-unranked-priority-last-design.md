@@ -33,16 +33,24 @@ both a manual and a lancache launcher and are affected.
 
 ## Goal / Non-goals
 
-**Goal:** an unranked launcher (`priority = 0`) is treated as **lowest** priority, so the
-built-in canonical order (Steam>Epic>GOG>EA>Ubisoft>Humble>Itch>Xbox>Amazon) governs
-unranked launchers. Lancache launchers then win the badge + display for any multi-launcher
-game by default, Karl's explicit rankings (1–8) still apply, `is_display_edition`/`tier`
-overrides still take precedence, and a future unranked launcher can't hijack the badge.
+**Goal (two parts):**
+1. **Code (robustness):** an unranked launcher (`priority = 0`) is treated as **lowest**
+   priority, so the built-in canonical order (Steam>Epic>GOG>EA>Ubisoft>Humble>Itch>Xbox>
+   Amazon) governs unranked launchers. Lancache launchers then win the badge + display for
+   any multi-launcher game by default, explicit rankings still apply,
+   `is_display_edition`/`tier` overrides still take precedence, and a future unranked
+   launcher can't hijack the badge.
+2. **Data (ranking):** Amazon is explicitly ranked **immediately after GOG**, per Karl —
+   final manual order gog > amazon > humble > xbox > itchio. Because launcher priorities are
+   pure **user data** (schema default `0`, no code seed — set via the #224 settings UI),
+   this is a one-time settings reprice applied at deploy, not a migration. Without it the
+   code fix alone would sort Amazon *last* (after Itchio); Karl wants it just below GOG.
 
 **Non-goals:** no frontend change (the card already consumes `cache_launcher_name`); no
-schema change / migration (Amazon stays `0` in the DB — the code now reads `0` correctly as
-"unranked → last"); no change to sync ordering (functionally order-irrelevant); no change to
-`is_display_edition` / `is_prefill_edition` semantics.
+schema change and no migration (priorities are user data; the reprice is an `UPDATE`, not
+seeded in code — consistent with how every other priority was set); no change to sync
+ordering (functionally order-irrelevant); no change to `is_display_edition` /
+`is_prefill_edition` semantics.
 
 ## Design
 
@@ -114,7 +122,17 @@ the load-bearing coverage.
 
 ## Rollout
 
-Single backend PR. Deploy: `.102` `git reset --hard origin/master && docker compose up -d
---build backend`. Live-verify: the 220 manual+lancache games now resolve to their lancache
-launcher (spot-check Psychonauts → steam); Amazon-only games still show Amazon Downloaded.
-Karl merges the PR.
+Single backend PR (the code fix + tests). Karl merges the PR.
+
+**Deploy (`.102`):**
+1. `cd /opt/gameshelf && git reset --hard origin/master && docker compose up -d --build backend`.
+2. **Reprice Amazon after GOG** (one-time settings `UPDATE`, since priorities are user data;
+   run against the live DB). Current: `steam1 epic2 ubisoft3 ea4 gog5 humble6 xbox7 itchio8
+   amazon0`. Target inserts Amazon at 6 and shifts the three below down:
+   `amazon=6, humble=7, xbox=8, itchio=9` (steam/epic/ubisoft/ea/gog unchanged). Idempotent.
+
+**Live-verify:**
+- The 220 manual+lancache games now resolve to their lancache launcher (spot-check
+  Psychonauts → steam); Amazon-only games still show Amazon Downloaded.
+- Launcher order reads gog(5) > amazon(6) > humble(7) > xbox(8) > itchio(9); a game owned on
+  Amazon + Humble now resolves to Amazon (amazon 6 < humble 7).
