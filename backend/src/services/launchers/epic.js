@@ -122,6 +122,7 @@ class EpicLauncher extends BaseLauncher {
     let allItems = [];
     let cursor = null;
     let hasMore = true;
+    let pagesFetched = 0;
 
     while (hasMore) {
       const params = { includeMetadata: true };
@@ -134,12 +135,23 @@ class EpicLauncher extends BaseLauncher {
         if (Array.isArray(records)) {
           allItems.push(...records);
         }
+        pagesFetched += 1;
 
         cursor = res.data?.responseMetadata?.nextCursor || null;
         hasMore = !!cursor;
       } catch (err) {
+        // MUST throw — never return the pages fetched so far. syncEngine marks
+        // every edition that was NOT returned as owned=0, and its only guard is
+        // against a FULLY empty result (syncEngine.js:116); a partial list sails
+        // straight past it. The job is then recorded status='success' with the
+        // truncated count and last_sync_at is stamped, so the loss is invisible.
+        // One failed page could mark most of the Epic library unowned silently.
         console.error('[Epic] Library fetch failed:', err.message);
-        hasMore = false;
+        throw new Error(
+          `Epic library pagination failed after ${pagesFetched} page(s) ` +
+          `(${allItems.length} items retrieved): ${err.message}. ` +
+          'Refusing to return a partial library.'
+        );
       }
 
       await sleep(500);

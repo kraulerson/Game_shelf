@@ -2,6 +2,15 @@ const { decrypt } = require('../utils/encrypt');
 const { LAUNCHER_CLASSES } = require('./launchers');
 const { enrichAll } = require('./metadata/enrichGame');
 
+// Ratio guard on soft-removal. A single sync may not mark more than this share of
+// a launcher's owned library as unowned; beyond it the sync fails and nothing is
+// changed. Tuned so ordinary churn (a few games leaving a subscription) passes
+// while a truncated fetch does not.
+const UNOWN_GUARD_MAX_RATIO = 0.2;
+// Below this library size the ratio carries no signal — dropping 1 of 2 games is
+// 50% and perfectly legitimate — so the guard does not apply.
+const UNOWN_GUARD_MIN_LIBRARY = 10;
+
 async function syncLauncher(launcherName, db, otpCode) {
   const launcher = db.prepare('SELECT * FROM launchers WHERE name = ?').get(launcherName);
 
@@ -118,18 +127,41 @@ async function syncLauncher(launcherName, db, otpCode) {
         'SELECT launcher_game_id FROM game_editions WHERE launcher_id = ? AND owned = 1'
       ).all(launcher.id);
 
+      const toUnown = allEditions.filter(e => !returnedIds.has(e.launcher_game_id));
+
+      // Ratio guard (defence in depth behind the per-launcher fail-on-partial fix).
+      // The `returnedIds.size > 0` check above only catches a FULLY empty result;
+      // a short-but-non-empty list sails past it and unowns the remainder while the
+      // job still records status='success'. A mass unowning is far more likely to be
+      // a truncated fetch than a real library change, so refuse it and keep the old
+      // state — a visibly failed sync is recoverable, silent data loss is not.
+      //
+      // The floor exists because a ratio is meaningless on a tiny library: legitimately
+      // dropping 1 of 2 games is 50%, and small libraries are exactly where real churn
+      // looks extreme.
+      const isMeaningfulSample = allEditions.length >= UNOWN_GUARD_MIN_LIBRARY;
+      const unownRatio = allEditions.length > 0 ? toUnown.length / allEditions.length : 0;
+      if (isMeaningfulSample && unownRatio > UNOWN_GUARD_MAX_RATIO) {
+        throw new Error(
+          `Refusing to unown ${toUnown.length} of ${allEditions.length} ` +
+          `${launcherName} games (${Math.round(unownRatio * 100)}% > ` +
+          `${Math.round(UNOWN_GUARD_MAX_RATIO * 100)}%) in a single sync. ` +
+          'This usually means a truncated or partial library fetch, not a real ' +
+          'library change. No games were unowned. If the drop is genuine, re-run ' +
+          'the sync after confirming the launcher returns the full library.'
+        );
+      }
+
       const markUnowned = db.prepare(
         'UPDATE game_editions SET owned = 0 WHERE launcher_id = ? AND launcher_game_id = ?'
       );
 
       const markAll = db.transaction((editions) => {
         for (const edition of editions) {
-          if (!returnedIds.has(edition.launcher_game_id)) {
-            markUnowned.run(launcher.id, edition.launcher_game_id);
-          }
+          markUnowned.run(launcher.id, edition.launcher_game_id);
         }
       });
-      markAll(allEditions);
+      markAll(toUnown);
     }
 
     // Update sync job to success

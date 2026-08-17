@@ -91,6 +91,43 @@ describe('Sync engine', () => {
     }
   });
 
+  it('refuses to unown most of a library in one sync (ratio guard)', async () => {
+    // Defence in depth behind the per-launcher fix. Any launcher that returns a
+    // short-but-non-empty list would otherwise sail past the `returnedIds.size > 0`
+    // guard and have the remainder marked owned=0 — while the job still records
+    // status='success'. A mass unowning is far more likely to be a broken fetch
+    // than a real library change, so refuse it loudly and keep the old state.
+    const axios = require('axios');
+    const originalGet = axios.get;
+
+    const launcherId = db.prepare('SELECT id FROM launchers WHERE name = ?').get('steam').id;
+    const ins = db.prepare(
+      'INSERT OR REPLACE INTO game_editions (launcher_id, launcher_game_id, title, owned) VALUES (?, ?, ?, 1)'
+    );
+    for (let i = 0; i < 20; i++) ins.run(launcherId, `guard${i}`, `Guard Game ${i}`);
+
+    // Return a single game — everything else would be unowned.
+    axios.get = async () => ({
+      data: { response: { games: [{ appid: 999001, name: 'Only One', playtime_forever: 0 }] } }
+    });
+
+    try {
+      const jobId = await syncLauncher('steam', db);
+      const job = db.prepare('SELECT * FROM sync_jobs WHERE id = ?').get(jobId);
+      assert.equal(job.status, 'failed', 'a mass unowning must fail the sync, not succeed quietly');
+      assert.match(String(job.error_message), /unown|ratio|refus/i);
+
+      const still = db.prepare(
+        'SELECT COUNT(*) AS n FROM game_editions WHERE launcher_id = ? AND launcher_game_id LIKE ? AND owned = 1'
+      ).get(launcherId, 'guard%');
+      assert.equal(still.n, 20, 'no edition may be unowned when the guard trips');
+    } finally {
+      axios.get = originalGet;
+      db.prepare('DELETE FROM game_editions WHERE launcher_game_id LIKE ?').run('guard%');
+      db.prepare('DELETE FROM game_editions WHERE launcher_game_id = ?').run('999001');
+    }
+  });
+
   it('syncLauncher should handle errors gracefully', async () => {
     const { encrypt } = require('../../src/utils/encrypt');
     const creds = encrypt(JSON.stringify({ access_token: 'old', refresh_token: 'expired' }));

@@ -116,3 +116,73 @@ describe('Humble Launcher', () => {
     }
   });
 });
+
+describe('HumbleLauncher order-fetch integrity', () => {
+  it('throws when any order fetch fails instead of silently omitting its games', async () => {
+    // The per-order catch warned and continued, so a failed order's games were
+    // simply absent from the result. syncEngine then marks every edition that
+    // was not returned as owned=0 (its only guard is a fully-empty result), and
+    // still records status='success'. Any omission is therefore silent data
+    // loss, so a known-incomplete list must never be returned as authoritative.
+    const axios = require('axios');
+    const originalGet = axios.get;
+
+    axios.get = async (url) => {
+      if (url.includes('/user/order')) {
+        return { status: 200, data: [{ gamekey: 'ok1' }, { gamekey: 'bad2' }] };
+      }
+      if (url.includes('/order/ok1')) {
+        return {
+          status: 200,
+          data: { subproducts: [{ machine_name: 'g1', human_name: 'Game One', downloads: [{}] }] },
+        };
+      }
+      throw new Error('500 Internal Server Error');
+    };
+
+    try {
+      const HumbleLauncher = require('../../../src/services/launchers/humble');
+      const launcher = new HumbleLauncher('humble', {});
+      launcher.credentials = { session_cookie: 'c' };
+
+      await assert.rejects(
+        () => launcher.fetchOwnedGames({ session_cookie: 'c' }),
+        /partial|incomplete|order/i,
+        'an incomplete order set must be an error, not a shorter list'
+      );
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+
+  it('returns all games when every order fetch succeeds', async () => {
+    const axios = require('axios');
+    const originalGet = axios.get;
+
+    axios.get = async (url) => {
+      if (url.includes('/user/order')) {
+        return { status: 200, data: [{ gamekey: 'a' }, { gamekey: 'b' }] };
+      }
+      const which = url.includes('/order/a') ? 'a' : 'b';
+      return {
+        status: 200,
+        data: {
+          subproducts: [
+            { machine_name: `game_${which}`, human_name: `Game ${which}`, downloads: [{}] },
+          ],
+        },
+      };
+    };
+
+    try {
+      const HumbleLauncher = require('../../../src/services/launchers/humble');
+      const launcher = new HumbleLauncher('humble', {});
+      launcher.credentials = { session_cookie: 'c' };
+      const games = await launcher.fetchOwnedGames({ session_cookie: 'c' });
+      assert.equal(games.length, 2);
+      assert.deepEqual(games.map(g => g.launcher_game_id).sort(), ['game_a', 'game_b']);
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+});

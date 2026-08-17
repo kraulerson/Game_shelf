@@ -45,6 +45,7 @@ class HumbleLauncher extends BaseLauncher {
     const gamekeys = ordersRes.data;
     const games = [];
     const seen = new Set();
+    const failedOrders = [];
 
     // Fetch each order's details
     for (const item of gamekeys) {
@@ -69,7 +70,21 @@ class HumbleLauncher extends BaseLauncher {
         }
       } catch (err) {
         console.warn(`[Humble] Failed to fetch order ${key}: ${err.message}`);
+        failedOrders.push(key);
       }
+    }
+
+    // Any omission is silent data loss: syncEngine marks every edition that was
+    // not returned as owned=0, guarding only against a FULLY empty result, and
+    // still records status='success'. A known-incomplete list must therefore
+    // never be handed back as authoritative — refuse it instead.
+    if (failedOrders.length > 0) {
+      throw new Error(
+        `Humble order fetch incomplete: ${failedOrders.length} of ${gamekeys.length} ` +
+        `order(s) failed (${failedOrders.slice(0, 3).join(', ')}` +
+        `${failedOrders.length > 3 ? ', …' : ''}). ` +
+        'Refusing to return a partial library.'
+      );
     }
 
     return games;
