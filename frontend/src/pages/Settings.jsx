@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, RefreshCw, GripVertical, Lock } from 'lucide-react';
+import { normalizeSyncJobs } from '../utils/syncStatus';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -50,7 +51,7 @@ function LaunchersTab() {
     refetchInterval: 10000,
   });
 
-  const syncJobs = syncStatusData?.jobs || syncStatusData || [];
+  const syncJobs = normalizeSyncJobs(syncStatusData);
   const otpWindowMs = syncStatusData?.otp_window_ms || 300000;
 
   const statusMap = {};

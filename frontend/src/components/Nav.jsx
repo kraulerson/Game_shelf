@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Library, Settings, LogOut, Menu, X, Loader2, HardDrive } from 'lucide-react';
+import { isAnySyncRunning, latestCompletedAt } from '../utils/syncStatus';
 
 export default function Nav() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -21,8 +22,12 @@ export default function Nav() {
     staleTime: Infinity,
   });
 
-  const isRunning = syncStatus?.some?.(j => j.status === 'running');
-  const lastSync = syncStatus?.[0]?.completed_at;
+  // /api/sync/status returns { jobs, otp_window_ms }; these read through a shared
+  // normaliser that tolerates that shape and the older bare array. Reading the
+  // object directly made isRunning undefined and lastSync undefined, so
+  // hoursSinceSync was permanently Infinity and the dot never left yellow.
+  const isRunning = isAnySyncRunning(syncStatus);
+  const lastSync = latestCompletedAt(syncStatus);
   const hoursSinceSync = lastSync ? (Date.now() - new Date(lastSync).getTime()) / 3600000 : Infinity;
 
   let syncDot = 'bg-yellow-500'; // >24h or unknown
