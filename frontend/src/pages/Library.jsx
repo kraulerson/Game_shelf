@@ -5,6 +5,7 @@ import { Search, Grid3X3, List, RefreshCw, Loader2, X, SlidersHorizontal, Chevro
 import GameCard from '../components/GameCard';
 import GameRow from '../components/GameRow';
 import FilterPanel from '../components/FilterPanel';
+import { isAnySyncRunning } from '../utils/syncStatus';
 
 export default function Library() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -65,7 +66,10 @@ export default function Library() {
       try {
         const res = await fetch('/api/sync/status', { credentials: 'same-origin' });
         const status = await res.json();
-        const stillRunning = status.some(j => j.status === 'running');
+        // Was `status.some(...)` — a TypeError on the { jobs } object, swallowed
+        // by the catch below, which cleared the poll on its first tick so the
+        // library never refreshed after a sync.
+        const stillRunning = isAnySyncRunning(status);
         if (!stillRunning) {
           clearInterval(poll);
           setSyncing(false);
