@@ -125,3 +125,80 @@ describe('EpicLauncher', () => {
     }
   });
 });
+
+describe('EpicLauncher pagination integrity', () => {
+  it('throws when pagination fails partway instead of returning a truncated library', async () => {
+    // A mid-pagination failure previously set hasMore=false and FELL THROUGH,
+    // returning only the pages fetched so far. syncEngine then marks every
+    // edition that was not returned as owned=0 — its only guard is against a
+    // FULLY empty result (syncEngine.js:116), which a partial list sails past.
+    // The job is then recorded status='success' with the truncated count and
+    // last_sync_at is stamped, so the loss is invisible.
+    // Concretely: page 1 of 5 succeeding then page 2 failing marks ~80% of the
+    // Epic library unowned while reporting success.
+    const axios = require('axios');
+    const originalGet = axios.get;
+
+    let call = 0;
+    axios.get = async (url) => {
+      if (url.includes('/playtime/')) return { data: [] };
+      call += 1;
+      if (call === 1) {
+        return {
+          data: {
+            records: [{ appName: 'page1-game', sandboxName: 'Page One Game' }],
+            responseMetadata: { nextCursor: 'CURSOR_PAGE_2' },
+          },
+        };
+      }
+      const err = new Error('503 Service Unavailable');
+      err.response = { status: 503 };
+      throw err;
+    };
+
+    try {
+      const EpicLauncher = require('../../../src/services/launchers/epic');
+      const launcher = new EpicLauncher('epic', {});
+      launcher.credentials = {};
+
+      await assert.rejects(
+        () => launcher.fetchOwnedGames({ access_token: 't', account_id: 'a' }),
+        /partial|incomplete|pagination/i,
+        'a truncated library must be an error, never a successful partial result'
+      );
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+
+  it('returns the full library when every page succeeds', async () => {
+    const axios = require('axios');
+    const originalGet = axios.get;
+
+    let call = 0;
+    axios.get = async (url) => {
+      if (url.includes('/playtime/')) return { data: [] };
+      call += 1;
+      if (call === 1) {
+        return {
+          data: {
+            records: [{ appName: 'g1', sandboxName: 'Game One' }],
+            responseMetadata: { nextCursor: 'C2' },
+          },
+        };
+      }
+      return { data: { records: [{ appName: 'g2', sandboxName: 'Game Two' }] } };
+    };
+
+    try {
+      const EpicLauncher = require('../../../src/services/launchers/epic');
+      const launcher = new EpicLauncher('epic', {});
+      launcher.credentials = {};
+      const games = await launcher.fetchOwnedGames({ access_token: 't', account_id: 'a' });
+      assert.equal(games.length, 2, 'both pages must be present');
+      assert.deepEqual(games.map(g => g.launcher_game_id).sort(), ['g1', 'g2']);
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+});
