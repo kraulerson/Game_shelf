@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const authMiddleware = require('../middleware/auth');
 const { syncLauncher, syncAll } = require('../services/syncEngine');
+const { summarizeSyncHealth } = require('../services/syncHealth');
 
 const OTP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -31,6 +32,37 @@ router.get('/status', (req, res) => {
   `).all();
 
   res.json({ jobs, otp_window_ms: OTP_WINDOW_MS });
+});
+
+// GET /api/sync/health — MUST be defined before /:launcherName to avoid route conflicts.
+//
+// /status reports raw jobs; this answers "is anything broken?". The distinction
+// matters because a launcher can stop syncing without its latest job ever looking
+// wrong: syncAll treats an awaiting_otp job as neither success nor failure and
+// continues, so staleness is derived from launchers.last_sync_at instead.
+router.get('/health', (req, res) => {
+  const db = req.app.locals.db;
+
+  const launchers = db.prepare(
+    'SELECT id, name, display_name, enabled, credentials_json, last_sync_at, sync_locked ' +
+    'FROM launchers ORDER BY priority ASC'
+  ).all();
+
+  const latestJobs = db.prepare(`
+    SELECT sj.* FROM sync_jobs sj
+    WHERE sj.id IN (SELECT MAX(id) FROM sync_jobs GROUP BY launcher_id)
+  `).all();
+  const jobByLauncher = new Map(latestJobs.map(j => [j.launcher_id, j]));
+
+  const rows = launchers.map(l => ({ launcher: l, job: jobByLauncher.get(l.id) || null }));
+  const summary = summarizeSyncHealth(rows);
+
+  // credentials_json must never leave the server, even encrypted.
+  res.json({
+    healthy: summary.healthy,
+    problems: summary.problems,
+    launchers: summary.launchers,
+  });
 });
 
 // POST /api/sync/:launcherName/otp — MUST be before /:launcherName to avoid route conflicts
