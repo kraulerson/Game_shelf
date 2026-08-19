@@ -286,6 +286,37 @@ function runMigrations(dbPath) {
     console.log('[Migration] #222: added game_editions.gog_slug');
   }
 
+  // Credential envelope v0 -> v1: blobs written before the versioned envelope were
+  // sealed with an unsalted single-pass SHA-256 of the passphrase. Re-seal them under
+  // the salted derivation. Reads already handle both (encrypt.js dispatches on the
+  // envelope version), so this is a hardening pass, not a correctness prerequisite —
+  // which is why a failure here must be loud rather than silently skipped.
+  const storedCreds = db
+    .prepare('SELECT id, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
+    .all();
+
+  if (storedCreds.length > 0) {
+    const { isLegacyEnvelope, rotate } = require('../utils/encrypt');
+    const passphrase = process.env.GAMESHELF_ENCRYPTION_KEY;
+    const legacy = storedCreds.filter((row) => isLegacyEnvelope(row.credentials_json));
+
+    if (legacy.length > 0) {
+      const updateCred = db.prepare('UPDATE launchers SET credentials_json = ? WHERE id = ?');
+
+      // One transaction: a partial upgrade is still readable, but leaving it
+      // half-done would hide a real failure behind a success-looking startup.
+      db.transaction(() => {
+        for (const row of legacy) {
+          updateCred.run(rotate(row.credentials_json, passphrase, passphrase), row.id);
+        }
+      })();
+
+      console.log(
+        `[Migration] Re-sealed ${legacy.length} credential(s) under the salted key derivation`
+      );
+    }
+  }
+
   return db;
 }
 

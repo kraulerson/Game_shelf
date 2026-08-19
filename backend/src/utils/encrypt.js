@@ -1,8 +1,15 @@
 const crypto = require('node:crypto');
+const path = require('node:path');
+const fs = require('node:fs');
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const SCHEMA_VERSION = 1;
+
+// N=2^15 costs ~100ms and ~33MB per derivation. Node's default maxmem is 32MB,
+// just under what this needs, so it must be raised explicitly or scryptSync throws.
+const SCRYPT_PARAMS = { N: 2 ** 15, r: 8, p: 1, maxmem: 96 * 1024 * 1024 };
+const KEY_BYTES = 32;
 
 // Every path that accepts key material runs this — module load and rotation
 // alike. Rotation onto a weak key would silently downgrade the whole store, so
@@ -26,8 +33,56 @@ const rawKey = process.env.GAMESHELF_ENCRYPTION_KEY;
 
 assertUsableKey(rawKey, 'GAMESHELF_ENCRYPTION_KEY environment variable');
 
-// Derive a fixed 32-byte key from the passphrase using SHA-256
+// The salt is not a secret — its job is to make the derived key unique to this
+// install, so a precomputed table built against one Gameshelf cannot be reused
+// against another. It lives beside the database because it must survive restarts
+// and be backed up alongside the credentials it protects.
+function saltFilePath() {
+  const dbPath = process.env.GAMESHELF_DB_PATH || './data/gameshelf.db';
+  return path.join(path.dirname(dbPath), 'encryption-salt');
+}
+
+function loadOrCreateSalt() {
+  const file = saltFilePath();
+
+  if (fs.existsSync(file)) return fs.readFileSync(file);
+
+  const salt = crypto.randomBytes(32);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, salt, { mode: 0o600 });
+  return salt;
+}
+
+// A 32-byte key supplied directly as hex or base64 skips the KDF entirely, which
+// is both stronger and faster than stretching a human-chosen passphrase.
+function asRawKey(value) {
+  if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, 'hex');
+
+  if (/^[A-Za-z0-9+/]{43}=$/.test(value)) {
+    const decoded = Buffer.from(value, 'base64');
+    if (decoded.length === KEY_BYTES) return decoded;
+  }
+
+  return null;
+}
+
+// scrypt is deliberately expensive, and rotation derives keys once per row.
+// Cache within the process; nothing is written to disk.
+const keyCache = new Map();
+
 function deriveKey(passphrase) {
+  if (keyCache.has(passphrase)) return keyCache.get(passphrase);
+
+  const raw = asRawKey(passphrase);
+  const key = raw || crypto.scryptSync(passphrase, loadOrCreateSalt(), KEY_BYTES, SCRYPT_PARAMS);
+
+  keyCache.set(passphrase, key);
+  return key;
+}
+
+// How credentials were sealed before the versioned envelope: unsalted, single-pass
+// SHA-256. Retained for reading only, so blobs written by older releases still open.
+function deriveLegacyKey(passphrase) {
   return crypto.createHash('sha256').update(passphrase).digest();
 }
 
@@ -64,39 +119,49 @@ function sealWith(plaintext, key) {
   return Buffer.from(payload).toString('base64');
 }
 
-function openWith(ciphertext, key) {
-  const payload = JSON.parse(Buffer.from(ciphertext, 'base64').toString('utf8'));
-
+function openWith(payload, key) {
   const iv = Buffer.from(payload.iv, 'hex');
   const tag = Buffer.from(payload.tag, 'hex');
-  const encrypted = payload.data;
 
   const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(tag);
 
-  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  let decrypted = decipher.update(payload.data, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
 
   return decrypted;
 }
 
-const key = deriveKey(rawKey);
+/** True when a stored blob predates the versioned envelope. */
+function isLegacyEnvelope(ciphertext) {
+  const payload = JSON.parse(Buffer.from(ciphertext, 'base64').toString('utf8'));
+  return payload.v !== SCHEMA_VERSION;
+}
+
+// The envelope says which derivation sealed it, so old and new blobs coexist and
+// a half-finished migration still reads correctly.
+function open(ciphertext, passphrase) {
+  const payload = JSON.parse(Buffer.from(ciphertext, 'base64').toString('utf8'));
+  const key = payload.v === SCHEMA_VERSION ? deriveKey(passphrase) : deriveLegacyKey(passphrase);
+
+  return openWith(payload, key);
+}
 
 function encrypt(plaintext) {
-  return sealWith(plaintext, key);
+  return sealWith(plaintext, deriveKey(rawKey));
 }
 
 function decrypt(ciphertext) {
-  return openWith(ciphertext, key);
+  return open(ciphertext, rawKey);
 }
 
 // Re-seal a blob from one passphrase to another. This is what makes changing
 // GAMESHELF_ENCRYPTION_KEY a recoverable operation rather than a destructive one.
+// Passing the same passphrase twice upgrades a legacy blob to the current scheme.
 function rotate(ciphertext, oldPassphrase, newPassphrase) {
   assertUsableKey(newPassphrase, 'The new encryption key');
 
-  const plaintext = openWith(ciphertext, deriveKey(oldPassphrase));
-  return sealWith(plaintext, deriveKey(newPassphrase));
+  return sealWith(open(ciphertext, oldPassphrase), deriveKey(newPassphrase));
 }
 
-module.exports = { encrypt, decrypt, rotate };
+module.exports = { encrypt, decrypt, rotate, isLegacyEnvelope };
