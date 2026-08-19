@@ -75,4 +75,47 @@ describe('encrypt utility', () => {
 
     process.env.GAMESHELF_ENCRYPTION_KEY = TEST_KEY;
   });
+
+  it('should stamp the envelope with a schema version and a key id', () => {
+    delete require.cache[require.resolve('../../src/utils/encrypt')];
+    const { encrypt } = require('../../src/utils/encrypt');
+
+    const parsed = JSON.parse(Buffer.from(encrypt('test'), 'base64').toString('utf8'));
+    assert.equal(parsed.v, 1, 'envelope must declare schema version 1');
+    assert.ok(parsed.kid, 'envelope must carry a key id so rotation can tell keys apart');
+  });
+
+
+  it('should re-seal a blob under a new key so the new key can read it', () => {
+    const OLD_KEY = 'old]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
+    const NEW_KEY = 'new]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
+
+    process.env.GAMESHELF_ENCRYPTION_KEY = OLD_KEY;
+    delete require.cache[require.resolve('../../src/utils/encrypt')];
+    const oldMod = require('../../src/utils/encrypt');
+    const sealedUnderOld = oldMod.encrypt('launcher-password');
+
+    const sealedUnderNew = oldMod.rotate(sealedUnderOld, OLD_KEY, NEW_KEY);
+
+    process.env.GAMESHELF_ENCRYPTION_KEY = NEW_KEY;
+    delete require.cache[require.resolve('../../src/utils/encrypt')];
+    const newMod = require('../../src/utils/encrypt');
+    assert.equal(newMod.decrypt(sealedUnderNew), 'launcher-password');
+
+    process.env.GAMESHELF_ENCRYPTION_KEY = TEST_KEY;
+  });
+
+
+  it('should refuse to rotate onto a key that is too short', () => {
+    delete require.cache[require.resolve('../../src/utils/encrypt')];
+    const { encrypt, rotate } = require('../../src/utils/encrypt');
+
+    const sealed = encrypt('launcher-password');
+
+    assert.throws(
+      () => rotate(sealed, TEST_KEY, 'tooshort'),
+      /32/,
+      'rotating onto a weak key must fail loud, not silently downgrade the store'
+    );
+  });
 });

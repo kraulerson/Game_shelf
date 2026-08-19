@@ -2,27 +2,49 @@ const crypto = require('node:crypto');
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
+const SCHEMA_VERSION = 1;
+
+// Every path that accepts key material runs this — module load and rotation
+// alike. Rotation onto a weak key would silently downgrade the whole store, so
+// it fails loud instead.
+function assertUsableKey(passphrase, label) {
+  if (!passphrase) {
+    throw new Error(
+      `${label} is required. Set it to a random string of 32+ characters.`
+    );
+  }
+
+  if (passphrase.length < 32) {
+    throw new Error(
+      `${label} must be at least 32 characters long. ` +
+      `Current length: ${passphrase.length}`
+    );
+  }
+}
 
 const rawKey = process.env.GAMESHELF_ENCRYPTION_KEY;
 
-if (!rawKey) {
-  throw new Error(
-    'GAMESHELF_ENCRYPTION_KEY environment variable is required. ' +
-    'Set it to a random string of 32+ characters.'
-  );
-}
-
-if (rawKey.length < 32) {
-  throw new Error(
-    'GAMESHELF_ENCRYPTION_KEY must be at least 32 characters long. ' +
-    `Current length: ${rawKey.length}`
-  );
-}
+assertUsableKey(rawKey, 'GAMESHELF_ENCRYPTION_KEY environment variable');
 
 // Derive a fixed 32-byte key from the passphrase using SHA-256
-const key = crypto.createHash('sha256').update(rawKey).digest();
+function deriveKey(passphrase) {
+  return crypto.createHash('sha256').update(passphrase).digest();
+}
 
-function encrypt(plaintext) {
+// Short, domain-separated fingerprint of a key. Stamped into every envelope so
+// rotation can tell which key sealed a given blob without trial decryption. Not
+// secret: the envelope already carries ciphertext under this key, which is a far
+// stronger oracle than an 8-hex digest.
+function keyIdFor(key) {
+  return crypto
+    .createHash('sha256')
+    .update('gameshelf-kid-v1')
+    .update(key)
+    .digest('hex')
+    .slice(0, 8);
+}
+
+function sealWith(plaintext, key) {
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
@@ -32,6 +54,8 @@ function encrypt(plaintext) {
   const tag = cipher.getAuthTag().toString('hex');
 
   const payload = JSON.stringify({
+    v: SCHEMA_VERSION,
+    kid: keyIdFor(key),
     iv: iv.toString('hex'),
     tag,
     data: encrypted,
@@ -40,7 +64,7 @@ function encrypt(plaintext) {
   return Buffer.from(payload).toString('base64');
 }
 
-function decrypt(ciphertext) {
+function openWith(ciphertext, key) {
   const payload = JSON.parse(Buffer.from(ciphertext, 'base64').toString('utf8'));
 
   const iv = Buffer.from(payload.iv, 'hex');
@@ -56,4 +80,23 @@ function decrypt(ciphertext) {
   return decrypted;
 }
 
-module.exports = { encrypt, decrypt };
+const key = deriveKey(rawKey);
+
+function encrypt(plaintext) {
+  return sealWith(plaintext, key);
+}
+
+function decrypt(ciphertext) {
+  return openWith(ciphertext, key);
+}
+
+// Re-seal a blob from one passphrase to another. This is what makes changing
+// GAMESHELF_ENCRYPTION_KEY a recoverable operation rather than a destructive one.
+function rotate(ciphertext, oldPassphrase, newPassphrase) {
+  assertUsableKey(newPassphrase, 'The new encryption key');
+
+  const plaintext = openWith(ciphertext, deriveKey(oldPassphrase));
+  return sealWith(plaintext, deriveKey(newPassphrase));
+}
+
+module.exports = { encrypt, decrypt, rotate };
