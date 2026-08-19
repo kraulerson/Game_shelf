@@ -1,7 +1,5 @@
 const { Router } = require('express');
 const authMiddleware = require('../middleware/auth');
-const { generateQRSetupData } = require('../utils/totp');
-const { decrypt } = require('../utils/encrypt');
 
 const router = Router();
 
@@ -35,27 +33,6 @@ router.post('/complete', (req, res) => {
   ).run('setup_complete', 'true');
 
   res.json({ ok: true });
-});
-
-// GET /api/setup/qr/:launcher_id
-router.get('/qr/:launcher_id', (req, res) => {
-  const db = req.app.locals.db;
-  const { launcher_id } = req.params;
-
-  const launcher = db.prepare('SELECT credentials_json FROM launchers WHERE name = ?').get(launcher_id);
-
-  if (!launcher || !launcher.credentials_json) {
-    return res.status(404).json({ error: 'Launcher not found or no credentials stored' });
-  }
-
-  const credentials = JSON.parse(decrypt(launcher.credentials_json));
-
-  if (!credentials.totp_secret) {
-    return res.status(400).json({ error: 'No TOTP secret configured for this launcher' });
-  }
-
-  const uri = generateQRSetupData(launcher_id, credentials.username || launcher_id, credentials.totp_secret);
-  res.json({ uri });
 });
 
 module.exports = router;

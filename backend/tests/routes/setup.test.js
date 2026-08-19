@@ -51,15 +51,9 @@ describe('Setup routes', () => {
     assert.equal(body.complete, false);
   });
 
-  it('GET /api/setup/qr/:launcher_id should return 404 when no credentials stored', async () => {
-    const res = await makeFetch(app, '/api/setup/qr/steam', {
-      headers: { Cookie: authCookie() },
-    });
-    assert.equal(res.status, 404);
-  });
-
-  it('GET /api/setup/qr/:launcher_id should return URI when credentials with TOTP secret exist', async () => {
-    // First, save credentials with a totp_secret via the launchers route
+  it('should no longer expose a QR endpoint that reads a stored TOTP secret back', async () => {
+    // Store credentials that DO contain a totp_secret, so the only reason a request
+    // can fail is that the route is gone — not that there was nothing to return.
     await makeFetch(app, '/api/launchers/steam/credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
@@ -69,24 +63,13 @@ describe('Setup routes', () => {
     const res = await makeFetch(app, '/api/setup/qr/steam', {
       headers: { Cookie: authCookie() },
     });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.ok(body.uri.startsWith('otpauth://totp/'), 'Should return an otpauth URI');
-    assert.ok(body.uri.includes('secret='), 'URI should contain the secret');
-  });
 
-  it('GET /api/setup/qr/:launcher_id should return 400 when no TOTP secret in credentials', async () => {
-    // Save credentials without totp_secret for gog
-    await makeFetch(app, '/api/launchers/gog/credentials', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
-      body: JSON.stringify({ username: 'goguser', password: 'pass' }),
-    });
-
-    const res = await makeFetch(app, '/api/setup/qr/gog', {
-      headers: { Cookie: authCookie() },
-    });
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 404, 'the secret read-back route must not exist');
+    const body = await res.text();
+    assert.ok(
+      !body.includes('JBSWY3DPEHPK3PXP'),
+      'no response from this path may ever contain the stored TOTP secret'
+    );
   });
 
   it('POST /api/setup/complete should mark setup as complete', async () => {

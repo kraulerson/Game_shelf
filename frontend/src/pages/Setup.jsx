@@ -4,6 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { buildOtpAuthUri } from '../utils/otpauth';
 
 function SortableItem({ launcher, index }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: launcher.id });
@@ -202,17 +203,19 @@ export default function Setup() {
       }
     }
 
-    async function loadQR(launcher) {
-      try {
-        const res = await fetch(`/api/setup/qr/${launcher.id}`, { credentials: 'same-origin' });
-        const data = await res.json();
-        setCredentials((prev) => ({
+    // Built locally from the secret already in this form. The server has no
+    // endpoint that reads a stored TOTP secret back out, by design.
+    function showQR(launcher) {
+      setCredentials((prev) => {
+        const creds = prev[launcher.id] || {};
+        return {
           ...prev,
-          [launcher.id]: { ...prev[launcher.id], qrUri: data.uri },
-        }));
-      } catch {
-        // QR load failed silently
-      }
+          [launcher.id]: {
+            ...creds,
+            qrUri: buildOtpAuthUri(launcher.id, creds.username, creds.totp_secret),
+          },
+        };
+      });
     }
 
     function updateField(launcherId, field, value) {
@@ -390,7 +393,7 @@ export default function Setup() {
                           </div>
                           {creds.saved && (
                             <button
-                              onClick={() => loadQR(launcher)}
+                              onClick={() => showQR(launcher)}
                               className="text-sm text-blue-400 hover:text-blue-300"
                             >
                               Or scan QR code
