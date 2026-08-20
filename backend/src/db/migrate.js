@@ -288,31 +288,56 @@ function runMigrations(dbPath) {
 
   // Credential envelope v0 -> v1: blobs written before the versioned envelope were
   // sealed with an unsalted single-pass SHA-256 of the passphrase. Re-seal them under
-  // the salted derivation. Reads already handle both (encrypt.js dispatches on the
-  // envelope version), so this is a hardening pass, not a correctness prerequisite —
-  // which is why a failure here must be loud rather than silently skipped.
-  const storedCreds = db
-    .prepare('SELECT id, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
-    .all();
+  // the salted derivation.
+  //
+  // This is hardening, NOT a correctness prerequisite — reads dispatch on the envelope
+  // version, so a blob left un-upgraded still works. That is precisely why a failure
+  // here must not be fatal: throwing is uncaught at server.js and, with
+  // docker-compose's `restart: unless-stopped`, becomes an endless crash loop with no
+  // in-app recovery. An operator who changed GAMESHELF_ENCRYPTION_KEY without running
+  // the rotation script previously got a degraded-but-bootable app and could re-enter
+  // credentials through the UI; that must stay true.
 
-  if (storedCreds.length > 0) {
-    const { isLegacyEnvelope, rotate } = require('../utils/encrypt');
+  // Pin the salt to the database we were handed rather than letting encrypt.js guess
+  // from the environment — runMigrations takes a path argument and the two can differ,
+  // which would put the salt beside a different database than the credentials it
+  // protects. Tolerate a missing key: without one nothing gets sealed anyway.
+  try {
+    require('../utils/encrypt').setSaltDirectory(path.dirname(dbPath));
+  } catch {
+    // No encryption key configured; nothing to seal and nothing to pin.
+  }
+
+  // Load the crypto modules only when there is something to upgrade: encrypt.js throws
+  // at require-time without GAMESHELF_ENCRYPTION_KEY, and a database with no stored
+  // credentials must still migrate without a key configured.
+  const hasStoredCreds = db
+    .prepare('SELECT 1 FROM launchers WHERE credentials_json IS NOT NULL LIMIT 1')
+    .get();
+
+  if (hasStoredCreds) {
+    const { rotateAllCredentials } = require('../utils/rotateCredentials');
     const passphrase = process.env.GAMESHELF_ENCRYPTION_KEY;
-    const legacy = storedCreds.filter((row) => isLegacyEnvelope(row.credentials_json));
 
-    if (legacy.length > 0) {
-      const updateCred = db.prepare('UPDATE launchers SET credentials_json = ? WHERE id = ?');
+    const { rotated, failed } = rotateAllCredentials(db, passphrase, passphrase, {
+      onError: 'skip',
+    });
 
-      // One transaction: a partial upgrade is still readable, but leaving it
-      // half-done would hide a real failure behind a success-looking startup.
-      db.transaction(() => {
-        for (const row of legacy) {
-          updateCred.run(rotate(row.credentials_json, passphrase, passphrase), row.id);
-        }
-      })();
-
+    if (rotated > 0) {
       console.log(
-        `[Migration] Re-sealed ${legacy.length} credential(s) under the salted key derivation`
+        `[Migration] Re-sealed ${rotated} credential(s) under the salted key derivation`
+      );
+    }
+
+    if (failed.length > 0) {
+      console.error(
+        `[Migration] Could not re-seal ${failed.length} credential(s): ` +
+          failed.map((f) => `${f.name} (${f.reason})`).join(', ')
+      );
+      console.error(
+        '[Migration] They are left untouched and remain readable if the key is correct. ' +
+          'If you changed GAMESHELF_ENCRYPTION_KEY, restore the previous value and run ' +
+          'scripts/rotate-encryption-key.js rather than editing it directly.'
       );
     }
   }

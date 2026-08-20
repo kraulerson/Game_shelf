@@ -48,4 +48,30 @@ describe('buildOtpAuthUri', () => {
     expect(buildOtpAuthUri('ubisoft', 'karl', null)).toBe('');
     expect(buildOtpAuthUri('ubisoft', 'karl', undefined)).toBe('');
   });
+
+  it('matches the label form the server previously emitted', () => {
+    // Old server output, captured by running it:
+    //   otpauth://totp/Gameshelf:ubisoft%3Akarl?issuer=Gameshelf&secret=...
+    // The issuer separator is a literal colon; only the account part is escaped.
+    // Encoding the whole label makes it Gameshelf%3Aubisoft%3Akarl, which is NOT
+    // identical however much the comment claims it is.
+    const uri = buildOtpAuthUri('ubisoft', 'karl', 'JBSWY3DPEHPK3PXP');
+
+    expect(uri.startsWith('otpauth://totp/Gameshelf:')).toBe(true);
+    expect(uri).toContain('Gameshelf:ubisoft%3Akarl');
+  });
+
+  it('refuses a secret that is not base32 instead of encoding it anyway', () => {
+    // The Setup UI tells Steam users to paste their shared_secret, which is base64.
+    // The old server path threw ("Invalid character found"), so no QR appeared. A
+    // scannable QR built from a base64 secret enrols permanently-wrong codes, which
+    // is worse than no QR at all.
+    expect(() => buildOtpAuthUri('steam', 'k', 'abcd1234+/==')).toThrow(/base32/i);
+    expect(() => buildOtpAuthUri('steam', 'k', 'not valid!')).toThrow(/base32/i);
+  });
+
+  it('accepts a padded base32 secret', () => {
+    expect(() => buildOtpAuthUri('ubisoft', 'karl', 'JBSWY3DPEHPK3PX===')).not.toThrow();
+  });
+
 });

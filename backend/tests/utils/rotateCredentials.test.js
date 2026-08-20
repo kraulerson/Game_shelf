@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 describe('rotateAllCredentials', () => {
-  const testDbPath = path.join(__dirname, '..', 'data', 'test-rotate-credentials.db');
+  const testDbPath = path.join(__dirname, '..', 'data', 'rotate-credentials', 'test.db');
   const OLD_KEY = 'old]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
   const NEW_KEY = 'new]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
   let db;
@@ -67,7 +67,7 @@ describe('rotateAllCredentials', () => {
 });
 
 describe('rotateAllCredentials failure handling', () => {
-  const testDbPath = path.join(__dirname, '..', 'data', 'test-rotate-rollback.db');
+  const testDbPath = path.join(__dirname, '..', 'data', 'rotate-rollback', 'test.db');
   const OLD_KEY = 'old]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
   const NEW_KEY = 'new]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
   const FOREIGN_KEY = 'fgn]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';

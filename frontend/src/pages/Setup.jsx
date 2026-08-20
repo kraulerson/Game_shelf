@@ -208,21 +208,52 @@ export default function Setup() {
     function showQR(launcher) {
       setCredentials((prev) => {
         const creds = prev[launcher.id] || {};
-        return {
-          ...prev,
-          [launcher.id]: {
-            ...creds,
-            qrUri: buildOtpAuthUri(launcher.id, creds.username, creds.totp_secret),
-          },
-        };
+
+        if (!creds.totp_secret) {
+          // Saving succeeds without a TOTP secret, so the button can be reached with
+          // the field blank. Returning an empty URI here would render nothing at all
+          // — a button that silently does nothing, which is the defect that made the
+          // old server endpoint worth deleting.
+          return {
+            ...prev,
+            [launcher.id]: { ...creds, qrUri: '', qrError: 'Enter a TOTP secret first.' },
+          };
+        }
+
+        try {
+          return {
+            ...prev,
+            [launcher.id]: {
+              ...creds,
+              qrError: '',
+              qrUri: buildOtpAuthUri(launcher.id, creds.username, creds.totp_secret),
+            },
+          };
+        } catch (err) {
+          return {
+            ...prev,
+            [launcher.id]: { ...creds, qrUri: '', qrError: err.message },
+          };
+        }
       });
     }
 
     function updateField(launcherId, field, value) {
-      setCredentials((prev) => ({
-        ...prev,
-        [launcherId]: { ...prev[launcherId], [field]: value, saved: false },
-      }));
+      setCredentials((prev) => {
+        const next = { ...prev[launcherId], [field]: value, saved: false };
+
+        // A rendered QR encodes the secret as it was when the button was clicked.
+        // Editing the secret afterwards must invalidate it, or the user scans a QR
+        // for the OLD value while the server stores the new one, and every generated
+        // code fails. The deleted server endpoint could not have this bug, because it
+        // read the stored value each time.
+        if (field === 'totp_secret' || field === 'username') {
+          next.qrUri = '';
+          next.qrError = '';
+        }
+
+        return { ...prev, [launcherId]: next };
+      });
     }
 
     const allSaved = selectedLaunchers.every((l) => credentials[l.id]?.saved);
@@ -398,6 +429,9 @@ export default function Setup() {
                             >
                               Or scan QR code
                             </button>
+                          )}
+                          {creds.qrError && (
+                            <p className="text-red-400 text-sm" role="alert">{creds.qrError}</p>
                           )}
                           {creds.qrUri && (
                             <div className="bg-white p-3 rounded inline-block">

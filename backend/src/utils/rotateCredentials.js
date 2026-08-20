@@ -1,4 +1,4 @@
-const { rotate } = require('./encrypt');
+const { rotate, isSealedWith } = require('./encrypt');
 
 /**
  * Re-seal every stored launcher credential from one encryption key to another.
@@ -6,22 +6,36 @@ const { rotate } = require('./encrypt');
  * This is what makes changing GAMESHELF_ENCRYPTION_KEY a recoverable operation.
  * Without it, changing the key leaves every credential permanently unreadable.
  *
- * Returns { rotated, skipped } — skipped counts launchers that have no
- * credentials stored, which are left untouched.
+ * `onError` selects the two callers' genuinely different needs:
+ *
+ *   'abort' (default) — the operator-run rotation script. A partial rotation would
+ *     leave credentials split across two keys with nothing recording which is which,
+ *     so any failure rolls the whole batch back.
+ *
+ *   'skip' — the startup migration. Throwing there is uncaught at server.js and,
+ *     with docker-compose's `restart: unless-stopped`, becomes an endless crash loop
+ *     with no in-app recovery. Reads dispatch on the envelope version, so leaving an
+ *     un-re-sealable blob alone is safe; it is reported instead.
+ *
+ * Returns { rotated, skipped, failed } — `skipped` counts launchers with no
+ * credentials plus those already sealed under the target key.
  */
-function rotateAllCredentials(db, oldPassphrase, newPassphrase) {
-  const rows = db.prepare('SELECT id, credentials_json FROM launchers').all();
+function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abort' } = {}) {
   const update = db.prepare('UPDATE launchers SET credentials_json = ? WHERE id = ?');
 
   let rotated = 0;
   let skipped = 0;
+  const failed = [];
 
-  // All-or-nothing. A partial rotation would leave some credentials under the old
-  // key and some under the new one, with nothing recording which is which — an
-  // unrecoverable state. Any failure rolls the whole batch back.
+  // All-or-nothing under 'abort'. The SELECT lives inside the transaction so a
+  // credential the running app rewrites mid-rotation (syncEngine persists refreshed
+  // OAuth tokens) cannot be clobbered with a re-sealed stale value.
   const runAll = db.transaction(() => {
     rotated = 0;
     skipped = 0;
+    failed.length = 0;
+
+    const rows = db.prepare('SELECT id, name, credentials_json FROM launchers').all();
 
     for (const row of rows) {
       if (!row.credentials_json) {
@@ -29,14 +43,27 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase) {
         continue;
       }
 
-      update.run(rotate(row.credentials_json, oldPassphrase, newPassphrase), row.id);
-      rotated++;
+      // Already under the target key — a re-run after an interrupted rotation.
+      // Without this, the first such row fails GCM authentication and aborts the
+      // batch, reporting a decryption error for work that had already succeeded.
+      if (isSealedWith(row.credentials_json, newPassphrase)) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        update.run(rotate(row.credentials_json, oldPassphrase, newPassphrase), row.id);
+        rotated++;
+      } catch (err) {
+        if (onError === 'abort') throw err;
+        failed.push({ name: row.name, reason: err.message });
+      }
     }
   });
 
   runAll();
 
-  return { rotated, skipped };
+  return { rotated, skipped, failed };
 }
 
 module.exports = { rotateAllCredentials };

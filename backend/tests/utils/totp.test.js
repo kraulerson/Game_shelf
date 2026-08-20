@@ -24,21 +24,6 @@ describe('TOTP utility', () => {
     });
   });
 
-  describe('generateQRSetupData', () => {
-    it('should return a valid otpauth URI', () => {
-      const uri = totp.generateQRSetupData('steam', 'testuser', 'JBSWY3DPEHPK3PXP');
-      assert.ok(uri.startsWith('otpauth://totp/'), 'Should start with otpauth://totp/');
-      assert.ok(uri.includes('Gameshelf'), 'Should include issuer');
-      assert.ok(uri.includes('secret='), 'Should include secret parameter');
-    });
-
-    it('should include launcher and username in the label', () => {
-      const uri = totp.generateQRSetupData('epic', 'myuser', 'JBSWY3DPEHPK3PXP');
-      assert.ok(uri.includes('epic'), 'Should include launcher id');
-      assert.ok(uri.includes('myuser'), 'Should include username');
-    });
-  });
-
   describe('generateSteamCode', () => {
     it('should return a 5-character alphanumeric code', () => {
       const sharedSecret = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';

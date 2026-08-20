@@ -37,7 +37,20 @@ assertUsableKey(rawKey, 'GAMESHELF_ENCRYPTION_KEY environment variable');
 // install, so a precomputed table built against one Gameshelf cannot be reused
 // against another. It lives beside the database because it must survive restarts
 // and be backed up alongside the credentials it protects.
+// runMigrations() receives the database path as an argument while this module reads
+// the environment, so the two can disagree and the salt can land beside a different
+// database than the one holding the credentials it protects — unrecoverable if the
+// mismatch is only noticed later. setSaltDirectory lets the caller that actually
+// knows the path say so.
+let saltDirOverride = null;
+
+function setSaltDirectory(dir) {
+  saltDirOverride = dir;
+}
+
 function saltFilePath() {
+  if (saltDirOverride) return path.join(saltDirOverride, 'encryption-salt');
+
   const dbPath = process.env.GAMESHELF_DB_PATH || './data/gameshelf.db';
   return path.join(path.dirname(dbPath), 'encryption-salt');
 }
@@ -49,8 +62,18 @@ function loadOrCreateSalt() {
 
   const salt = crypto.randomBytes(32);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, salt, { mode: 0o600 });
-  return salt;
+
+  try {
+    // 'wx' fails if the file appeared since the check above. Without it, two
+    // processes racing a first boot each write a different salt and the loser
+    // seals everything under a salt that is no longer on disk — permanently
+    // unreadable, with no error at the time it happens.
+    fs.writeFileSync(file, salt, { flag: 'wx', mode: 0o600 });
+    return salt;
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+    return fs.readFileSync(file);
+  }
 }
 
 // A 32-byte key supplied directly as hex or base64 skips the KDF entirely, which
@@ -132,17 +155,61 @@ function openWith(payload, key) {
   return decrypted;
 }
 
-/** True when a stored blob predates the versioned envelope. */
+/**
+ * True when a stored blob predates the versioned envelope and can be upgraded.
+ *
+ * Anything that is not a readable envelope answers false: there is nothing to
+ * upgrade, and this is called during startup migration where throwing would take
+ * the whole process down. `WHERE credentials_json IS NOT NULL` admits empty
+ * strings and arbitrary junk, so this must tolerate both.
+ */
 function isLegacyEnvelope(ciphertext) {
-  const payload = JSON.parse(Buffer.from(ciphertext, 'base64').toString('utf8'));
-  return payload.v !== SCHEMA_VERSION;
+  const payload = parseEnvelope(ciphertext);
+  return payload !== null && payload.v !== SCHEMA_VERSION;
+}
+
+function parseEnvelope(ciphertext) {
+  if (typeof ciphertext !== 'string' || ciphertext === '') return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(ciphertext, 'base64').toString('utf8'));
+    if (payload === null || typeof payload !== 'object') return null;
+    if (typeof payload.iv !== 'string' || typeof payload.data !== 'string') return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/** True when this blob is already sealed under the key `passphrase` derives. */
+function isSealedWith(ciphertext, passphrase) {
+  const payload = parseEnvelope(ciphertext);
+  return payload !== null && payload.kid === keyIdFor(deriveKey(passphrase));
 }
 
 // The envelope says which derivation sealed it, so old and new blobs coexist and
 // a half-finished migration still reads correctly.
 function open(ciphertext, passphrase) {
-  const payload = JSON.parse(Buffer.from(ciphertext, 'base64').toString('utf8'));
-  const key = payload.v === SCHEMA_VERSION ? deriveKey(passphrase) : deriveLegacyKey(passphrase);
+  const payload = parseEnvelope(ciphertext);
+
+  if (payload === null) {
+    throw new Error('Stored credential is not a readable envelope');
+  }
+
+  // Dispatch on the version explicitly, never on "is it the current one". A binary
+  // current-vs-legacy test means the next SCHEMA_VERSION bump silently routes every
+  // existing v1 blob to the old weak derivation — the exact failure a versioned
+  // envelope exists to prevent.
+  let key;
+  if (payload.v === undefined || payload.v === 0) {
+    key = deriveLegacyKey(passphrase);
+  } else if (payload.v === 1) {
+    key = deriveKey(passphrase);
+  } else {
+    throw new Error(
+      `Stored credential uses envelope version ${payload.v}, which this build cannot read`
+    );
+  }
 
   return openWith(payload, key);
 }
@@ -164,4 +231,4 @@ function rotate(ciphertext, oldPassphrase, newPassphrase) {
   return sealWith(open(ciphertext, oldPassphrase), deriveKey(newPassphrase));
 }
 
-module.exports = { encrypt, decrypt, rotate, isLegacyEnvelope };
+module.exports = { encrypt, decrypt, rotate, isLegacyEnvelope, isSealedWith, setSaltDirectory };

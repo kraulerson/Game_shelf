@@ -36,6 +36,18 @@ if (!oldKey) {
   process.exit(1);
 }
 
+// Validate the new key BEFORE touching the database. Deferring to rotate() meant a
+// store with no credentials never reached the length check, so the script reported
+// success for a key the app then refuses at boot — the operator adopts it and the
+// container will not start.
+if (newKey.length < 32) {
+  console.error(
+    'GAMESHELF_ENCRYPTION_KEY_NEW must be at least 32 characters long. ' +
+    `Current length: ${newKey.length}\nNothing has been changed.`
+  );
+  process.exit(1);
+}
+
 const dbPath = process.env.GAMESHELF_DB_PATH || './data/gameshelf.db';
 
 let db;
@@ -48,7 +60,10 @@ try {
 
   const { rotated, skipped } = rotateAllCredentials(db, oldKey, newKey);
 
-  console.log(`Rotated ${rotated} credential(s); skipped ${skipped} unconfigured launcher(s).`);
+  console.log(
+    `Rotated ${rotated} credential(s); skipped ${skipped} ` +
+    '(no credentials stored, or already sealed under the new key).'
+  );
   console.log('Now set GAMESHELF_ENCRYPTION_KEY to the new value and restart Gameshelf.');
 } catch (err) {
   console.error(`Rotation failed: ${err.message}`);

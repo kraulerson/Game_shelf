@@ -7,7 +7,7 @@ const { spawnSync } = require('node:child_process');
 const SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'rotate-encryption-key.js');
 
 describe('scripts/rotate-encryption-key.js', () => {
-  const testDbPath = path.join(__dirname, '..', 'data', 'test-rotate-script.db');
+  const testDbPath = path.join(__dirname, '..', 'data', 'rotate-script', 'test.db');
   const OLD_KEY = 'old]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
   const NEW_KEY = 'new]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
 
@@ -102,4 +102,27 @@ describe('scripts/rotate-encryption-key.js', () => {
     assert.notEqual(result.status, 0, 'a weak new key must be a non-zero exit');
     assert.equal(readStoredBlob(), before, 'nothing may be written when the input is rejected');
   });
+
+  it('refuses a weak new key even when there is nothing to rotate', () => {
+    // Fresh install, or credentials just deleted: rotateAllCredentials never reaches
+    // rotate(), so the length check never ran. The script reported success and told
+    // the operator to adopt a key the app then dies on at boot.
+    const Database = require('better-sqlite3');
+    const db = new Database(testDbPath);
+    db.prepare('UPDATE launchers SET credentials_json = NULL').run();
+    db.close();
+
+    const result = runScript({
+      GAMESHELF_ENCRYPTION_KEY: OLD_KEY,
+      GAMESHELF_ENCRYPTION_KEY_NEW: 'tooshort',
+    });
+
+    assert.notEqual(result.status, 0, 'a weak new key must fail even with no rows to rotate');
+    assert.match(
+      `${result.stderr}${result.stdout}`,
+      /32/,
+      'the operator must be told why, before they adopt the key'
+    );
+  });
+
 });

@@ -9,6 +9,10 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY src/ ./src/
+# The rotation script is the documented recovery path for changing
+# GAMESHELF_ENCRYPTION_KEY. Without this the image ships without it and
+# `docker exec ... node scripts/rotate-encryption-key.js` cannot run at all.
+COPY scripts/ ./scripts/
 
 # Create non-root user data directory
 RUN mkdir -p /app/data && chown -R node:node /app
