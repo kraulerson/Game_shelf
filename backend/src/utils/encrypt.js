@@ -146,58 +146,39 @@ function createSaltIfMissing() {
 // convenient and was dangerous: .env.example's own 43-character placeholder matches
 // the base64url alphabet and decodes to exactly 32 bytes, so a low-entropy English
 // string was used verbatim as the AES-256 key with the KDF skipped — strictly worse
-// than the unsalted SHA-256 this module replaced. Any 43-character passphrase an
-// operator happened to choose got the same treatment, silently.
-const RAW_KEY_PREFIXES = {
-  'hex:': 'hex',
-  'base64:': 'base64',
-};
+// than the unsalted SHA-256 this module replaced.
+//
+// Hex, and only hex. Accepting base64 meant supporting padded, unpadded and base64url
+// — three spellings of the same bytes — which needed a round-trip validator to catch
+// truncation, which then rejected two of those three spellings and stopped the app
+// booting. Hex has one alphabet and one canonical form, so validation is a regex and
+// nothing else. That is the whole point: this module's key handling produced two of
+// the eight regression rounds, and every one of them came from having more than one
+// way to write the same key.
+const HEX_PREFIX = 'hex:';
+const HEX_KEY = /^[0-9a-f]{64}$/i;
 
 function asRawKey(value, label = 'GAMESHELF_ENCRYPTION_KEY') {
-  for (const [prefix, encoding] of Object.entries(RAW_KEY_PREFIXES)) {
-    if (!value.startsWith(prefix)) continue;
-
-    const encoded = value.slice(prefix.length);
-    // Decode base64url through the base64url decoder: feeding '-'/'_' to the base64
-    // decoder drops them, which is precisely the silent truncation this guards against.
-    const decoded = Buffer.from(encoded, encoding === 'base64' && /[-_]/.test(encoded) ? 'base64url' : encoding);
-
-    if (decoded.length !== KEY_BYTES) {
-      throw new Error(
-        `${label} declared "${prefix}" must decode to exactly ` +
-        `${KEY_BYTES} bytes (64 hex characters, or 44 base64). Got ${decoded.length}.`
-      );
-    }
-
-    // Buffer.from stops at the first invalid character and pads the rest, so a
-    // mistyped or truncated key can still yield 32 bytes — different bytes than the
-    // operator intended, accepted silently, discovered only when they try to restore
-    // from the value they believe they saved. Re-encoding proves nothing was dropped.
-    //
-    // Both sides are normalised first, or the check rejects legitimate keys: padded
-    // base64, unpadded base64 (`openssl rand -base64 32 | tr -d '='`) and base64url
-    // all decode to byte-identical material, and re-encoding always produces the
-    // padded standard form. Comparing raw made two of those three fail to boot with a
-    // "characters were dropped" message describing a corruption that did not exist.
-    const normalise = (v) =>
-      encoding === 'hex'
-        ? v.toLowerCase()
-        : v.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
-
-    const matches = normalise(decoded.toString(encoding)) === normalise(encoded);
-
-    if (!matches) {
-      throw new Error(
-        `${label} declared "${prefix}" is not valid ${encoding}: ` +
-        'characters were dropped when decoding it, so the key in use would not be ' +
-        'the one you supplied. Check for a truncated or mistyped value.'
-      );
-    }
-
-    return decoded;
+  if (value.startsWith('base64:')) {
+    throw new Error(
+      `${label} uses the removed "base64:" form. Declare the key as hex instead: ` +
+      'echo "hex:$(openssl rand -hex 32)"'
+    );
   }
 
-  return null;
+  if (!value.startsWith(HEX_PREFIX)) return null;
+
+  const encoded = value.slice(HEX_PREFIX.length);
+
+  if (!HEX_KEY.test(encoded)) {
+    throw new Error(
+      `${label} declared "hex:" must be exactly 64 hex characters (32 bytes). ` +
+      `Got ${encoded.length} character(s)` +
+      (/[^0-9a-f]/i.test(encoded) ? ', including a non-hex character.' : '.')
+    );
+  }
+
+  return Buffer.from(encoded, 'hex');
 }
 
 // Validate a declared raw key at startup rather than on the first credential save:
