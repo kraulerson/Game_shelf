@@ -13,6 +13,7 @@ const UI_ONLY = new Set([
   'testing',
   'testResult',
   'totpEnabled',
+  'priorUnreadable',
 ]);
 
 /** Match the QR builder exactly, so the stored secret and the scanned one agree. */

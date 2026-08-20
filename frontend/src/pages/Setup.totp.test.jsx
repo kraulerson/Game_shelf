@@ -26,14 +26,14 @@ const AVAILABLE = (totpConfigured) => [
   },
 ];
 
-function stubFetch(totpConfigured, onPost) {
+function stubFetch(totpConfigured, onPost, postBody = { ok: true }) {
   const fetchMock = vi.fn().mockImplementation((url, options) => {
     if (String(url).includes('/api/launchers/available')) {
       return Promise.resolve({ ok: true, json: async () => AVAILABLE(totpConfigured) });
     }
     if (options?.method === 'POST') {
       onPost?.(JSON.parse(options.body));
-      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      return Promise.resolve({ ok: true, json: async () => postBody });
     }
     return Promise.resolve({ ok: true, json: async () => ({}) });
   });
@@ -99,5 +99,44 @@ describe('Setup — the 2FA checkbox reflects what is stored', () => {
     expect(posted).toHaveLength(1);
     expect(posted[0].remove_totp_secret).toBe(true);
     expect('totp_secret' in posted[0]).toBe(false);
+  });
+});
+
+describe('Setup — a save that could not read what was there before', () => {
+  it('says so instead of showing a plain Saved', async () => {
+    // The recovery path after a lost salt: the operator re-enters credentials and the
+    // route reports priorUnreadable, meaning the fields it could not read are gone
+    // rather than preserved. Saving also seals under a NEW salt, so every other
+    // launcher is still sealed under the lost one and the boot advice to restore it
+    // no longer applies cleanly. A green "Saved" is the one thing that must not be
+    // the whole story, and the flag had no consumer at all.
+    stubFetch(false, null, { ok: true, priorUnreadable: true });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Setup />
+      </MemoryRouter>
+    );
+
+    await reachCredentialsStep(user);
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(await screen.findByText(/could not be read/i)).toBeInTheDocument();
+  });
+
+  it('shows nothing extra on an ordinary save', async () => {
+    stubFetch(false);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Setup />
+      </MemoryRouter>
+    );
+
+    await reachCredentialsStep(user);
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(screen.queryByText(/could not be read/i)).toBeNull();
   });
 });

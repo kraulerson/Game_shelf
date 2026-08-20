@@ -13,6 +13,7 @@ describe('buildCredentialPayload', () => {
       testing: false,
       testResult: { success: true },
       totpEnabled: true,
+      priorUnreadable: true,
     });
 
     expect(payload).toEqual({ username: 'karl', password: 'hunter2' });

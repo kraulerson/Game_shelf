@@ -182,9 +182,19 @@ export default function Setup() {
           body: JSON.stringify(payload),
         });
         if (res.ok) {
+          // The route reports when the credentials it was about to merge over could
+          // not be decrypted. That is the difference between "your other fields were
+          // preserved" and "they were unrecoverable and you have just overwritten
+          // them", and a green Saved cannot carry it.
+          const body = await res.json().catch(() => ({}));
           setCredentials((prev) => ({
             ...prev,
-            [launcher.id]: { ...prev[launcher.id], saved: true, error: '' },
+            [launcher.id]: {
+              ...prev[launcher.id],
+              saved: true,
+              error: '',
+              priorUnreadable: body.priorUnreadable === true,
+            },
           }));
         } else {
           const data = await res.json();
@@ -461,6 +471,14 @@ export default function Setup() {
 
                   {creds.error && <p className="text-red-400 text-sm mb-2">{creds.error}</p>}
                   {creds.saved && <p className="text-green-400 text-sm mb-2">Saved</p>}
+                  {creds.priorUnreadable && (
+                    <p className="text-amber-400 text-sm mb-2">
+                      Warning: the credentials previously stored for this launcher could not be
+                      read, so only the fields you just entered are stored now. Any other
+                      launcher showing the same problem needs re-entering too — check the
+                      server log, which names them.
+                    </p>
+                  )}
 
                   {creds.testResult && (
                     <p className={`text-sm mb-2 ${creds.testResult.success ? 'text-green-400' : 'text-red-400'}`}>
