@@ -323,34 +323,28 @@ function runMigrations(dbPath) {
   }
 
   if (encryptModule) {
-    const unreadable = db
+    // Report per launcher, quoting the error. Since step 1 the error identifies itself
+    // — SaltMissingError names the file, a wrong key gives the GCM failure — so this
+    // does not, and must not, assert a cause of its own. Earlier revisions guessed and
+    // were wrong in both directions: telling raw-key installs to restore a salt that
+    // never existed, and reporting a genuinely lost salt only when a v0 blob happened
+    // to coexist.
+    for (const row of db
       .prepare('SELECT name, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
-      .all()
-      .filter((row) => {
-        // A value that does not parse as an envelope is a fault too, and this is the
-        // only always-on check: reporting it solely from the v0 branch meant that on a
-        // fully-upgraded store — every install after the first boot — a truncated blob
-        // produced a completely clean log and then failed at sync time.
-        if (encryptModule.envelopeVersion(row.credentials_json) === null) return true;
-        try {
-          encryptModule.decrypt(row.credentials_json);
-          return false;
-        } catch {
-          return true;
-        }
-      });
+      .all()) {
+      if (encryptModule.envelopeVersion(row.credentials_json) === null) {
+        console.error(
+          `[Migration] ${row.name}: stored value is not a credential envelope. It will ` +
+            'fail at sync time; re-enter it in Settings.'
+        );
+        continue;
+      }
 
-    if (unreadable.length > 0) {
-      console.error(
-        `[Migration] ${unreadable.length} stored credential(s) cannot be decrypted: ` +
-          unreadable.map((r) => r.name).join(', ')
-      );
-      console.error(
-        '[Migration] Either GAMESHELF_ENCRYPTION_KEY changed without running ' +
-          'scripts/rotate-encryption-key.js, or the encryption-salt file beside the ' +
-          'database is missing. Restore whichever applies from backup; re-entering ' +
-          'each launcher credential in the UI also works and needs no cleanup.'
-      );
+      try {
+        encryptModule.decrypt(row.credentials_json);
+      } catch (err) {
+        console.error(`[Migration] ${row.name}: cannot be decrypted — ${err.message}`);
+      }
     }
   }
 
