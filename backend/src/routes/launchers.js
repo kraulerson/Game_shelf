@@ -213,29 +213,54 @@ router.post('/:id/credentials', async (req, res) => {
 
   const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie, remove_totp_secret } = req.body || {};
 
-  // Validate required fields by auth_type
-  if (launcher.auth_type === 'api_key') {
-    if (!api_key) {
-      return res.status(400).json({ error: 'api_key is required for this launcher' });
-    }
-  } else if (launcher.auth_type === 'auth_code') {
-    if (!auth_code) {
-      return res.status(400).json({ error: 'auth_code is required for this launcher' });
-    }
-  } else if (launcher.auth_type === 'session_cookie') {
-    if (!session_cookie) {
-      return res.status(400).json({ error: 'session_cookie is required for this launcher' });
-    }
-  } else {
-    // credentials or credentials+totp
-    if (!username || !password) {
-      return res.status(400).json({ error: 'username and password are required for this launcher' });
+  // A request that only asks for a removal is not creating or replacing anything, so
+  // the fields required to CREATE a credential are not required of it. Unticking 2FA
+  // happens from a reloaded page, which holds no password to send — demanding one made
+  // the removal impossible from the only state it is ever done in.
+  const removalOnly =
+    remove_totp_secret === true &&
+    launcher.otp_supported &&
+    !username && !password && !api_key && !steamid64 && !totp_secret && !auth_code && !session_cookie;
+
+  if (removalOnly) {
+    const stored = req.app.locals.db
+      .prepare('SELECT credentials_json FROM launchers WHERE name = ?')
+      .get(id);
+
+    // Without this a removal-only request inserts a row holding an empty credential,
+    // which then reports itself as configured.
+    if (!stored || !stored.credentials_json) {
+      return res.status(404).json({ error: 'No credentials stored for this launcher' });
     }
   }
 
-  // Steam requires steamid64 alongside api_key
-  if (id === 'steam' && !steamid64) {
-    return res.status(400).json({ error: 'steamid64 is required for Steam' });
+  // Validate required fields by auth_type. The whole chain is skipped for a
+  // removal-only request, not just its first arm — skipping one branch drops through
+  // to the else, which demands a username and password anyway.
+  if (!removalOnly) {
+    if (launcher.auth_type === 'api_key') {
+      if (!api_key) {
+        return res.status(400).json({ error: 'api_key is required for this launcher' });
+      }
+    } else if (launcher.auth_type === 'auth_code') {
+      if (!auth_code) {
+        return res.status(400).json({ error: 'auth_code is required for this launcher' });
+      }
+    } else if (launcher.auth_type === 'session_cookie') {
+      if (!session_cookie) {
+        return res.status(400).json({ error: 'session_cookie is required for this launcher' });
+      }
+    } else {
+      // credentials or credentials+totp
+      if (!username || !password) {
+        return res.status(400).json({ error: 'username and password are required for this launcher' });
+      }
+    }
+
+    // Steam requires steamid64 alongside api_key
+    if (id === 'steam' && !steamid64) {
+      return res.status(400).json({ error: 'steamid64 is required for Steam' });
+    }
   }
 
   let payload;

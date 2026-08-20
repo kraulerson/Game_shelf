@@ -147,6 +147,38 @@ describe('POST /api/launchers/:id/credentials preserves unsent fields', () => {
     assert.equal(after.password, 'corrected');
   });
 
+  it('accepts a removal on its own, which is all a reloaded form can send', async () => {
+    // The state unticking is actually done from: the page was reloaded, so the form
+    // holds no password to send. Demanding the fields required to CREATE a credential
+    // made the removal impossible from the only state it ever happens in — the route
+    // answered 400 and the secret stayed.
+    const { encrypt } = require('../../src/utils/encrypt');
+    db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(
+      encrypt(JSON.stringify({ username: 'karl', password: 'p', totp_secret: 'JBSWY3DPEHPK3PXP' })),
+      'ubisoft'
+    );
+
+    const res = await post({ remove_totp_secret: true });
+    assert.equal(res.status, 200);
+
+    const after = stored();
+    assert.ok(!after.totp_secret, 'the secret must be gone');
+    assert.equal(after.username, 'karl', 'and everything else must survive');
+    assert.equal(after.password, 'p');
+  });
+
+  it('refuses a removal when there is nothing stored to remove from', async () => {
+    // Otherwise a removal-only request creates a launcher row holding an empty
+    // credential, which then reports itself as configured.
+    db.prepare('UPDATE launchers SET credentials_json = NULL WHERE name = ?').run('ubisoft');
+
+    const res = await post({ remove_totp_secret: true });
+    assert.equal(res.status, 404);
+
+    const row = db.prepare('SELECT credentials_json FROM launchers WHERE name = ?').get('ubisoft');
+    assert.equal(row.credentials_json, null, 'and nothing may be created');
+  });
+
   it('removes the TOTP secret when asked with the explicit verb', async () => {
     // Re-seal a known secret rather than relying on the tests above having left one:
     // an ordering change would otherwise turn this into a test that passes because
