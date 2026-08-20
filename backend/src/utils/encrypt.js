@@ -362,6 +362,18 @@ function decrypt(ciphertext) {
   return open(ciphertext, rawKey);
 }
 
+/**
+ * Open a blob under a passphrase other than the configured one. Read-only.
+ *
+ * The rotation script needs to prove the NEW key opens what it just wrote, and the
+ * only tool it had for that was rotate() — which seals a fresh envelope it then throws
+ * away, and whose derivation is allowed to create the salt. Verifying on the write
+ * path is the exact silhouette Invariant A exists to rule out.
+ */
+function decryptWith(ciphertext, passphrase) {
+  return open(ciphertext, passphrase);
+}
+
 // Re-seal a blob from one passphrase to another. This is what makes changing
 // GAMESHELF_ENCRYPTION_KEY a recoverable operation rather than a destructive one.
 // Passing the same passphrase twice upgrades a legacy blob to the current scheme.
@@ -374,6 +386,7 @@ function rotate(ciphertext, oldPassphrase, newPassphrase) {
 module.exports = {
   encrypt,
   decrypt,
+  decryptWith,
   rotate,
   isSealedWith,
   setSaltDirectory,

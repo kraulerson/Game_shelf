@@ -59,6 +59,19 @@ describe('Invariant A — reading never writes', () => {
     );
   });
 
+  it('decryptWith is a read too, and the rotation script depends on that', () => {
+    // The script proves the NEW key opens what it just wrote before telling the
+    // operator to discard the old one. Its only tool for that used to be rotate(),
+    // which seals an envelope it discards and whose derivation may create the salt —
+    // verifying on the write path, which is what this invariant rules out.
+    const sealed = fresh().encrypt('launcher-password');
+    fs.unlinkSync(saltPath);
+    const mod = fresh();
+
+    assert.throws(() => mod.decryptWith(sealed, process.env.GAMESHELF_ENCRYPTION_KEY), /salt/i);
+    assert.ok(!fs.existsSync(saltPath), 'verifying must not mint the salt it is verifying against');
+  });
+
   it('names the missing salt file, so no caller has to guess the cause', () => {
     const sealed = fresh().encrypt('launcher-password');
     fs.unlinkSync(saltPath);

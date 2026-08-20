@@ -74,6 +74,29 @@ describe('scripts/rotate-encryption-key.js', () => {
     assert.deepEqual(JSON.parse(decrypt(readStoredBlob())), { api_key: 'steam-key' });
   });
 
+  it('counts only credentials it actually opened', async () => {
+    // A row holding an empty string is NOT NULL, so it reached the verification set,
+    // and it is not a corrupt envelope either — so it was subtracted from nothing and
+    // reported as having re-opened under the new key without ever being opened. On the
+    // one tool whose selling point is "it verifies before you discard the old key",
+    // an inflated count is the worst possible defect.
+    const Database = require('better-sqlite3');
+    const db = new Database(testDbPath);
+    db.prepare(
+      "INSERT INTO launchers (name, display_name, enabled, credentials_json) VALUES ('gog', 'GOG', 1, '')"
+    ).run();
+    db.close();
+
+    const result = runScript({ GAMESHELF_ENCRYPTION_KEY: OLD_KEY, GAMESHELF_ENCRYPTION_KEY_NEW: NEW_KEY });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /Verified: 1 stored credential/,
+      `only the one real credential was opened. Got:\n${result.stdout}`
+    );
+  });
+
   it('refuses to run and changes nothing when the new key is not supplied', () => {
     const before = readStoredBlob();
 

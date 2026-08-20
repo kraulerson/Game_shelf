@@ -108,10 +108,19 @@ try {
     .prepare('SELECT name, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
     .all();
 
-  const unopenable = written.filter((row) => {
-    if (encrypt.envelopeVersion(row.credentials_json) === null) return false;
+  // Only rows that are envelopes can be verified at all. Counting the rest as
+  // verified inflated the one number this tool exists to report: an empty-string
+  // credentials_json is NOT NULL, so it reached `written`, was not a corrupt envelope
+  // either, and was reported as having re-opened under the new key without ever being
+  // opened.
+  const verifiable = written.filter((row) => encrypt.envelopeVersion(row.credentials_json) !== null);
+
+  // decryptWith, not rotate. rotate() seals a fresh envelope it immediately discards,
+  // and its derivation is permitted to create the salt — a write on the one path whose
+  // whole job is to read.
+  const unopenable = verifiable.filter((row) => {
     try {
-      encrypt.rotate(row.credentials_json, newKey, newKey);
+      encrypt.decryptWith(row.credentials_json, newKey);
       return false;
     } catch {
       return true;
@@ -134,7 +143,7 @@ try {
       '(no credentials stored, or already sealed under the new key).'
     );
     console.log(
-      `Verified: ${written.length - corrupt.length} stored credential(s) re-opened ` +
+      `Verified: ${verifiable.length - unopenable.length} stored credential(s) re-opened ` +
       'with the new key.'
     );
     if (corrupt.length > 0) {
