@@ -213,6 +213,14 @@ router.post('/:id/credentials', async (req, res) => {
 
   const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie, remove_totp_secret } = req.body || {};
 
+  // Every credential field is a string. [] and {} are truthy, so without this they
+  // were stored verbatim over a real secret — a request field VALUE destroying a
+  // credential, which this contract forbids. It is worse than a plain overwrite:
+  // totp_configured still reported true afterwards, so the UI showed 2FA configured
+  // while code generation threw. "Supplied" means the same thing here and in the
+  // validation below, so a non-string is refused rather than silently dropped.
+  const given = (value) => typeof value === 'string' && value !== '';
+
   // A request that only asks for a removal is not creating or replacing anything, so
   // the fields required to CREATE a credential are not required of it. Unticking 2FA
   // happens from a reloaded page, which holds no password to send — demanding one made
@@ -220,7 +228,7 @@ router.post('/:id/credentials', async (req, res) => {
   const removalOnly =
     remove_totp_secret === true &&
     launcher.otp_supported &&
-    !username && !password && !api_key && !steamid64 && !totp_secret && !auth_code && !session_cookie;
+    ![username, password, api_key, steamid64, totp_secret, auth_code, session_cookie].some(given);
 
   if (removalOnly) {
     const stored = req.app.locals.db
@@ -239,26 +247,26 @@ router.post('/:id/credentials', async (req, res) => {
   // to the else, which demands a username and password anyway.
   if (!removalOnly) {
     if (launcher.auth_type === 'api_key') {
-      if (!api_key) {
+      if (!given(api_key)) {
         return res.status(400).json({ error: 'api_key is required for this launcher' });
       }
     } else if (launcher.auth_type === 'auth_code') {
-      if (!auth_code) {
+      if (!given(auth_code)) {
         return res.status(400).json({ error: 'auth_code is required for this launcher' });
       }
     } else if (launcher.auth_type === 'session_cookie') {
-      if (!session_cookie) {
+      if (!given(session_cookie)) {
         return res.status(400).json({ error: 'session_cookie is required for this launcher' });
       }
     } else {
       // credentials or credentials+totp
-      if (!username || !password) {
+      if (!given(username) || !given(password)) {
         return res.status(400).json({ error: 'username and password are required for this launcher' });
       }
     }
 
     // Steam requires steamid64 alongside api_key
-    if (id === 'steam' && !steamid64) {
+    if (id === 'steam' && !given(steamid64)) {
       return res.status(400).json({ error: 'steamid64 is required for Steam' });
     }
   }
@@ -279,11 +287,11 @@ router.post('/:id/credentials', async (req, res) => {
     payload = { session_cookie };
   } else {
     payload = {};
-    if (username) payload.username = username;
-    if (password) payload.password = password;
-    if (api_key) payload.api_key = api_key;
-    if (steamid64) payload.steamid64 = steamid64;
-    if (totp_secret) payload.totp_secret = totp_secret;
+    if (given(username)) payload.username = username;
+    if (given(password)) payload.password = password;
+    if (given(api_key)) payload.api_key = api_key;
+    if (given(steamid64)) payload.steamid64 = steamid64;
+    if (given(totp_secret)) payload.totp_secret = totp_secret;
   }
 
   const db = req.app.locals.db;

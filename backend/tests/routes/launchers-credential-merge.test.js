@@ -179,6 +179,29 @@ describe('POST /api/launchers/:id/credentials preserves unsent fields', () => {
     assert.equal(row.credentials_json, null, 'and nothing may be created');
   });
 
+  it('ignores a totp_secret that is not a string', async () => {
+    // [] and {} are truthy, so they were stored verbatim over the real secret — a
+    // request field VALUE destroying a credential, which is the thing this contract
+    // forbids. Worse than a plain overwrite: totp_configured still reports true, so
+    // the UI shows 2FA configured while code generation throws.
+    const { encrypt } = require('../../src/utils/encrypt');
+
+    for (const hostile of [[], {}, 42, true]) {
+      db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(
+        encrypt(JSON.stringify({ username: 'karl', password: 'p', totp_secret: 'JBSWY3DPEHPK3PXP' })),
+        'ubisoft'
+      );
+
+      const res = await post({ username: 'karl', password: 'p', totp_secret: hostile });
+      assert.equal(res.status, 200);
+      assert.equal(
+        stored().totp_secret,
+        'JBSWY3DPEHPK3PXP',
+        `a ${JSON.stringify(hostile)} secret must be ignored, not stored`
+      );
+    }
+  });
+
   it('removes the TOTP secret when asked with the explicit verb', async () => {
     // Re-seal a known secret rather than relying on the tests above having left one:
     // an ordering change would otherwise turn this into a test that passes because
