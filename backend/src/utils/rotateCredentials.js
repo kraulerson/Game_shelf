@@ -1,4 +1,4 @@
-const { rotate, isSealedWith } = require('./encrypt');
+const { rotate, isSealedWith, envelopeVersion } = require('./encrypt');
 
 /**
  * Re-seal every stored launcher credential from one encryption key to another.
@@ -39,6 +39,15 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
 
     for (const row of rows) {
       if (!row.credentials_json) {
+        skipped++;
+        continue;
+      }
+
+      // A value that is not an envelope at all holds no credential, so there is
+      // nothing to re-seal. Aborting the operator's whole rotation because one row
+      // contains a placeholder — which this repo's own tests write — would be a
+      // decryption error reported for something that was never a credential.
+      if (envelopeVersion(row.credentials_json) === null) {
         skipped++;
         continue;
       }

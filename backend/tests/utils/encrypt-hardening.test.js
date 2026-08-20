@@ -81,7 +81,7 @@ describe('salt handling refuses to silently orphan existing credentials', () => 
     delete process.env.GAMESHELF_DB_PATH;
   });
 
-  it('refuses to mint a fresh salt when salted credentials already exist', () => {
+  it('records the salt loss durably instead of only warning once', () => {
     cleanup();
     const { runMigrations } = require('../../src/db/migrate');
     let db = runMigrations(testDbPath);
@@ -122,6 +122,19 @@ describe('salt handling refuses to silently orphan existing credentials', () => 
       'boot must say the salt was missing and point at the backup, not just ' +
         `report generic decrypt failures. Got: ${JSON.stringify(errors)}`
     );
+
+    // And it must survive the restart. Warning once was useless: the act of warning
+    // minted a salt, so the file existed next boot and the warning never fired again
+    // while the credentials stayed unreadable. Refusing to mint instead deadlocked
+    // recovery — the migration says "re-enter every credential" and every save threw.
+    const Database = require('better-sqlite3');
+    const check = new Database(testDbPath);
+    const marker = check
+      .prepare("SELECT value FROM settings WHERE key = 'credential_salt_lost_at'")
+      .get();
+    check.close();
+
+    assert.ok(marker, 'the loss must be recorded in the database, not just logged once');
   });
 });
 
@@ -247,5 +260,46 @@ describe('key material is never guessed from shape', () => {
       /32 bytes|64 hex/i,
       'a malformed declared key must fail loudly, not fall back to treating it as text'
     );
+  });
+});
+
+describe('declared raw keys are validated by round-trip, not just length', () => {
+  const testDbPath = path.join(__dirname, '..', 'data', 'key-roundtrip', 'test.db');
+
+  function withKey(key) {
+    delete require.cache[require.resolve('../../src/utils/encrypt')];
+    process.env.GAMESHELF_ENCRYPTION_KEY = key;
+    process.env.GAMESHELF_DB_PATH = testDbPath;
+    fs.mkdirSync(path.dirname(testDbPath), { recursive: true });
+    return require('../../src/utils/encrypt');
+  }
+
+  after(() => {
+    delete process.env.GAMESHELF_ENCRYPTION_KEY;
+    delete process.env.GAMESHELF_DB_PATH;
+  });
+
+  it('rejects a hex key with trailing junk instead of silently truncating it', () => {
+    // Buffer.from(...,'hex') stops at the first invalid character and returns 32 bytes,
+    // so this passes an exact-length check while being a different key than intended.
+    assert.throws(() => withKey('hex:' + '00'.repeat(32) + 'zzzz'), /hex|decode/i);
+  });
+
+  it('rejects a base64 key whose final character was altered in transit', () => {
+    // Still decodes to exactly 32 bytes, so a length check passes — but they are
+    // DIFFERENT bytes. The app boots clean, seals everything under the wrong key, and
+    // the mistake surfaces only when the operator tries to restore from the value
+    // they believe they saved. The canonical encoding of these bytes ends 'jig=',
+    // not 'jij='.
+    assert.throws(
+      () => withKey('base64:cd4NS+E5vMKJa7Zdo+FAKvxuaGPFWnTSHbxioWPyjij='),
+      /base64|dropped|not valid/i
+    );
+  });
+
+  it('accepts a correctly encoded declared key', () => {
+    const key = crypto.randomBytes(32);
+    assert.doesNotThrow(() => withKey('hex:' + key.toString('hex')));
+    assert.doesNotThrow(() => withKey('base64:' + key.toString('base64')));
   });
 });

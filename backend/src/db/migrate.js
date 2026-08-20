@@ -327,34 +327,61 @@ function runMigrations(dbPath) {
   // whether anything needs re-sealing: once every blob is already v1 the re-seal does
   // nothing, and without this the app would boot looking healthy while every sync
   // failed with a generic authentication error pointing at nothing.
-  // Only meaningful when the key is a passphrase: a declared raw key skips the KDF, so
-  // no salt is ever created and this would fire on every boot forever, making a real
-  // loss indistinguishable from routine noise. The path comes from encrypt.js so the
-  // two cannot drift.
-  if (
-    encryptModule &&
-    encryptModule.usesSalt() &&
-    storedBlobs.includes(1) &&
-    !fs.existsSync(encryptModule.saltFilePath())
-  ) {
-    console.error(
-      `[Migration] The encryption salt at ${encryptModule.saltFilePath()} is MISSING, ` +
-        'but stored credentials were sealed with it. They cannot be read without it.'
-    );
-    console.error(
-      '[Migration] If you restored the database from a backup, restore the ' +
-        'encryption-salt file from that same backup. Otherwise every launcher ' +
-        'credential must be re-entered.'
-    );
-    // Refuse to create a replacement. Minting one here would orphan those credentials
-    // permanently AND erase the evidence: the file would exist on every later boot, so
-    // this warning would never appear again.
-    encryptModule.setSaltMintingAllowed(false);
+  // Detect a lost salt by whether a v1 credential actually FAILS to open, not by
+  // inferring it from the key mode. Inference was wrong in both directions: a raw-key
+  // install never creates a salt, so the check fired on every boot forever; and after
+  // switching from a declared key to a passphrase it reported a salt that never
+  // existed. A blob that opens is fine whatever the mode.
+  //
+  // The existence of the salt file must be sampled BEFORE any derivation, because
+  // deriving is what creates it.
+  const saltExistedAtBoot = encryptModule ? fs.existsSync(encryptModule.saltFilePath()) : true;
+
+  if (encryptModule && storedBlobs.includes(1) && !saltExistedAtBoot && encryptModule.usesSalt()) {
+    const sample = db
+      .prepare('SELECT credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
+      .all()
+      .find((row) => encryptModule.envelopeVersion(row.credentials_json) === 1);
+
+    let opens = true;
+    try {
+      encryptModule.decrypt(sample.credentials_json);
+    } catch {
+      opens = false;
+    }
+
+    if (!opens) {
+      // Record it in the database, not just in the log. Warning alone was useless: the
+      // act of warning derived a key, which minted a salt, so the file existed on the
+      // next boot and the warning never fired again while the credentials stayed
+      // unreadable. Refusing to mint instead deadlocked recovery — the message says
+      // "re-enter every credential" and every save then threw. The evidence lives in
+      // the database, and re-entry keeps working.
+      db.prepare(
+        "INSERT INTO settings (key, value) VALUES ('credential_salt_lost_at', ?) " +
+          'ON CONFLICT(key) DO NOTHING'
+      ).run(new Date().toISOString());
+    }
   }
 
-  // Only derive a key when something actually needs upgrading. Reaching the same
-  // verdict inside the rotation loop would pay one scryptSync (~32MB, ~50-100ms) on
-  // every container start forever, before the HTTP listener binds.
+  const saltLost = db
+    .prepare("SELECT value FROM settings WHERE key = 'credential_salt_lost_at'")
+    .get();
+
+  if (saltLost) {
+    console.error(
+      `[Migration] The encryption salt was MISSING at ${saltLost.value} and stored ` +
+        'credentials sealed with it cannot be read. This is reported on every start ' +
+        'until it is resolved.'
+    );
+    console.error(
+      '[Migration] Restore the encryption-salt file from the same backup as the ' +
+        'database. If you cannot, re-enter each launcher credential (which works ' +
+        'normally), then clear this notice by deleting the ' +
+        "'credential_salt_lost_at' row from the settings table."
+    );
+  }
+
   const resealMarker = db
     .prepare("SELECT value FROM settings WHERE key = 'credential_reseal_attempted'")
     .get();
@@ -367,15 +394,21 @@ function runMigrations(dbPath) {
       onError: 'skip',
     });
 
-    // Record the attempt so a blob that can never be re-sealed — one sealed under a
-    // key the app no longer has — does not keep this branch alive forever, paying a
-    // scryptSync before the listener binds and re-printing the same error on every
-    // single start with no way to acknowledge it. Rotation via the script clears
-    // nothing here because it re-seals to v1, removing the v0 blobs entirely.
-    db.prepare(
-      "INSERT INTO settings (key, value) VALUES ('credential_reseal_attempted', ?) " +
-        'ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-    ).run(new Date().toISOString());
+    // Mark the attempt only when every failure was a genuine decryption failure — a
+    // blob sealed under a key the app no longer has, which will never re-seal however
+    // often we retry. Environmental failures (a missing or unreadable salt, a
+    // temporarily wrong key) are fixable, and marking those would leave the upgrade
+    // permanently dead once the operator corrected the cause.
+    const allUnrecoverable =
+      failed.length > 0 &&
+      failed.every((f) => /authenticate|unsupported state/i.test(f.reason));
+
+    if (failed.length === 0 || allUnrecoverable) {
+      db.prepare(
+        "INSERT INTO settings (key, value) VALUES ('credential_reseal_attempted', ?) " +
+          'ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+      ).run(new Date().toISOString());
+    }
 
 
     if (rotated > 0) {

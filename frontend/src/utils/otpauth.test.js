@@ -72,8 +72,20 @@ describe('buildOtpAuthUri', () => {
     expect(() => buildOtpAuthUri('steam', 'k', 'not valid!')).toThrow(/base32/i);
   });
 
-  it('accepts a padded base32 secret', () => {
-    expect(() => buildOtpAuthUri('ubisoft', 'karl', 'JBSWY3DPEHPK3PX===')).not.toThrow();
+  it('normalises the secret the way the server library did', () => {
+    // The deleted server path ran the secret through otpauth, which uppercases and
+    // strips padding. Emitting it verbatim means a lowercase secret (how most sites
+    // display them) or a padded one goes into the QR unnormalised — and the padding
+    // gets percent-encoded as %3D, which scanners reject.
+    expect(buildOtpAuthUri('ubisoft', 'karl', 'jbswy3dpehpk3pxp')).toContain(
+      'secret=JBSWY3DPEHPK3PXP'
+    );
+    expect(buildOtpAuthUri('ubisoft', 'karl', 'JBSWY3DPEHPK3PX===')).toContain(
+      'secret=JBSWY3DPEHPK3PX'
+    );
+    expect(buildOtpAuthUri('ubisoft', 'karl', 'JBSW Y3DP EHPK 3PXP')).toContain(
+      'secret=JBSWY3DPEHPK3PXP'
+    );
   });
 
 });

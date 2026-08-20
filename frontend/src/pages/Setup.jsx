@@ -161,10 +161,22 @@ export default function Setup() {
       // would be a second copy of its contract: it had already drifted (otp_code is
       // not accepted there), and a credential field added to the form later would be
       // silently dropped while the user saw "saved".
-      const UI_ONLY = ['qrUri', 'qrError', 'saved', 'error', 'testing', 'testResult'];
+      const UI_ONLY = [
+        'qrUri',
+        'qrError',
+        'saved',
+        'error',
+        'testing',
+        'testResult',
+        'totpEnabled',
+      ];
       const payload = Object.fromEntries(
         Object.entries(creds).filter(([field]) => !UI_ONLY.includes(field))
       );
+
+      // Turning the TOTP checkbox off must actually drop the secret. Leaving it in the
+      // payload stored a secret the UI was simultaneously showing as disabled.
+      if (!creds.totpEnabled) delete payload.totp_secret;
 
       try {
         const res = await fetch(`/api/launchers/${launcher.id}/credentials`, {
@@ -421,13 +433,22 @@ export default function Setup() {
                               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           </div>
-                          {creds.saved && (
+                          {creds.saved ? (
                             <button
                               onClick={() => showQR(launcher)}
                               className="text-sm text-blue-400 hover:text-blue-300"
                             >
                               Or scan QR code
                             </button>
+                          ) : (
+                            // The QR is built from the secret in this form, because the
+                            // server has no endpoint that reads a stored one back. So
+                            // after a reload there is nothing to build from. Say that,
+                            // rather than rendering no button and no explanation.
+                            <p className="text-gray-400 text-sm">
+                              To show a QR code, re-enter the TOTP secret above and save.
+                              It is never read back from the server.
+                            </p>
                           )}
                           {creds.qrError && (
                             <p className="text-red-400 text-sm" role="alert">{creds.qrError}</p>

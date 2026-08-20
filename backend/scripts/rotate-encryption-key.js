@@ -71,6 +71,19 @@ try {
   // to close, reintroduced in the one tool that rewrites every credential at once.
   require('../src/utils/encrypt').setSaltDirectory(path.dirname(dbPath));
 
+  // If this run mints the salt, it is owned by whoever ran the script. Running it as
+  // root inside the container leaves a 0600 root:root salt that the app — running as
+  // USER node — then cannot read, failing every sync and every credential save with an
+  // opaque 500. Warn rather than guess at the right uid.
+  const saltFile = require('../src/utils/encrypt').saltFilePath();
+  if (!require('node:fs').existsSync(saltFile) && typeof process.getuid === 'function') {
+    console.warn(
+      `Note: this run will create ${saltFile} owned by uid ${process.getuid()}. ` +
+      'If that is not the uid the app runs as, it will not be able to read it. ' +
+      'Inside Docker use: docker compose run --rm --user node backend node scripts/rotate-encryption-key.js'
+    );
+  }
+
   db = new Database(dbPath, { fileMustExist: true });
 
   const { rotated, skipped } = rotateAllCredentials(db, oldKey, newKey);

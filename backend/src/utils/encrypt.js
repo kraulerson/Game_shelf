@@ -62,29 +62,10 @@ function saltFilePath() {
   return path.join(path.dirname(dbPath), 'encryption-salt');
 }
 
-let saltMintingAllowed = true;
-
-/**
- * Forbid creating a salt. migrate.js sets this when salted credentials exist but the
- * salt file does not: minting one there would permanently orphan them AND erase the
- * only evidence of what went wrong, because the file would exist on every later boot.
- */
-function setSaltMintingAllowed(allowed) {
-  saltMintingAllowed = allowed;
-}
-
 function loadOrCreateSalt() {
   const file = saltFilePath();
 
   if (fs.existsSync(file)) return fs.readFileSync(file);
-
-  if (!saltMintingAllowed) {
-    throw new Error(
-      `The encryption salt at ${file} is missing, and stored credentials were sealed ` +
-      'with it. Restore that file from the same backup as the database. Refusing to ' +
-      'create a new one, which would make those credentials unrecoverable.'
-    );
-  }
 
   const salt = crypto.randomBytes(32);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -117,13 +98,34 @@ function asRawKey(value) {
   for (const [prefix, encoding] of Object.entries(RAW_KEY_PREFIXES)) {
     if (!value.startsWith(prefix)) continue;
 
-    const decoded = Buffer.from(value.slice(prefix.length), encoding);
+    const encoded = value.slice(prefix.length);
+    const decoded = Buffer.from(encoded, encoding);
+
     if (decoded.length !== KEY_BYTES) {
       throw new Error(
         `GAMESHELF_ENCRYPTION_KEY declared "${prefix}" must decode to exactly ` +
         `${KEY_BYTES} bytes (64 hex characters, or 44 base64). Got ${decoded.length}.`
       );
     }
+
+    // Buffer.from stops at the first invalid character and pads the rest, so a
+    // mistyped or truncated key can still yield 32 bytes — different bytes than the
+    // operator intended, accepted silently, discovered only when they try to restore
+    // from the value they believe they saved. Re-encoding proves nothing was dropped.
+    const canonical = decoded.toString(encoding);
+    const matches =
+      encoding === 'hex'
+        ? canonical.toLowerCase() === encoded.toLowerCase()
+        : canonical === encoded;
+
+    if (!matches) {
+      throw new Error(
+        `GAMESHELF_ENCRYPTION_KEY declared "${prefix}" is not valid ${encoding}: ` +
+        'characters were dropped when decoding it, so the key in use would not be ' +
+        'the one you supplied. Check for a truncated or mistyped value.'
+      );
+    }
+
     return decoded;
   }
 
@@ -153,11 +155,21 @@ function deriveKey(passphrase) {
   // Keyed by digest, never by the passphrase itself: rotation derives under both the
   // old and the new key, so a plaintext-keyed cache left both master passphrases
   // resident in the heap for the life of the process.
-  const cacheKey = crypto.createHash('sha256').update(passphrase).digest('hex');
+  const raw = asRawKey(passphrase);
+
+  // Raw keys never touch the salt; passphrases must be cached against the salt they
+  // were actually stretched with, or any change of effective salt leaves a stale key
+  // sealing blobs nothing can reopen after a restart.
+  const salt = raw ? Buffer.alloc(0) : loadOrCreateSalt();
+  const cacheKey = crypto
+    .createHash('sha256')
+    .update(passphrase)
+    .update(salt)
+    .digest('hex');
+
   if (keyCache.has(cacheKey)) return keyCache.get(cacheKey);
 
-  const raw = asRawKey(passphrase);
-  const key = raw || crypto.scryptSync(passphrase, loadOrCreateSalt(), KEY_BYTES, SCRYPT_PARAMS);
+  const key = raw || crypto.scryptSync(passphrase, salt, KEY_BYTES, SCRYPT_PARAMS);
 
   keyCache.set(cacheKey, key);
   return key;
@@ -311,7 +323,6 @@ module.exports = {
   rotate,
   isSealedWith,
   setSaltDirectory,
-  setSaltMintingAllowed,
   assertUsableKey,
   envelopeVersion,
   derivationMode,

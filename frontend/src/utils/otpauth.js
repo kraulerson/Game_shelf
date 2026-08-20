@@ -27,7 +27,10 @@ export function buildOtpAuthUri(launcherId, username, secret) {
   // Sites display secrets in space-separated groups. Save already accepts that form,
   // so rejecting it here contradicted a save that had just succeeded — with a message
   // blaming Steam base64, which was not the cause.
-  const compact = secret.replace(/\s+/g, '');
+  // Match what the server library did: strip grouping whitespace, uppercase, and drop
+  // padding. Sites display secrets lowercase and space-grouped, and URLSearchParams
+  // percent-encodes '=' padding into %3D, which scanners reject.
+  const compact = secret.replace(/\s+/g, '').toUpperCase().replace(/=+$/, '');
 
   if (!BASE32.test(compact)) {
     throw new Error(
