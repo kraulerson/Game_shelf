@@ -64,57 +64,81 @@ function saltFilePath() {
 
 const SALT_BYTES = 32;
 
-function loadOrCreateSalt() {
+/**
+ * Raised when a passphrase-derived key is needed but the salt file is absent.
+ *
+ * A distinct type so callers can report the real cause instead of inferring it from a
+ * bare GCM authentication failure — which cannot distinguish "the salt was lost" from
+ * "the key was changed", and which earlier revisions of this module guessed at wrongly
+ * in both directions.
+ */
+class SaltMissingError extends Error {
+  constructor(file) {
+    super(
+      `The encryption salt at ${file} does not exist, but stored credentials were ` +
+      'sealed with one. Restore that file from the same backup as the database. ' +
+      'Nothing has been created in its place.'
+    );
+    this.name = 'SaltMissingError';
+    this.saltPath = file;
+  }
+}
+
+/**
+ * Read the salt. NEVER creates it — this is the read path (Invariant A).
+ *
+ * Reading used to be able to mint, which meant every boot-time probe created the salt
+ * it was about to report as missing: the operator was told to restore a file that now
+ * existed with throwaway contents, and anything re-sealed during that same boot became
+ * unreadable the moment the real salt came back.
+ */
+function loadSalt() {
   const file = saltFilePath();
 
-  if (fs.existsSync(file)) {
-    const existing = fs.readFileSync(file);
-    if (existing.length !== SALT_BYTES) {
-      // scryptSync accepts a short salt happily and derives a key nothing was sealed
-      // under, so every credential fails to open while the file sits there looking
-      // fine. Refuse rather than derive from it.
-      throw new Error(
-        `The encryption salt at ${file} is ${existing.length} bytes, expected ` +
-        `${SALT_BYTES}. It is truncated or corrupt — restore it from the same backup ` +
-        'as the database. Deriving from it would produce the wrong key silently.'
-      );
-    }
-    return existing;
+  if (!fs.existsSync(file)) throw new SaltMissingError(file);
+
+  const existing = fs.readFileSync(file);
+
+  if (existing.length !== SALT_BYTES) {
+    // scryptSync accepts a short salt happily and derives a key nothing was sealed
+    // under, so every credential fails to open while the file sits there looking fine.
+    throw new Error(
+      `The encryption salt at ${file} is ${existing.length} bytes, expected ` +
+      `${SALT_BYTES}. It is truncated or corrupt. If credentials were already stored, ` +
+      'restore it from the same backup as the database; if this was a failed first ' +
+      'creation, deleting the file is safe because nothing was sealed with it.'
+    );
   }
+
+  return existing;
+}
+
+/** Create the salt if absent. The ONLY function permitted to write it. */
+function createSaltIfMissing() {
+  const file = saltFilePath();
+
+  if (fs.existsSync(file)) return loadSalt();
 
   const salt = crypto.randomBytes(SALT_BYTES);
   fs.mkdirSync(path.dirname(file), { recursive: true });
 
   try {
-    // 'wx' fails if the file appeared since the check above. Without it, two
-    // processes racing a first boot each write a different salt and the loser
-    // seals everything under a salt that is no longer on disk — permanently
-    // unreadable, with no error at the time it happens.
-    // 'wx' on the REAL path, deliberately not a temp file plus rename. Rename
-    // overwrites unconditionally, and per-pid temp names never collide, so the
-    // temp-and-rename version let two processes racing a first boot both "win" — one
-    // then sealed credentials under a salt no longer on disk. It also left a
-    // pid-named temp behind on a kill, and Docker's main process is always PID 1, so
-    // that wedged salt creation on every subsequent boot.
-    //
-    // A single small write is not formally atomic, but the length check on read
-    // refuses a torn salt loudly instead of deriving a wrong key from it, which is
-    // the property that actually matters here.
+    // 'wx' on the REAL path, deliberately not a temp file plus rename: rename
+    // overwrites unconditionally and per-pid temp names never collide, so a
+    // temp-and-rename version let two processes racing a first boot both "win", and
+    // one then sealed credentials under a salt no longer on disk. A single small write
+    // is not formally atomic, but loadSalt's length check refuses a torn salt loudly
+    // rather than deriving a wrong key from it, which is the property that matters.
     fs.writeFileSync(file, salt, { flag: 'wx', mode: 0o600 });
 
-    // Say so. Minting is a legitimate first-run event, but it is also what happens
-    // when a container starts before its data volume is attached — and then every
-    // credential saved in that window is sealed under a salt that disappears on the
-    // next restart, with nothing else to indicate it. Refusing instead was tried and
-    // deadlocked recovery, so this announces rather than blocks.
+    // Minting is a legitimate first-run event, but it is also what happens when a
+    // container starts before its data volume is attached.
     console.warn(`[encrypt] Created a new encryption salt at ${file}.`);
     return salt;
   } catch (err) {
     if (err.code !== 'EEXIST') throw err;
-    // Another process created it first. Re-read through the same validation: skipping
-    // it here would let a short or corrupt salt through on the one branch added to
-    // handle a race.
-    return loadOrCreateSalt();
+    // Another process won the race. Re-read through the same validation.
+    return loadSalt();
   }
 }
 
@@ -190,7 +214,7 @@ function derivationMode() {
 // Cache within the process; nothing is written to disk.
 const keyCache = new Map();
 
-function deriveKey(passphrase) {
+function deriveKey(passphrase, { create = false } = {}) {
   // Keyed by digest, never by the passphrase itself: rotation derives under both the
   // old and the new key, so a plaintext-keyed cache left both master passphrases
   // resident in the heap for the life of the process.
@@ -199,7 +223,9 @@ function deriveKey(passphrase) {
   // Raw keys never touch the salt; passphrases must be cached against the salt they
   // were actually stretched with, or any change of effective salt leaves a stale key
   // sealing blobs nothing can reopen after a restart.
-  const salt = raw ? Buffer.alloc(0) : loadOrCreateSalt();
+  // Reading never mints (Invariant A); only sealing may. Defaulting to read means a
+  // new call site is safe unless it deliberately opts into writing.
+  const salt = raw ? Buffer.alloc(0) : create ? createSaltIfMissing() : loadSalt();
   const cacheKey = crypto
     .createHash('sha256')
     .update(passphrase)
@@ -348,7 +374,7 @@ function open(ciphertext, passphrase) {
 }
 
 function encrypt(plaintext) {
-  return sealWith(plaintext, deriveKey(rawKey));
+  return sealWith(plaintext, deriveKey(rawKey, { create: true }));
 }
 
 function decrypt(ciphertext) {
@@ -361,7 +387,7 @@ function decrypt(ciphertext) {
 function rotate(ciphertext, oldPassphrase, newPassphrase) {
   assertUsableKey(newPassphrase, 'The new encryption key');
 
-  return sealWith(open(ciphertext, oldPassphrase), deriveKey(newPassphrase));
+  return sealWith(open(ciphertext, oldPassphrase), deriveKey(newPassphrase, { create: true }));
 }
 
 module.exports = {
@@ -376,5 +402,6 @@ module.exports = {
   envelopeVersion,
   derivationMode,
   saltFilePath,
+  SaltMissingError,
   saltExists: () => fs.existsSync(saltFilePath()),
 };
