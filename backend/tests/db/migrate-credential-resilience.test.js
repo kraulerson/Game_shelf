@@ -104,36 +104,6 @@ describe('startup credential re-seal resilience', () => {
     if (db) db.close();
   });
 
-  it('still re-seals the good credentials when a bad one is present', () => {
-    cleanup();
-    process.env.GAMESHELF_ENCRYPTION_KEY = KEY;
-    process.env.GAMESHELF_DB_PATH = testDbPath;
-
-    delete require.cache[require.resolve('../../src/db/migrate')];
-    const { runMigrations } = require('../../src/db/migrate');
-    let db = runMigrations(testDbPath);
-    const insert = db.prepare(
-      'INSERT INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
-    );
-    insert.run('ubisoft', 'Ubisoft', sealLegacyUnder(OTHER_KEY, 'unreadable'));
-    insert.run('gog', 'GOG', sealLegacyUnder(KEY, JSON.stringify({ token: 'good' })));
-    db.close();
-
-    delete require.cache[require.resolve('../../src/db/migrate')];
-    db = runMigrations(testDbPath);
-    const good = db.prepare('SELECT credentials_json FROM launchers WHERE name = ?').get('gog');
-    db.close();
-
-    delete require.cache[require.resolve('../../src/utils/encrypt')];
-    const { envelopeVersion, decrypt } = require('../../src/utils/encrypt');
-
-    assert.equal(
-      envelopeVersion(good.credentials_json),
-      1,
-      'one unreadable credential must not block the others from being upgraded'
-    );
-    assert.deepEqual(JSON.parse(decrypt(good.credentials_json)), { token: 'good' });
-  });
 });
 
 describe('salt location follows the database being migrated', () => {

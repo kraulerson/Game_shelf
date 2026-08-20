@@ -286,33 +286,34 @@ function runMigrations(dbPath) {
     console.log('[Migration] #222: added game_editions.gog_slug');
   }
 
-  // Credential envelope v0 -> v1: blobs written before the versioned envelope were
-  // sealed with an unsalted single-pass SHA-256 of the passphrase. Re-seal them under
-  // the salted derivation.
+  // Credential envelope: reads dispatch on the version, so a pre-versioned blob works
+  // indefinitely. Upgrading is hardening, not a correctness prerequisite — and boot is
+  // the wrong place for it.
   //
-  // This is hardening, NOT a correctness prerequisite — reads dispatch on the envelope
-  // version, so a blob left un-upgraded still works. That is precisely why a failure
-  // here must not be fatal: throwing is uncaught at server.js and, with
-  // docker-compose's `restart: unless-stopped`, becomes an endless crash loop with no
-  // in-app recovery. An operator who changed GAMESHELF_ENCRYPTION_KEY without running
-  // the rotation script previously got a degraded-but-bootable app and could re-enter
-  // credentials through the UI; that must stay true.
-
-  // Pin the salt to the database we were handed rather than letting encrypt.js guess
-  // from the environment — runMigrations takes a path argument and the two can differ,
-  // which would put the salt beside a different database than the credentials it
-  // protects. Tolerate a missing key: without one nothing gets sealed anyway.
+  // Boot cannot ask the operator anything, runs under `restart: unless-stopped`, and
+  // races the state it inspects. An automatic re-seal here derived a key, which minted
+  // a salt, which re-sealed salt-independent v0 rows under a throwaway salt and
+  // destroyed them the moment the real salt was restored. A salt-loss detector added
+  // to catch that then fired permanently on raw-key installs and skipped the real
+  // diagnosis. Both are gone. The upgrade belongs to scripts/rotate-encryption-key.js,
+  // run once, offline, verified, after a backup.
+  //
+  // What remains is a read-only probe: report what will not open, and nothing else.
+  // Safe now only because decrypt() cannot write (Invariant A, encrypt.js).
   let encryptModule = null;
   if (process.env.GAMESHELF_ENCRYPTION_KEY) {
-    // Only a genuinely ABSENT key is tolerable here. Testing the thrown message for
-    // 'GAMESHELF_ENCRYPTION_KEY' also matched the too-short-key error, so a broken
-    // configuration silently skipped the pinning, the re-seal and the salt
-    // diagnostic alike. Checking the variable itself makes that impossible, and any
-    // error from the require is now a real fault that propagates.
+    // Only a genuinely ABSENT key is tolerable: a database with no stored credentials
+    // must still migrate without one. Any error from the require is a real fault.
     encryptModule = require('../utils/encrypt');
+
+    // Pin the salt to the database we were handed. runMigrations takes the path as an
+    // argument while encrypt.js otherwise reads the environment, and the two can
+    // differ — which would put the salt beside a different database than the
+    // credentials it protects.
     encryptModule.setSaltDirectory(path.dirname(dbPath));
-    // State which derivation is in force. It decides whether the salt file is part of
-    // the backup contract at all, and nothing else surfaced it.
+
+    // State the derivation in force: it is what decides whether the salt file is part
+    // of the backup contract at all, and nothing else surfaces it.
     console.log(
       `[Migration] Credential key derivation: ${encryptModule.derivationMode()}` +
         (encryptModule.derivationMode() === 'scrypt'
@@ -321,94 +322,7 @@ function runMigrations(dbPath) {
     );
   }
 
-  // Which envelope versions are present. Only the versions are needed here, so the
-  // ciphertext is not retained. (The unreadable scan below deliberately re-queries:
-  // the re-seal may have rewritten rows in between, and reporting on pre-rotation
-  // bytes would be wrong.)
-  const storedVersions = encryptModule
-    ? db
-        .prepare('SELECT credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
-        .all()
-        .map((row) => encryptModule.envelopeVersion(row.credentials_json))
-    : [];
-
-  // Re-seal pre-versioned blobs under the salted derivation. No completion marker:
-  // markers were tried and were wrong in both directions — written after a single boot
-  // with a mistyped key they disabled the upgrade permanently, and withheld for a
-  // corrupt row they let the same error print forever. The condition below is live, so
-  // it stops on its own the moment there is nothing left to upgrade.
-  if (storedVersions.includes(0)) {
-    const { rotateAllCredentials } = require('../utils/rotateCredentials');
-    // The key encrypt.js actually holds, not a second read of the environment:
-    // the two can differ once anything has loaded the module already.
-    const passphrase = encryptModule.activeKey();
-
-    const { rotated, failed, unreadable: corrupt } = rotateAllCredentials(
-      db,
-      passphrase,
-      passphrase,
-      { onError: 'skip' }
-    );
-
-    if (rotated > 0) {
-      console.log(
-        `[Migration] Re-sealed ${rotated} credential(s) under the salted key derivation`
-      );
-    }
-
-    // Report failures here. The unreadable scan below cannot cover this case: a v0
-    // blob decrypts through the LEGACY key, which never touches the salt, so an
-    // unreadable or misplaced salt leaves every row un-upgraded while every row still
-    // opens — a completely clean boot log over a store that never got hardened.
-    if (corrupt.length > 0) {
-      console.error(
-        `[Migration] ${corrupt.length} launcher(s) hold a stored value that is not a ` +
-          `credential envelope: ${corrupt.join(', ')}. These will fail at sync time.`
-      );
-    }
-
-    if (failed.length > 0) {
-      console.error(
-        `[Migration] Could not upgrade ${failed.length} credential(s) to the salted ` +
-          `derivation: ${failed.map((f) => `${f.name} (${f.reason})`).join(', ')}`
-      );
-      console.error(
-        '[Migration] They remain readable, but stay on the older key derivation until ' +
-          'this is resolved. A permissions error here usually means the encryption-salt ' +
-          'file is owned by a different user than the app runs as.'
-      );
-    }
-  }
-
-  // Then report what is actually observable: credentials that will not open. This is
-  // deliberately NOT a diagnosis of why. A failing decrypt cannot separate "the salt
-  // was lost" from "the key was changed" — earlier versions asserted one cause and
-  // told operators to restore a file that had never existed. Naming both, and letting
-  // the check re-run live on every boot, is honest and self-clearing: no stored flag
-  // to go stale, and nothing to hand-edit out of SQLite once it is fixed.
   if (encryptModule) {
-    // If the salt is required but absent, report WITHOUT probing. decrypt() reaches
-    // loadOrCreateSalt(), which CREATES one — so the diagnostic used to destroy the
-    // very condition it reports, leaving a throwaway salt where the operator was
-    // being told to restore the real file, and silently re-sealing anything they
-    // entered before they did.
-    if (storedVersions.includes(1) && !encryptModule.saltExists()) {
-      console.error(
-        `[Migration] The encryption salt at ${encryptModule.saltFilePath()} does not ` +
-          'exist, but stored credentials were sealed with one. They cannot be read ' +
-          'until it is restored.'
-      );
-      console.error(
-        '[Migration] Restore encryption-salt from the same backup as the database. ' +
-          'Nothing has been created in its place, so the file is still genuinely ' +
-          'missing — restoring it is sufficient.'
-      );
-      return db;
-    }
-
-    // Re-read rather than reusing storedRows: the re-seal above may have rewritten
-    // some of them, and reporting on pre-rotation bytes would be wrong. One query,
-    // reusing the already-computed versions is not possible for the same reason.
     const unreadable = db
       .prepare('SELECT name, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
       .all()
