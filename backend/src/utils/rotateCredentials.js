@@ -43,15 +43,19 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
         continue;
       }
 
-      // Already under the target key — a re-run after an interrupted rotation.
-      // Without this, the first such row fails GCM authentication and aborts the
-      // batch, reporting a decryption error for work that had already succeeded.
-      if (isSealedWith(row.credentials_json, newPassphrase)) {
-        skipped++;
-        continue;
-      }
-
       try {
+        // Already under the target key — a re-run after an interrupted rotation.
+        // Without this, the first such row fails GCM authentication and aborts the
+        // batch, reporting a decryption error for work that had already succeeded.
+        //
+        // Inside the try because it derives a key, which reads (or creates) the salt
+        // file: a disk-full or permission error here would otherwise escape the loop,
+        // the transaction and runMigrations, crash-looping the container.
+        if (isSealedWith(row.credentials_json, newPassphrase)) {
+          skipped++;
+          continue;
+        }
+
         update.run(rotate(row.credentials_json, oldPassphrase, newPassphrase), row.id);
         rotated++;
       } catch (err) {

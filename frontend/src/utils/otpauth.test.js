@@ -43,10 +43,12 @@ describe('buildOtpAuthUri', () => {
     expect(label).toBe('Gameshelf:ubisoft:ubisoft');
   });
 
-  it('returns empty string when there is no secret to encode', () => {
-    expect(buildOtpAuthUri('ubisoft', 'karl', '')).toBe('');
-    expect(buildOtpAuthUri('ubisoft', 'karl', null)).toBe('');
-    expect(buildOtpAuthUri('ubisoft', 'karl', undefined)).toBe('');
+  it('refuses rather than returning an unusable empty string when there is no secret', () => {
+    // Returning '' put two owners on this case with different behaviour, and a caller
+    // trusting the '' contract renders nothing — a button that silently does nothing.
+    expect(() => buildOtpAuthUri('ubisoft', 'karl', '')).toThrow(/secret/i);
+    expect(() => buildOtpAuthUri('ubisoft', 'karl', null)).toThrow(/secret/i);
+    expect(() => buildOtpAuthUri('ubisoft', 'karl', undefined)).toThrow(/secret/i);
   });
 
   it('matches the label form the server previously emitted', () => {

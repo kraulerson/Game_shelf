@@ -125,4 +125,35 @@ describe('scripts/rotate-encryption-key.js', () => {
     );
   });
 
+
+  it('reports a missing database instead of silently creating an empty one', () => {
+    // Verified behaviour before the fix: better-sqlite3 creates the file, then the
+    // script reports "no such table: launchers" — telling the operator their schema
+    // is broken during the one operation where they already fear losing every
+    // credential. And with GAMESHELF_DB_PATH unset it defaults to a CWD-relative
+    // path, so running the documented command from the wrong directory does this.
+    const missing = path.join(__dirname, '..', 'data', 'rotate-script', 'definitely-absent.db');
+    for (const suffix of ['', '-wal', '-shm']) {
+      if (fs.existsSync(missing + suffix)) fs.unlinkSync(missing + suffix);
+    }
+
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GAMESHELF_DB_PATH: missing,
+        GAMESHELF_ENCRYPTION_KEY: OLD_KEY,
+        GAMESHELF_ENCRYPTION_KEY_NEW: NEW_KEY,
+      },
+    });
+
+    assert.notEqual(result.status, 0, 'a missing database must be a non-zero exit');
+    assert.match(
+      `${result.stderr}${result.stdout}`,
+      /not found|does not exist/i,
+      'the operator must be told the database is missing, not that the schema is wrong'
+    );
+    assert.ok(!fs.existsSync(missing), 'no stray empty database may be created');
+  });
+
 });

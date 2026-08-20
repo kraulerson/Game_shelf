@@ -302,10 +302,16 @@ function runMigrations(dbPath) {
   // from the environment — runMigrations takes a path argument and the two can differ,
   // which would put the salt beside a different database than the credentials it
   // protects. Tolerate a missing key: without one nothing gets sealed anyway.
+  let encryptModule = null;
   try {
-    require('../utils/encrypt').setSaltDirectory(path.dirname(dbPath));
-  } catch {
-    // No encryption key configured; nothing to seal and nothing to pin.
+    encryptModule = require('../utils/encrypt');
+    encryptModule.setSaltDirectory(path.dirname(dbPath));
+  } catch (err) {
+    if (!/GAMESHELF_ENCRYPTION_KEY/.test(err.message)) throw err;
+    // No encryption key configured: nothing can be sealed, so nothing to pin. Any
+    // other failure here is a real fault and must not be absorbed — swallowing it
+    // would leave the salt beside whatever GAMESHELF_DB_PATH points at, which is the
+    // unrecoverable mismatch this pinning exists to prevent.
   }
 
   // Load the crypto modules only when there is something to upgrade: encrypt.js throws
@@ -315,13 +321,44 @@ function runMigrations(dbPath) {
     .prepare('SELECT 1 FROM launchers WHERE credentials_json IS NOT NULL LIMIT 1')
     .get();
 
-  if (hasStoredCreds) {
+  // Classify the stored blobs by envelope version. This is pure parsing — no key
+  // derivation — so it is cheap and safe before any key exists.
+  const storedBlobs = encryptModule
+    ? db
+        .prepare('SELECT credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
+        .all()
+        .map((row) => encryptModule.envelopeVersion(row.credentials_json))
+    : [];
+
+  // A salted (v1) credential with no salt file beside the database means the salt was
+  // LOST — a database restored without it, or a fresh volume. Checked independently of
+  // whether anything needs re-sealing: once every blob is already v1 the re-seal does
+  // nothing, and without this the app would boot looking healthy while every sync
+  // failed with a generic authentication error pointing at nothing.
+  if (storedBlobs.includes(1) && !fs.existsSync(path.join(path.dirname(dbPath), 'encryption-salt'))) {
+    console.error(
+      `[Migration] The encryption salt beside ${dbPath} is MISSING, but stored ` +
+        'credentials were sealed with it. They cannot be read without that file.'
+    );
+    console.error(
+      '[Migration] If you restored the database from a backup, restore the ' +
+        'encryption-salt file from that same backup. Otherwise every launcher ' +
+        'credential must be re-entered.'
+    );
+  }
+
+  // Only derive a key when something actually needs upgrading. Reaching the same
+  // verdict inside the rotation loop would pay one scryptSync (~32MB, ~50-100ms) on
+  // every container start forever, before the HTTP listener binds.
+  if (storedBlobs.includes(0)) {
     const { rotateAllCredentials } = require('../utils/rotateCredentials');
     const passphrase = process.env.GAMESHELF_ENCRYPTION_KEY;
+
 
     const { rotated, failed } = rotateAllCredentials(db, passphrase, passphrase, {
       onError: 'skip',
     });
+
 
     if (rotated > 0) {
       console.log(

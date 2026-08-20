@@ -156,12 +156,30 @@ export default function Setup() {
   if (step === 3) {
     async function saveCredentials(launcher) {
       const creds = credentials[launcher.id] || {};
+
+      // Send only credential fields. UI state (qrUri, qrError, saved, testing…) has no
+      // server meaning, and qrUri embeds the TOTP secret in its `secret=` parameter —
+      // posting the whole object put the secret in the request body twice.
+      const payload = {};
+      for (const field of [
+        'username',
+        'password',
+        'api_key',
+        'steamid64',
+        'totp_secret',
+        'otp_code',
+        'auth_code',
+        'session_cookie',
+      ]) {
+        if (creds[field]) payload[field] = creds[field];
+      }
+
       try {
         const res = await fetch(`/api/launchers/${launcher.id}/credentials`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify(creds),
+          body: JSON.stringify(payload),
         });
         if (res.ok) {
           setCredentials((prev) => ({
@@ -208,17 +226,6 @@ export default function Setup() {
     function showQR(launcher) {
       setCredentials((prev) => {
         const creds = prev[launcher.id] || {};
-
-        if (!creds.totp_secret) {
-          // Saving succeeds without a TOTP secret, so the button can be reached with
-          // the field blank. Returning an empty URI here would render nothing at all
-          // — a button that silently does nothing, which is the defect that made the
-          // old server endpoint worth deleting.
-          return {
-            ...prev,
-            [launcher.id]: { ...creds, qrUri: '', qrError: 'Enter a TOTP secret first.' },
-          };
-        }
 
         try {
           return {

@@ -11,14 +11,18 @@ const BASE32 = /^[A-Z2-7]+=*$/i;
  * Built here, in the browser, from the secret the operator just typed — the
  * server deliberately has no endpoint that reads a stored TOTP secret back out.
  *
- * Returns '' when there is no secret yet. Throws when the secret is present but
- * unusable: the Setup form tells Steam users to paste their `shared_secret`, which
- * is base64, and the server path this replaced rejected that outright. A scannable
+ * Throws when there is no secret, and when the secret is present but unusable. One
+ * owner for "cannot build a QR", so no caller can accidentally render nothing.
+ *
+ * The Setup form tells Steam users to paste their `shared_secret`, which is base64,
+ * and the server path this replaced rejected that outright. A scannable
  * QR built from a non-base32 secret is worse than no QR, because the failure only
  * shows up later as codes that never work.
  */
 export function buildOtpAuthUri(launcherId, username, secret) {
-  if (!secret) return '';
+  if (!secret) {
+    throw new Error('Enter a TOTP secret first.');
+  }
 
   if (!BASE32.test(secret)) {
     throw new Error(

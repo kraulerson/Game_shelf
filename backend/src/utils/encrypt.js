@@ -45,7 +45,14 @@ assertUsableKey(rawKey, 'GAMESHELF_ENCRYPTION_KEY environment variable');
 let saltDirOverride = null;
 
 function setSaltDirectory(dir) {
+  if (dir === saltDirOverride) return;
+
   saltDirOverride = dir;
+  // Derived keys are memoised against whatever salt was in force when they were
+  // computed. Changing the directory without dropping them means we keep sealing
+  // under a salt that is not the one on disk — unreadable after restart, with no
+  // error at the moment it happens.
+  keyCache.clear();
 }
 
 function saltFilePath() {
@@ -81,8 +88,13 @@ function loadOrCreateSalt() {
 function asRawKey(value) {
   if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, 'hex');
 
-  if (/^[A-Za-z0-9+/]{43}=$/.test(value)) {
-    const decoded = Buffer.from(value, 'base64');
+  // Padded base64, unpadded base64, and base64url (which `randomBytes(32)
+  // .toString('base64url')` produces, using - and _). Accepting only the padded form
+  // sent base64url keys down the scrypt path instead — contradicting .env.example's
+  // claim that the salt is unused for raw keys, and silently making a database-only
+  // backup insufficient.
+  if (/^[A-Za-z0-9+/\-_]{43}={0,1}$/.test(value)) {
+    const decoded = Buffer.from(value, 'base64url');
     if (decoded.length === KEY_BYTES) return decoded;
   }
 
@@ -156,6 +168,17 @@ function openWith(payload, key) {
 }
 
 /**
+ * The envelope version of a stored blob: 0 for the pre-versioned form, the number for
+ * a versioned one, or null when it is not a readable envelope at all. Pure parsing —
+ * no key derivation, so it is safe to call before a key exists.
+ */
+function envelopeVersion(ciphertext) {
+  const payload = parseEnvelope(ciphertext);
+  if (payload === null) return null;
+  return payload.v === undefined ? 0 : payload.v;
+}
+
+/**
  * True when a stored blob predates the versioned envelope and can be upgraded.
  *
  * Anything that is not a readable envelope answers false: there is nothing to
@@ -174,7 +197,17 @@ function parseEnvelope(ciphertext) {
   try {
     const payload = JSON.parse(Buffer.from(ciphertext, 'base64').toString('utf8'));
     if (payload === null || typeof payload !== 'object') return null;
-    if (typeof payload.iv !== 'string' || typeof payload.data !== 'string') return null;
+    if (
+      typeof payload.iv !== 'string' ||
+      typeof payload.data !== 'string' ||
+      typeof payload.tag !== 'string'
+    ) {
+      return null;
+    }
+    // A non-numeric version is a malformed envelope, not a future one. Letting it
+    // through produced "uses envelope version 1, which this build cannot read" for
+    // `v: '1'` — an error naming the exact version this build does read.
+    if (payload.v !== undefined && typeof payload.v !== 'number') return null;
     return payload;
   } catch {
     return null;
@@ -231,4 +264,13 @@ function rotate(ciphertext, oldPassphrase, newPassphrase) {
   return sealWith(open(ciphertext, oldPassphrase), deriveKey(newPassphrase));
 }
 
-module.exports = { encrypt, decrypt, rotate, isLegacyEnvelope, isSealedWith, setSaltDirectory };
+module.exports = {
+  encrypt,
+  decrypt,
+  rotate,
+  isLegacyEnvelope,
+  isSealedWith,
+  setSaltDirectory,
+  assertUsableKey,
+  envelopeVersion,
+};
