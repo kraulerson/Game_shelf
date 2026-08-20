@@ -12,7 +12,11 @@ COPY src/ ./src/
 # The rotation script is the documented recovery path for changing
 # GAMESHELF_ENCRYPTION_KEY. It must be run against a STOPPED backend (see the script
 # header), so the form is:
-#   docker compose run --rm backend node scripts/rotate-encryption-key.js
+#   docker compose stop backend
+#   docker compose run --rm \
+#     -e GAMESHELF_ENCRYPTION_KEY=<current> \
+#     -e GAMESHELF_ENCRYPTION_KEY_NEW=<new> \
+#     backend node scripts/rotate-encryption-key.js
 # not `docker exec`, which requires the container to be running — the very thing that
 # causes the torn-key race the script warns about.
 COPY scripts/ ./scripts/

@@ -81,7 +81,7 @@ describe('salt handling refuses to silently orphan existing credentials', () => 
     delete process.env.GAMESHELF_DB_PATH;
   });
 
-  it('records the salt loss durably instead of only warning once', () => {
+  it('keeps reporting a lost salt on every boot, with no stored flag to go stale', () => {
     cleanup();
     const { runMigrations } = require('../../src/db/migrate');
     let db = runMigrations(testDbPath);
@@ -93,48 +93,52 @@ describe('salt handling refuses to silently orphan existing credentials', () => 
 
     assert.ok(fs.existsSync(saltPath), 'sealing should have created a salt');
 
-    // The operator restores gameshelf.db from backup but not the salt beside it, or
-    // attaches a fresh volume. Minting a new salt makes every stored credential
-    // undecryptable while the app reports itself healthy — and destroys the one clue
-    // pointing at the file they still have in backup.
+    // The operator restores gameshelf.db from backup but not the salt beside it.
     fs.unlinkSync(saltPath);
-    delete require.cache[require.resolve('../../src/utils/encrypt')];
-    delete require.cache[require.resolve('../../src/utils/rotateCredentials')];
-    delete require.cache[require.resolve('../../src/db/migrate')];
 
-    const errors = [];
-    const realError = console.error;
-    console.error = (...args) => errors.push(args.join(' '));
-
-    let boot;
-    try {
-      const { runMigrations: run2 } = require('../../src/db/migrate');
-      assert.doesNotThrow(() => {
-        boot = run2(testDbPath);
-      }, 'a missing salt must not crash-loop the container');
-    } finally {
-      console.error = realError;
-      if (boot) boot.close();
+    function bootErrors() {
+      for (const m of [
+        '../../src/utils/encrypt',
+        '../../src/utils/rotateCredentials',
+        '../../src/db/migrate',
+      ]) {
+        delete require.cache[require.resolve(m)];
+      }
+      const errors = [];
+      const real = console.error;
+      console.error = (...a) => errors.push(a.join(' '));
+      let boot;
+      try {
+        const { runMigrations: run } = require('../../src/db/migrate');
+        assert.doesNotThrow(() => {
+          boot = run(testDbPath);
+        }, 'a missing salt must not crash-loop the container');
+      } finally {
+        console.error = real;
+        if (boot) boot.close();
+      }
+      return errors;
     }
 
+    const first = bootErrors();
     assert.ok(
-      errors.some((line) => /salt/i.test(line) && /backup|restore|missing/i.test(line)),
-      'boot must say the salt was missing and point at the backup, not just ' +
-        `report generic decrypt failures. Got: ${JSON.stringify(errors)}`
+      first.some((l) => /cannot be decrypted/i.test(l)),
+      `first boot must report it. Got: ${JSON.stringify(first)}`
     );
 
-    // And it must survive the restart. Warning once was useless: the act of warning
-    // minted a salt, so the file existed next boot and the warning never fired again
-    // while the credentials stayed unreadable. Refusing to mint instead deadlocked
-    // recovery — the migration says "re-enter every credential" and every save threw.
-    const Database = require('better-sqlite3');
-    const check = new Database(testDbPath);
-    const marker = check
-      .prepare("SELECT value FROM settings WHERE key = 'credential_salt_lost_at'")
-      .get();
-    check.close();
-
-    assert.ok(marker, 'the loss must be recorded in the database, not just logged once');
+    // And again. Warning once was useless: the act of warning minted a salt, so the
+    // file existed next boot and the warning never fired again while the credentials
+    // stayed unreadable. A stored marker fixed that but never self-cleared, leaving
+    // the operator to hand-edit SQLite. A live check does both.
+    const second = bootErrors();
+    assert.ok(
+      second.some((l) => /cannot be decrypted/i.test(l)),
+      'the report must survive the restart that used to erase it'
+    );
+    assert.ok(
+      second.some((l) => /key/i.test(l) && /salt/i.test(l)),
+      'and must name both possible causes, since a failed decrypt cannot separate them'
+    );
   });
 });
 
@@ -301,5 +305,134 @@ describe('declared raw keys are validated by round-trip, not just length', () =>
     const key = crypto.randomBytes(32);
     assert.doesNotThrow(() => withKey('hex:' + key.toString('hex')));
     assert.doesNotThrow(() => withKey('base64:' + key.toString('base64')));
+  });
+});
+
+describe('boot reports unreadable credentials without guessing the cause', () => {
+  const testDbPath = path.join(__dirname, '..', 'data', 'boot-diagnosis', 'test.db');
+  const saltPath = path.join(path.dirname(testDbPath), 'encryption-salt');
+  const KEY = 'a]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN0s';
+  const OTHER = 'zzz]V3$k9Lm!pQ2rZ&wX8yB#dF5gH7jN';
+
+  function reset() {
+    for (const f of [testDbPath, testDbPath + '-wal', testDbPath + '-shm']) {
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+    if (fs.existsSync(saltPath)) fs.unlinkSync(saltPath);
+    for (const m of ['../../src/utils/encrypt', '../../src/utils/rotateCredentials', '../../src/db/migrate']) {
+      delete require.cache[require.resolve(m)];
+    }
+  }
+
+  function bootCapturingErrors(dbPath) {
+    const errors = [];
+    const real = console.error;
+    console.error = (...a) => errors.push(a.join(' '));
+    let db;
+    try {
+      const { runMigrations } = require('../../src/db/migrate');
+      db = runMigrations(dbPath);
+    } finally {
+      console.error = real;
+      if (db) db.close();
+    }
+    return errors;
+  }
+
+  after(() => {
+    reset();
+    delete process.env.GAMESHELF_ENCRYPTION_KEY;
+    delete process.env.GAMESHELF_DB_PATH;
+  });
+
+  it('reports credentials it cannot open after the key is changed, with everything already upgraded', () => {
+    // The commonest operator mistake, in the steady state this PR creates: all blobs
+    // are v1 and the salt is present, so neither the salt-lost branch nor the re-seal
+    // branch fires. The app booted with a clean log and a healthy /api/health while
+    // every sync failed — the exact silence this work exists to remove.
+    reset();
+    process.env.GAMESHELF_ENCRYPTION_KEY = KEY;
+    process.env.GAMESHELF_DB_PATH = testDbPath;
+
+    const { runMigrations } = require('../../src/db/migrate');
+    const db = runMigrations(testDbPath);
+    const { encrypt } = require('../../src/utils/encrypt');
+    db.prepare(
+      'INSERT INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
+    ).run('gog', 'GOG', encrypt(JSON.stringify({ token: 'x' })));
+    db.close();
+
+    // Key changed without rotating. Salt untouched, everything already v1.
+    for (const m of ['../../src/utils/encrypt', '../../src/utils/rotateCredentials', '../../src/db/migrate']) {
+      delete require.cache[require.resolve(m)];
+    }
+    process.env.GAMESHELF_ENCRYPTION_KEY = OTHER;
+
+    const errors = bootCapturingErrors(testDbPath);
+
+    assert.ok(
+      errors.some((l) => /cannot be (read|decrypted)|unreadable/i.test(l)),
+      `boot must report unreadable credentials. Got: ${JSON.stringify(errors)}`
+    );
+    assert.ok(
+      errors.some((l) => /key/i.test(l) && /salt/i.test(l)),
+      'it must name BOTH possible causes rather than asserting one it cannot distinguish'
+    );
+  });
+
+  it('says nothing when every credential opens normally', () => {
+    reset();
+    process.env.GAMESHELF_ENCRYPTION_KEY = KEY;
+    process.env.GAMESHELF_DB_PATH = testDbPath;
+
+    const { runMigrations } = require('../../src/db/migrate');
+    const db = runMigrations(testDbPath);
+    const { encrypt } = require('../../src/utils/encrypt');
+    db.prepare(
+      'INSERT INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
+    ).run('gog', 'GOG', encrypt(JSON.stringify({ token: 'x' })));
+    db.close();
+
+    for (const m of ['../../src/utils/encrypt', '../../src/utils/rotateCredentials', '../../src/db/migrate']) {
+      delete require.cache[require.resolve(m)];
+    }
+
+    const errors = bootCapturingErrors(testDbPath);
+
+    assert.deepEqual(errors, [], 'a healthy install must boot silently');
+  });
+
+  it('stops warning once the credentials are readable again, with no manual cleanup', () => {
+    // A stored marker could not do this: the operator recovered and the banner kept
+    // firing until they hand-edited SQLite on a production volume.
+    reset();
+    process.env.GAMESHELF_ENCRYPTION_KEY = KEY;
+    process.env.GAMESHELF_DB_PATH = testDbPath;
+
+    const { runMigrations } = require('../../src/db/migrate');
+    let db = runMigrations(testDbPath);
+    const { encrypt } = require('../../src/utils/encrypt');
+    db.prepare(
+      'INSERT INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
+    ).run('gog', 'GOG', encrypt(JSON.stringify({ token: 'x' })));
+    db.close();
+
+    for (const m of ['../../src/utils/encrypt', '../../src/utils/rotateCredentials', '../../src/db/migrate']) {
+      delete require.cache[require.resolve(m)];
+    }
+    process.env.GAMESHELF_ENCRYPTION_KEY = OTHER;
+    assert.ok(bootCapturingErrors(testDbPath).length > 0, 'should warn while broken');
+
+    // Operator restores the correct key.
+    for (const m of ['../../src/utils/encrypt', '../../src/utils/rotateCredentials', '../../src/db/migrate']) {
+      delete require.cache[require.resolve(m)];
+    }
+    process.env.GAMESHELF_ENCRYPTION_KEY = KEY;
+
+    assert.deepEqual(
+      bootCapturingErrors(testDbPath),
+      [],
+      'the warning must clear itself when the problem is actually fixed'
+    );
   });
 });

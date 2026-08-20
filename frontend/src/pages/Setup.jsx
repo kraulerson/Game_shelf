@@ -5,6 +5,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { buildOtpAuthUri } from '../utils/otpauth';
+import { buildCredentialPayload } from '../utils/credentialPayload';
 
 function SortableItem({ launcher, index }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: launcher.id });
@@ -157,26 +158,7 @@ export default function Setup() {
     async function saveCredentials(launcher) {
       const creds = credentials[launcher.id] || {};
 
-      // Strip UI-only state rather than enumerating the server's field list, which
-      // would be a second copy of its contract: it had already drifted (otp_code is
-      // not accepted there), and a credential field added to the form later would be
-      // silently dropped while the user saw "saved".
-      const UI_ONLY = [
-        'qrUri',
-        'qrError',
-        'saved',
-        'error',
-        'testing',
-        'testResult',
-        'totpEnabled',
-      ];
-      const payload = Object.fromEntries(
-        Object.entries(creds).filter(([field]) => !UI_ONLY.includes(field))
-      );
-
-      // Turning the TOTP checkbox off must actually drop the secret. Leaving it in the
-      // payload stored a secret the UI was simultaneously showing as disabled.
-      if (!creds.totpEnabled) delete payload.totp_secret;
+      const payload = buildCredentialPayload(creds);
 
       try {
         const res = await fetch(`/api/launchers/${launcher.id}/credentials`, {

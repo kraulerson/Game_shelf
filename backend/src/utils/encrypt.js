@@ -324,6 +324,7 @@ module.exports = {
   isSealedWith,
   setSaltDirectory,
   assertUsableKey,
+  parseDeclaredKey: asRawKey,
   envelopeVersion,
   derivationMode,
   usesSalt,

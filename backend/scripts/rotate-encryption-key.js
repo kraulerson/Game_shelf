@@ -51,7 +51,13 @@ if (!oldKey) {
 // key the app then refuses at boot; re-implementing the rule here would let the two
 // drift the moment encrypt.js changes what it accepts.
 try {
-  require('../src/utils/encrypt').assertUsableKey(newKey, 'GAMESHELF_ENCRYPTION_KEY_NEW');
+  const encrypt = require('../src/utils/encrypt');
+  encrypt.assertUsableKey(newKey, 'GAMESHELF_ENCRYPTION_KEY_NEW');
+  // Also validate the declared hex:/base64: form. assertUsableKey only checks presence
+  // and length, so a malformed declared key passed here and — with no credentials to
+  // rotate — was never exercised by rotate() either. The script reported success and
+  // the app then refused to boot on the key the operator had just adopted.
+  encrypt.parseDeclaredKey(newKey);
 } catch (err) {
   console.error(`${err.message}\nNothing has been changed.`);
   process.exit(1);
@@ -71,16 +77,19 @@ try {
   // to close, reintroduced in the one tool that rewrites every credential at once.
   require('../src/utils/encrypt').setSaltDirectory(path.dirname(dbPath));
 
-  // If this run mints the salt, it is owned by whoever ran the script. Running it as
-  // root inside the container leaves a 0600 root:root salt that the app — running as
-  // USER node — then cannot read, failing every sync and every credential save with an
-  // opaque 500. Warn rather than guess at the right uid.
-  const saltFile = require('../src/utils/encrypt').saltFilePath();
-  if (!require('node:fs').existsSync(saltFile) && typeof process.getuid === 'function') {
+  // Only meaningful when a salt will actually be created: a declared hex:/base64: key
+  // never touches the salt file. Warn about ownership only in the case that can
+  // genuinely leave a file the app cannot read.
+  const encryptModule = require('../src/utils/encrypt');
+  const saltFile = encryptModule.saltFilePath();
+  if (
+    encryptModule.usesSalt() &&
+    !require('node:fs').existsSync(saltFile) &&
+    typeof process.getuid === 'function'
+  ) {
     console.warn(
-      `Note: this run will create ${saltFile} owned by uid ${process.getuid()}. ` +
-      'If that is not the uid the app runs as, it will not be able to read it. ' +
-      'Inside Docker use: docker compose run --rm --user node backend node scripts/rotate-encryption-key.js'
+      `Note: this run will create ${saltFile} as uid ${process.getuid()}. If that is ` +
+      'not the uid the app runs as, it will not be able to read it.'
     );
   }
 

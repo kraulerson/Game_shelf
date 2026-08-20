@@ -27,9 +27,18 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
   let skipped = 0;
   const failed = [];
 
-  // All-or-nothing under 'abort'. The SELECT lives inside the transaction so a
-  // credential the running app rewrites mid-rotation (syncEngine persists refreshed
-  // OAuth tokens) cannot be clobbered with a re-sealed stale value.
+  // All-or-nothing under 'abort'. The SELECT lives inside the transaction so the rows
+  // read and the rows written come from one snapshot.
+  //
+  // What this does NOT do, despite an earlier version of this comment claiming it:
+  // protect against a running app. A deferred BEGIN takes its WAL read snapshot at the
+  // first statement, so a concurrent commit makes the UPDATE fail rather than
+  // serialise — and the race the script header describes is worse than that anyway. A
+  // sync that decrypted under the old key before this ran will write its refreshed
+  // token back AFTER this commits, under the key its process still holds, leaving the
+  // store straddling two keys. Transaction scope cannot prevent that. Stopping the
+  // backend first is the only protection, which is why the script and .env.example
+  // both say to.
   const runAll = db.transaction(() => {
     rotated = 0;
     skipped = 0;
