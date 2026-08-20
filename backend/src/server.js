@@ -7,9 +7,9 @@ if (!process.env.GAMESHELF_JWT_SECRET) {
 }
 
 // The encryption key is validated by encrypt.js, which owns the definition of a
-// usable key — including the declared hex:/base64: forms and their round-trip check.
-// A length test here was a third copy of that rule and did not understand them, so a
-// malformed declared key passed boot and failed later at the first credential save.
+// usable key — including the declared hex: form. A length test here was a third copy
+// of that rule and did not understand it, so a malformed declared key passed boot and
+// failed later at the first credential save.
 try {
   require('./utils/encrypt');
 } catch (err) {

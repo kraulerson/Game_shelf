@@ -53,7 +53,7 @@ if (!oldKey) {
 try {
   const encrypt = require('../src/utils/encrypt');
   encrypt.assertUsableKey(newKey, 'GAMESHELF_ENCRYPTION_KEY_NEW');
-  // Also validate the declared hex:/base64: form. assertUsableKey only checks presence
+  // Also validate the declared hex: form. assertUsableKey only checks presence
   // and length, so a malformed declared key passed here and — with no credentials to
   // rotate — was never exercised by rotate() either. The script reported success and
   // the app then refused to boot on the key the operator had just adopted.
@@ -78,14 +78,14 @@ try {
   // to close, reintroduced in the one tool that rewrites every credential at once.
   encrypt.setSaltDirectory(path.dirname(dbPath));
 
-  // Only meaningful when a salt will actually be created: a declared hex:/base64: key
+  // Only meaningful when a salt will actually be created: a declared hex: key
   // never touches the salt file. Warn about ownership only in the case that can
   // genuinely leave a file the app cannot read.
   const saltFile = encrypt.saltFilePath();
   if (
     // Gate on the NEW key, which is what will actually be derived. Gating on the key
     // already loaded suppressed this warning when rotating from a declared
-    // hex:/base64: key to a passphrase — one of the two cases that creates a salt.
+    // hex: key to a passphrase — one of the two cases that creates a salt.
     !encrypt.parseDeclaredKey(newKey) &&
     !require('node:fs').existsSync(saltFile) &&
     typeof process.getuid === 'function'
