@@ -1,4 +1,30 @@
-const { rotate, isSealedWith, envelopeVersion } = require('./encrypt');
+const { rotate, isSealedWith, envelopeVersion, SaltMissingError } = require('./encrypt');
+
+/**
+ * "Is this row already sealed under the NEW key?" — answered without writing anything.
+ *
+ * Deriving a passphrase key reads the salt, and when the new key is a passphrase while
+ * the current one was declared raw, that salt does not exist yet: a hex: install has
+ * never had one. The read path refuses to create it, correctly, so the question itself
+ * killed the rotation — quoting an error telling the operator to restore a file that
+ * has never been in any backup.
+ *
+ * Nothing can be sealed under a key that cannot yet be derived, so the honest answer
+ * is no, and rotate() then creates the salt on the seal path where creation belongs.
+ *
+ * Answering instead of propagating is safe in the other direction too. If the salt is
+ * genuinely lost on a passphrase install, rotate() evaluates open() with the OLD key
+ * first — arguments left to right — and fails there, before anything is asked to
+ * create a salt.
+ */
+function alreadySealedUnder(ciphertext, newPassphrase) {
+  try {
+    return isSealedWith(ciphertext, newPassphrase);
+  } catch (err) {
+    if (err instanceof SaltMissingError) return false;
+    throw err;
+  }
+}
 
 /**
  * Re-seal every stored launcher credential from one encryption key to another.
@@ -74,7 +100,7 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
         // Inside the try because it derives a key, which reads (or creates) the salt
         // file: a disk-full or permission error here would otherwise escape the loop,
         // the transaction and runMigrations, crash-looping the container.
-        if (isSealedWith(row.credentials_json, newPassphrase)) {
+        if (alreadySealedUnder(row.credentials_json, newPassphrase)) {
           skipped++;
           continue;
         }
