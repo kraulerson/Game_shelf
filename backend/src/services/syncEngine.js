@@ -58,15 +58,32 @@ async function syncLauncher(launcherName, db, otpCode) {
     // other half of the same invariant, and fixing only one made "absence means
     // unchanged" true for saves and false for syncs.
     //
+    // Merge onto what is stored NOW, not onto the copy read before the network call.
+    // Everything the operator can do to those credentials — correcting a password,
+    // removing the launcher — fits inside a network round-trip, and merging onto the
+    // stale copy silently undid it. A removal in that window is honoured by writing
+    // nothing at all rather than putting the credentials back.
+    //
     // otp_code is stripped: it is injected into the decrypted object above for the
     // launcher's benefit, and a launcher that echoes its input back would persist a
     // one-time code into the store.
     if (session && session.updatedCredentials) {
       const { encrypt } = require('../utils/encrypt');
-      const merged = { ...credentials, ...session.updatedCredentials };
-      delete merged.otp_code;
-      const encrypted = encrypt(JSON.stringify(merged));
-      db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(encrypted, launcherName);
+      const updated = session.updatedCredentials;
+
+      db.transaction(() => {
+        const current = db
+          .prepare('SELECT credentials_json FROM launchers WHERE name = ?')
+          .get(launcherName);
+
+        if (!current || !current.credentials_json) return;
+
+        const merged = { ...JSON.parse(decrypt(current.credentials_json)), ...updated };
+        delete merged.otp_code;
+
+        db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?')
+          .run(encrypt(JSON.stringify(merged)), launcherName);
+      })();
     }
     // Always unwrap: refreshIfNeeded returns { session, updatedCredentials }
     if (session && session.session) {
