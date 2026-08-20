@@ -112,13 +112,57 @@ describe('POST /api/launchers/:id/credentials preserves unsent fields', () => {
     );
   });
 
-  it('clears a field when the client explicitly sends it empty', async () => {
-    // Unticking the TOTP checkbox is a deliberate action with the field on screen, so
-    // the client can say so explicitly. That is how removal stays possible without
-    // making absence mean removal.
+  it('treats an empty totp_secret as absent, not as a removal', async () => {
+    // A blank input is what a reloaded form holds, what a browser autofill leaves
+    // behind, and what a client that always sends every key produces. None of those
+    // is a decision to destroy a secret the UI can never re-supply, so a value can
+    // no longer mean removal at all.
     const res = await post({ username: 'karl', password: 'corrected', totp_secret: '' });
     assert.equal(res.status, 200);
 
-    assert.ok(!stored().totp_secret, 'an explicitly emptied field must be removed');
+    assert.equal(
+      stored().totp_secret,
+      'JBSWY3DPEHPK3PXP',
+      'an empty value must leave the stored secret alone'
+    );
+  });
+
+  it('destroys nothing when sent a whole bundle of empty fields', async () => {
+    // The shape a client sends when it posts its entire form state regardless of what
+    // the user touched. Every key is present; every value is empty.
+    const res = await post({
+      username: 'karl',
+      password: 'corrected',
+      api_key: '',
+      steamid64: '',
+      totp_secret: '',
+      auth_code: '',
+      session_cookie: '',
+    });
+    assert.equal(res.status, 200);
+
+    const after = stored();
+    assert.equal(after.totp_secret, 'JBSWY3DPEHPK3PXP', 'the secret must survive');
+    assert.equal(after.username, 'karl', 'and so must every other stored field');
+    assert.equal(after.password, 'corrected');
+  });
+
+  it('removes the TOTP secret when asked with the explicit verb', async () => {
+    // Re-seal a known secret rather than relying on the tests above having left one:
+    // an ordering change would otherwise turn this into a test that passes because
+    // the secret was already gone.
+    const { encrypt } = require('../../src/utils/encrypt');
+    db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(
+      encrypt(JSON.stringify({ username: 'karl', password: 'corrected', totp_secret: 'JBSWY3DPEHPK3PXP' })),
+      'ubisoft'
+    );
+
+    // Removal stays possible, but it needs a verb rather than a value. There is no
+    // shape a form can accidentally take that spells remove_totp_secret: true.
+    const res = await post({ username: 'karl', password: 'corrected', remove_totp_secret: true });
+    assert.equal(res.status, 200);
+
+    assert.ok(!stored().totp_secret, 'the verb must actually remove it');
+    assert.equal(stored().username, 'karl', 'and must remove only what it names');
   });
 });

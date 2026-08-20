@@ -190,7 +190,7 @@ router.post('/:id/credentials', async (req, res) => {
     return res.status(400).json({ error: `${launcher.display_name} uses file import — no credentials needed` });
   }
 
-  const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie } = req.body || {};
+  const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie, remove_totp_secret } = req.body || {};
 
   // Validate required fields by auth_type
   if (launcher.auth_type === 'api_key') {
@@ -247,10 +247,14 @@ router.post('/:id/credentials', async (req, res) => {
   // and a wholesale replace meant that re-saving a corrected password destroyed the
   // TOTP secret the user could never re-supply from the UI.
   //
-  // Absence therefore means "unchanged". Removal stays possible by sending the field
-  // explicitly empty, which the client only does for a field the user can actually see
-  // and clear. auth_code and session_cookie exchanges replace outright: those mint a
-  // whole new session, so merging stale fields into them would be wrong.
+  // Absence means "unchanged", and so does an empty value: a blank input is what a
+  // reloaded form holds, what autofill leaves behind, and what a client that always
+  // posts every key produces, none of which is a decision to destroy anything. No
+  // field VALUE is destructive; removal takes an explicit verb instead, so there is
+  // no shape a form can accidentally take that deletes a secret.
+  //
+  // auth_code and session_cookie exchanges replace outright: those mint a whole new
+  // session, so merging stale fields into them would be wrong.
   let merged = payload;
   let priorUnreadable = false;
   let encrypted;
@@ -282,13 +286,9 @@ router.post('/:id/credentials', async (req, res) => {
 
       merged = { ...existing, ...payload };
 
-    // An explicitly empty value is a deliberate clear. Driven by what the request
-    // actually contains rather than a hardcoded field list — a second copy of the
-    // credential contract here would silently stop honouring a clear for any field
-    // added to the form later, while still returning 200.
-      for (const [field, value] of Object.entries(req.body || {})) {
-        if (value === '') delete merged[field];
-      }
+      // Applied after the merge so a request that both supplies and removes the same
+      // field resolves one way every time.
+      if (remove_totp_secret === true) delete merged.totp_secret;
     }
 
     encrypted = encrypt(JSON.stringify(merged));
