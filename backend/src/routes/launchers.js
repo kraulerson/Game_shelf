@@ -253,52 +253,56 @@ router.post('/:id/credentials', async (req, res) => {
   // whole new session, so merging stale fields into them would be wrong.
   let merged = payload;
   let priorUnreadable = false;
+  let encrypted;
 
-  if (launcher.auth_type !== 'auth_code' && launcher.auth_type !== 'session_cookie') {
-    const existingRow = db
-      .prepare('SELECT credentials_json FROM launchers WHERE name = ?')
-      .get(id);
+  const applyMerge = db.transaction(() => {
+    if (launcher.auth_type !== 'auth_code' && launcher.auth_type !== 'session_cookie') {
+      const existingRow = db
+        .prepare('SELECT credentials_json FROM launchers WHERE name = ?')
+        .get(id);
 
-    let existing = {};
-    if (existingRow && existingRow.credentials_json) {
-      try {
-        existing = JSON.parse(decrypt(existingRow.credentials_json));
-      } catch (err) {
+      let existing = {};
+      if (existingRow && existingRow.credentials_json) {
+        try {
+          existing = JSON.parse(decrypt(existingRow.credentials_json));
+        } catch (err) {
         // Unreadable stored blob: proceed rather than fail, so a key change or lost
         // salt does not also block recovery by re-entering credentials. But say so —
         // silently substituting {} means the operator cannot tell "your other fields
         // were preserved" from "they were unrecoverable and you have just overwritten
         // them".
-        existing = {};
-        priorUnreadable = true;
-        console.error(
-          `[launchers] Existing credentials for ${id} could not be decrypted ` +
-            `(${err.message}); saving will replace them with only the fields supplied.`
-        );
+          existing = {};
+          priorUnreadable = true;
+          console.error(
+            `[launchers] Existing credentials for ${id} could not be decrypted ` +
+              `(${err.message}); saving will replace them with only the fields supplied.`
+          );
+        }
       }
-    }
 
-    merged = { ...existing, ...payload };
+      merged = { ...existing, ...payload };
 
     // An explicitly empty value is a deliberate clear. Driven by what the request
     // actually contains rather than a hardcoded field list — a second copy of the
     // credential contract here would silently stop honouring a clear for any field
     // added to the form later, while still returning 200.
-    for (const [field, value] of Object.entries(req.body || {})) {
-      if (value === '') delete merged[field];
+      for (const [field, value] of Object.entries(req.body || {})) {
+        if (value === '') delete merged[field];
+      }
     }
-  }
 
-  const encryptedCredentials = encrypt(JSON.stringify(merged));
+    encrypted = encrypt(JSON.stringify(merged));
 
-  // Upsert: insert or update by name
-  db.prepare(`
-    INSERT INTO launchers (name, display_name, enabled, credentials_json)
-    VALUES (?, ?, 1, ?)
-    ON CONFLICT(name) DO UPDATE SET
-      credentials_json = excluded.credentials_json,
-      enabled = 1
-  `).run(id, launcher.display_name, encryptedCredentials);
+    db.prepare(`
+      INSERT INTO launchers (name, display_name, enabled, credentials_json)
+      VALUES (?, ?, 1, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        credentials_json = excluded.credentials_json,
+        enabled = 1
+    `).run(id, launcher.display_name, encrypted);
+  });
+
+  applyMerge();
 
   // Only surfaced when it happened: adding a field unconditionally would change the
   // response shape for every existing caller for a condition that is almost never true.
@@ -321,8 +325,21 @@ router.get('/:id/test', (req, res) => {
     return res.status(404).json({ error: 'No credentials stored for this launcher' });
   }
 
-  // Decrypt to verify credentials are valid (readable)
-  decrypt(row.credentials_json);
+  // Decrypt to verify credentials are valid (readable). Every other path in this PR
+  // treats an unreadable blob as a named, reported condition; leaving this one as a
+  // raw throw turned "Test Connection" into an opaque 500 exactly when the operator
+  // is trying to work out what is wrong.
+  try {
+    decrypt(row.credentials_json);
+  } catch {
+    return res.status(409).json({
+      error:
+        'Stored credentials for this launcher cannot be decrypted. Either ' +
+        'GAMESHELF_ENCRYPTION_KEY changed without running the rotation script, or ' +
+        'the encryption-salt file beside the database is missing. Re-entering the ' +
+        'credentials also resolves it.',
+    });
+  }
 
   // TODO: Implement actual auth endpoint pinging per launcher
   res.json({ success: true, message: `Connection test not yet implemented for ${launcher.display_name}` });

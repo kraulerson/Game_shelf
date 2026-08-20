@@ -78,7 +78,13 @@ describe('POST /api/launchers/:id/credentials preserves unsent fields', () => {
   }
 
   async function post(body) {
-    const server = app.listen(0);
+    // Wait for 'listening' before reading the address. listen() is asynchronous, so
+    // reading server.address() straight after it can return null and produce a request
+    // to port "undefined" that never resolves — which is exactly what happened when a
+    // host argument was added and made the bind slower.
+    const server = await new Promise((resolve) => {
+      const s = app.listen(0, '127.0.0.1', () => resolve(s));
+    });
     const { port } = server.address();
     try {
       return await fetch(`http://127.0.0.1:${port}/api/launchers/ubisoft/credentials`, {

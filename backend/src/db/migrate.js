@@ -311,6 +311,14 @@ function runMigrations(dbPath) {
     // error from the require is now a real fault that propagates.
     encryptModule = require('../utils/encrypt');
     encryptModule.setSaltDirectory(path.dirname(dbPath));
+    // State which derivation is in force. It decides whether the salt file is part of
+    // the backup contract at all, and nothing else surfaced it.
+    console.log(
+      `[Migration] Credential key derivation: ${encryptModule.derivationMode()}` +
+        (encryptModule.derivationMode() === 'scrypt'
+          ? ` (salt: ${encryptModule.saltFilePath()} — include it in backups)`
+          : ' (declared raw key; no salt file involved)')
+    );
   }
 
   // Which envelope versions are present. Only the versions are needed here, so the
@@ -379,6 +387,25 @@ function runMigrations(dbPath) {
   // the check re-run live on every boot, is honest and self-clearing: no stored flag
   // to go stale, and nothing to hand-edit out of SQLite once it is fixed.
   if (encryptModule) {
+    // If the salt is required but absent, report WITHOUT probing. decrypt() reaches
+    // loadOrCreateSalt(), which CREATES one — so the diagnostic used to destroy the
+    // very condition it reports, leaving a throwaway salt where the operator was
+    // being told to restore the real file, and silently re-sealing anything they
+    // entered before they did.
+    if (storedVersions.includes(1) && !encryptModule.saltExists()) {
+      console.error(
+        `[Migration] The encryption salt at ${encryptModule.saltFilePath()} does not ` +
+          'exist, but stored credentials were sealed with one. They cannot be read ' +
+          'until it is restored.'
+      );
+      console.error(
+        '[Migration] Restore encryption-salt from the same backup as the database. ' +
+          'Nothing has been created in its place, so the file is still genuinely ' +
+          'missing — restoring it is sufficient.'
+      );
+      return db;
+    }
+
     // Re-read rather than reusing storedRows: the re-seal above may have rewritten
     // some of them, and reporting on pre-rotation bytes would be wrong. One query,
     // reusing the already-computed versions is not possible for the same reason.

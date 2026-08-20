@@ -122,8 +122,14 @@ describe('salt handling refuses to silently orphan existing credentials', () => 
 
     const first = bootErrors();
     assert.ok(
-      first.some((l) => /cannot be decrypted/i.test(l)),
-      `first boot must report it. Got: ${JSON.stringify(first)}`
+      first.some((l) => /salt/i.test(l) && /does not exist|missing/i.test(l)),
+      `first boot must report the missing salt. Got: ${JSON.stringify(first)}`
+    );
+    assert.ok(
+      !fs.existsSync(saltPath),
+      'reporting must not CREATE the salt it says is missing — that replaced the ' +
+        'operator’s evidence with a throwaway file and silently re-sealed anything ' +
+        'entered before they restored the real one'
     );
 
     // And again. Warning once was useless: the act of warning minted a salt, so the
@@ -132,12 +138,8 @@ describe('salt handling refuses to silently orphan existing credentials', () => 
     // the operator to hand-edit SQLite. A live check does both.
     const second = bootErrors();
     assert.ok(
-      second.some((l) => /cannot be decrypted/i.test(l)),
+      second.some((l) => /salt/i.test(l) && /does not exist|missing/i.test(l)),
       'the report must survive the restart that used to erase it'
-    );
-    assert.ok(
-      second.some((l) => /key/i.test(l) && /salt/i.test(l)),
-      'and must name both possible causes, since a failed decrypt cannot separate them'
     );
   });
 });

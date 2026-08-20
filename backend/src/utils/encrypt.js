@@ -90,18 +90,18 @@ function loadOrCreateSalt() {
     // processes racing a first boot each write a different salt and the loser
     // seals everything under a salt that is no longer on disk — permanently
     // unreadable, with no error at the time it happens.
-    // Write to a temp file and rename: writeFileSync is not atomic, so a crash or a
-    // full disk mid-write leaves a short salt that reads back as valid. 'wx' on the
-    // temp keeps the two-process race guard.
-    const tmp = `${file}.${process.pid}.tmp`;
-    const fd = fs.openSync(tmp, 'wx', 0o600);
-    try {
-      fs.writeSync(fd, salt);
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmp, file);
+    // 'wx' on the REAL path, deliberately not a temp file plus rename. Rename
+    // overwrites unconditionally, and per-pid temp names never collide, so the
+    // temp-and-rename version let two processes racing a first boot both "win" — one
+    // then sealed credentials under a salt no longer on disk. It also left a
+    // pid-named temp behind on a kill, and Docker's main process is always PID 1, so
+    // that wedged salt creation on every subsequent boot.
+    //
+    // A single small write is not formally atomic, but the length check on read
+    // refuses a torn salt loudly instead of deriving a wrong key from it, which is
+    // the property that actually matters here.
+    fs.writeFileSync(file, salt, { flag: 'wx', mode: 0o600 });
+
     // Say so. Minting is a legitimate first-run event, but it is also what happens
     // when a container starts before its data volume is attached — and then every
     // credential saved in that window is sealed under a salt that disappears on the
@@ -111,7 +111,10 @@ function loadOrCreateSalt() {
     return salt;
   } catch (err) {
     if (err.code !== 'EEXIST') throw err;
-    return fs.readFileSync(file);
+    // Another process created it first. Re-read through the same validation: skipping
+    // it here would let a short or corrupt salt through on the one branch added to
+    // handle a race.
+    return loadOrCreateSalt();
   }
 }
 
@@ -373,4 +376,5 @@ module.exports = {
   envelopeVersion,
   derivationMode,
   saltFilePath,
+  saltExists: () => fs.existsSync(saltFilePath()),
 };
