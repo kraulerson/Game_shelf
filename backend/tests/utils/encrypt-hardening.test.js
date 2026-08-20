@@ -176,20 +176,15 @@ describe('startup re-seal survives a broken salt file', () => {
 
     const { runMigrations } = require('../../src/db/migrate');
     let db = runMigrations(testDbPath);
-    const legacyKey = crypto.createHash('sha256').update(KEY).digest();
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', legacyKey, iv);
-    let data = cipher.update('{"t":"x"}', 'utf8', 'hex');
-    data += cipher.final('hex');
+
+    // Sealed under the CURRENT scheme, deliberately. A pre-versioned blob dispatches
+    // to the legacy sha256-of-passphrase derivation, which never touches the salt at
+    // all — so the scenario this test is named for was never entered, and deleting
+    // the whole try/catch in migrate.js would not have made it fail.
+    const { encrypt } = require('../../src/utils/encrypt');
     db.prepare(
       'INSERT INTO launchers (name, display_name, enabled, credentials_json) VALUES (?, ?, 1, ?)'
-    ).run(
-      'gog',
-      'GOG',
-      Buffer.from(
-        JSON.stringify({ iv: iv.toString('hex'), tag: cipher.getAuthTag().toString('hex'), data })
-      ).toString('base64')
-    );
+    ).run('gog', 'GOG', encrypt(JSON.stringify({ t: 'x' })));
     db.close();
 
     // Salt unreadable: the state left by running the rotation script as root inside
@@ -208,11 +203,27 @@ describe('startup re-seal survives a broken salt file', () => {
     delete require.cache[require.resolve('../../src/db/migrate')];
 
     const { runMigrations: run2 } = require('../../src/db/migrate');
+    const reported = [];
+    const realError = console.error;
+    console.error = (...a) => reported.push(a.join(' '));
+
     let boot;
-    assert.doesNotThrow(() => {
-      boot = run2(testDbPath);
-    }, 'an unreadable salt must be reported, not turned into an endless restart loop');
-    if (boot) boot.close();
+    try {
+      assert.doesNotThrow(() => {
+        boot = run2(testDbPath);
+      }, 'an unreadable salt must be reported, not turned into an endless restart loop');
+    } finally {
+      console.error = realError;
+      if (boot) boot.close();
+    }
+
+    // Not throwing is only half of it: silence would also satisfy that, and silence is
+    // how an operator ends up with a launcher that fails at sync time for no stated
+    // reason. The probe must actually name the row.
+    assert.ok(
+      reported.some((l) => l.includes('gog')),
+      `the unreadable salt must be reported against the launcher. Got: ${JSON.stringify(reported)}`
+    );
   });
 });
 
