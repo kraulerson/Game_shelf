@@ -58,18 +58,32 @@ async function syncLauncher(launcherName, db, otpCode) {
     // other half of the same invariant, and fixing only one made "absence means
     // unchanged" true for saves and false for syncs.
     //
-    // Merge onto what is stored NOW, not onto the copy read before the network call.
-    // Everything the operator can do to those credentials — correcting a password,
-    // removing the launcher — fits inside a network round-trip, and merging onto the
-    // stale copy silently undid it. A removal in that window is honoured by writing
-    // nothing at all rather than putting the credentials back.
+    // A three-way merge, because both sides of it can be stale.
+    //
+    // BASE is `credentials`, read before the network call. STORE is whatever is on
+    // disk when the write happens — everything the operator can do in those seconds,
+    // correcting a password or removing the launcher, lands there. OVERLAY is what the
+    // launcher handed back, and it is NOT purely new: Ubisoft returns the username and
+    // password it was given, so parts of the overlay are just the base wearing a
+    // different hat, and letting the whole thing win reinstated them over the
+    // operator's save — the very bug that re-reading the store was meant to fix.
+    //
+    // So only fields the launcher actually CHANGED may win. A field it echoed back
+    // unaltered defers to the store, which is the one copy that is current.
+    //
+    // A removal in the window is honoured by writing nothing at all rather than
+    // putting the credentials back.
     //
     // otp_code is stripped: it is injected into the decrypted object above for the
     // launcher's benefit, and a launcher that echoes its input back would persist a
     // one-time code into the store.
     if (session && session.updatedCredentials) {
       const { encrypt } = require('../utils/encrypt');
-      const updated = session.updatedCredentials;
+
+      const changed = {};
+      for (const [field, value] of Object.entries(session.updatedCredentials)) {
+        if (value !== credentials[field]) changed[field] = value;
+      }
 
       db.transaction(() => {
         const current = db
@@ -78,7 +92,7 @@ async function syncLauncher(launcherName, db, otpCode) {
 
         if (!current || !current.credentials_json) return;
 
-        const merged = { ...JSON.parse(decrypt(current.credentials_json)), ...updated };
+        const merged = { ...JSON.parse(decrypt(current.credentials_json)), ...changed };
         delete merged.otp_code;
 
         db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?')

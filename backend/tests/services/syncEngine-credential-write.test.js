@@ -22,13 +22,24 @@ describe('Sync engine — the credential write reads what is stored now', () => 
   let encrypt, decrypt;
   let duringRefresh = null;
 
+  // Shaped like the real Ubisoft launcher, which is the one this matters for: it is
+  // handed the credentials, and it puts the username and password it was given
+  // straight back into updatedCredentials alongside the tokens it actually refreshed.
+  // A fake whose overlay shares no field with the store proves nothing about a merge.
   class FakeLauncher {
-    async refreshIfNeeded() {
+    async refreshIfNeeded(credentials) {
       // Yield the way a real network call does. Everything the operator can do to
       // the store happens in here.
       await Promise.resolve();
       if (duringRefresh) duringRefresh();
-      return { session: { ok: true }, updatedCredentials: { token: 'refreshed' } };
+      return {
+        session: { ok: true },
+        updatedCredentials: {
+          username: credentials.username,
+          password: credentials.password,
+          token: 'refreshed',
+        },
+      };
     }
 
     async fetchOwnedGames() {
@@ -110,6 +121,23 @@ describe('Sync engine — the credential write reads what is stored now', () => 
     await syncLauncher('ubisoft', db);
 
     assert.equal(stored(), null, 'a removal must not be undone by a sync already in flight');
+  });
+
+  it('lets a field the launcher genuinely refreshed win over a concurrent save of it', async () => {
+    // The other half of the rule, and the one that stops "prefer the store" being the
+    // fix. A token the launcher just refreshed is newer than anything a form wrote a
+    // moment earlier, so it must win — deferring to the store there would persist a
+    // token already known to be spent.
+    duringRefresh = () => {
+      db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(
+        encrypt(JSON.stringify({ ...STORED, token: 'written-by-a-form' })),
+        'ubisoft'
+      );
+    };
+
+    await syncLauncher('ubisoft', db);
+
+    assert.equal(stored().token, 'refreshed', 'the launcher owns the field it refreshed');
   });
 
   it('still persists a refreshed token when nothing else touched the store', async () => {
