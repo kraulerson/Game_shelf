@@ -76,6 +76,12 @@ function loadOrCreateSalt() {
     // seals everything under a salt that is no longer on disk — permanently
     // unreadable, with no error at the time it happens.
     fs.writeFileSync(file, salt, { flag: 'wx', mode: 0o600 });
+    // Say so. Minting is a legitimate first-run event, but it is also what happens
+    // when a container starts before its data volume is attached — and then every
+    // credential saved in that window is sealed under a salt that disappears on the
+    // next restart, with nothing else to indicate it. Refusing instead was tried and
+    // deadlocked recovery, so this announces rather than blocks.
+    console.warn(`[encrypt] Created a new encryption salt at ${file}.`);
     return salt;
   } catch (err) {
     if (err.code !== 'EEXIST') throw err;
@@ -325,6 +331,7 @@ module.exports = {
   setSaltDirectory,
   assertUsableKey,
   parseDeclaredKey: asRawKey,
+  activeKey: () => rawKey,
   envelopeVersion,
   derivationMode,
   usesSalt,

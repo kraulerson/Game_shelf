@@ -17,8 +17,10 @@ const { rotate, isSealedWith, envelopeVersion } = require('./encrypt');
  *     with no in-app recovery. Reads dispatch on the envelope version, so leaving an
  *     un-re-sealable blob alone is safe; it is reported instead.
  *
- * Returns { rotated, skipped, failed } — `skipped` counts launchers with no
- * credentials plus those already sealed under the target key.
+ * Returns { rotated, skipped, failed, unreadable }. `skipped` counts launchers with
+ * no credentials plus those already sealed under the target key; `unreadable` names
+ * rows whose stored value is not an envelope at all, which is a real fault and must
+ * not be reported as "nothing stored".
  */
 function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abort' } = {}) {
   const update = db.prepare('UPDATE launchers SET credentials_json = ? WHERE id = ?');
@@ -26,6 +28,7 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
   let rotated = 0;
   let skipped = 0;
   const failed = [];
+  const unreadable = [];
 
   // All-or-nothing under 'abort'. The SELECT lives inside the transaction so the rows
   // read and the rows written come from one snapshot.
@@ -43,6 +46,7 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
     rotated = 0;
     skipped = 0;
     failed.length = 0;
+    unreadable.length = 0;
 
     const rows = db.prepare('SELECT id, name, credentials_json FROM launchers').all();
 
@@ -52,12 +56,13 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
         continue;
       }
 
-      // A value that is not an envelope at all holds no credential, so there is
-      // nothing to re-seal. Aborting the operator's whole rotation because one row
-      // contains a placeholder — which this repo's own tests write — would be a
-      // decryption error reported for something that was never a credential.
+      // A value that is not an envelope holds nothing re-sealable. Aborting the
+      // operator's whole rotation over one such row would report a decryption error
+      // for something that was never a credential — but it must not be silently
+      // folded into "no credentials stored" either, because a truncated or corrupted
+      // blob looks identical here and is a real fault.
       if (envelopeVersion(row.credentials_json) === null) {
-        skipped++;
+        unreadable.push(row.name);
         continue;
       }
 
@@ -85,7 +90,7 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
 
   runAll();
 
-  return { rotated, skipped, failed };
+  return { rotated, skipped, failed, unreadable };
 }
 
 module.exports = { rotateAllCredentials };

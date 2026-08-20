@@ -329,13 +329,43 @@ function runMigrations(dbPath) {
   // it stops on its own the moment there is nothing left to upgrade.
   if (storedRows.some((row) => row.version === 0)) {
     const { rotateAllCredentials } = require('../utils/rotateCredentials');
-    const passphrase = process.env.GAMESHELF_ENCRYPTION_KEY;
+    // The key encrypt.js actually holds, not a second read of the environment:
+    // the two can differ once anything has loaded the module already.
+    const passphrase = encryptModule.activeKey();
 
-    const { rotated } = rotateAllCredentials(db, passphrase, passphrase, { onError: 'skip' });
+    const { rotated, failed, unreadable: corrupt } = rotateAllCredentials(
+      db,
+      passphrase,
+      passphrase,
+      { onError: 'skip' }
+    );
 
     if (rotated > 0) {
       console.log(
         `[Migration] Re-sealed ${rotated} credential(s) under the salted key derivation`
+      );
+    }
+
+    // Report failures here. The unreadable scan below cannot cover this case: a v0
+    // blob decrypts through the LEGACY key, which never touches the salt, so an
+    // unreadable or misplaced salt leaves every row un-upgraded while every row still
+    // opens — a completely clean boot log over a store that never got hardened.
+    if (corrupt.length > 0) {
+      console.error(
+        `[Migration] ${corrupt.length} launcher(s) hold a stored value that is not a ` +
+          `credential envelope: ${corrupt.join(', ')}. These will fail at sync time.`
+      );
+    }
+
+    if (failed.length > 0) {
+      console.error(
+        `[Migration] Could not upgrade ${failed.length} credential(s) to the salted ` +
+          `derivation: ${failed.map((f) => `${f.name} (${f.reason})`).join(', ')}`
+      );
+      console.error(
+        '[Migration] They remain readable, but stay on the older key derivation until ' +
+          'this is resolved. A permissions error here usually means the encryption-salt ' +
+          'file is owned by a different user than the app runs as.'
       );
     }
   }

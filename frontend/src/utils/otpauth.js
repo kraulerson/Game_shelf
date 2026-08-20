@@ -2,10 +2,12 @@ import { normaliseTotpSecret } from './credentialPayload';
 
 const ISSUER = 'Gameshelf';
 
-// RFC 4648 base32: A–Z and 2–7, optionally padded with '='. Authenticator apps
+// RFC 4648 base32: A-Z and 2-7. No case-insensitivity or padding clause here —
+// normaliseTotpSecret has already uppercased and stripped padding, so a tolerant
+// pattern would only obscure which layer owns that. Authenticator apps
 // decode the secret as base32; anything else imports cleanly and then generates
 // permanently wrong codes.
-const BASE32 = /^[A-Z2-7]+=*$/i;
+const BASE32 = /^[A-Z2-7]+$/;
 
 /**
  * Build an otpauth:// URI for an authenticator app to scan.

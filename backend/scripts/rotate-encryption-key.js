@@ -70,20 +70,23 @@ let db;
 try {
   const Database = require('better-sqlite3');
   const { rotateAllCredentials } = require('../src/utils/rotateCredentials');
+  const encrypt = require('../src/utils/encrypt');
 
   // Pin the salt to the database being rewritten, exactly as runMigrations does.
   // Without this the script re-derives the location from the environment while the
   // migration derives it from its argument — the divergence setSaltDirectory exists
   // to close, reintroduced in the one tool that rewrites every credential at once.
-  require('../src/utils/encrypt').setSaltDirectory(path.dirname(dbPath));
+  encrypt.setSaltDirectory(path.dirname(dbPath));
 
   // Only meaningful when a salt will actually be created: a declared hex:/base64: key
   // never touches the salt file. Warn about ownership only in the case that can
   // genuinely leave a file the app cannot read.
-  const encryptModule = require('../src/utils/encrypt');
-  const saltFile = encryptModule.saltFilePath();
+  const saltFile = encrypt.saltFilePath();
   if (
-    encryptModule.usesSalt() &&
+    // Gate on the NEW key, which is what will actually be derived: usesSalt() reports
+    // on the key already loaded, so rotating from a declared hex:/base64: key to a
+    // passphrase suppressed this warning in one of the two cases that creates a salt.
+    !encrypt.parseDeclaredKey(newKey) &&
     !require('node:fs').existsSync(saltFile) &&
     typeof process.getuid === 'function'
   ) {
@@ -95,13 +98,53 @@ try {
 
   db = new Database(dbPath, { fileMustExist: true });
 
-  const { rotated, skipped } = rotateAllCredentials(db, oldKey, newKey);
+  const { rotated, skipped, unreadable: corrupt } = rotateAllCredentials(db, oldKey, newKey);
 
-  console.log(
-    `Rotated ${rotated} credential(s); skipped ${skipped} ` +
-    '(no credentials stored, or already sealed under the new key).'
-  );
-  console.log('Now set GAMESHELF_ENCRYPTION_KEY to the new value and restart Gameshelf.');
+  // Prove the new key actually opens what was just written, before telling the
+  // operator to discard the old one. "We wrote something" is not the same claim as
+  // "the new key demonstrably works", and this is the one tool whose entire purpose is
+  // making the switch non-destructive.
+  const written = db
+    .prepare('SELECT name, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
+    .all();
+
+  const unopenable = written.filter((row) => {
+    if (encrypt.envelopeVersion(row.credentials_json) === null) return false;
+    try {
+      encrypt.rotate(row.credentials_json, newKey, newKey);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+
+  if (unopenable.length > 0) {
+    console.error(
+      `Rotation wrote ${rotated} credential(s), but ${unopenable.length} cannot be ` +
+      `re-opened with the new key: ${unopenable.map((r) => r.name).join(', ')}.`
+    );
+    console.error(
+      'Do NOT change GAMESHELF_ENCRYPTION_KEY yet — the old value is still the one ' +
+      'that works for those rows. Investigate before switching over.'
+    );
+    process.exitCode = 1;
+  } else {
+    console.log(
+      `Rotated ${rotated} credential(s); skipped ${skipped} ` +
+      '(no credentials stored, or already sealed under the new key).'
+    );
+    console.log(
+      `Verified: all ${written.length} stored credential(s) open with the new key.`
+    );
+    if (corrupt.length > 0) {
+      console.warn(
+        `Warning: ${corrupt.length} launcher(s) hold a value that is not a credential ` +
+        `envelope and were left untouched: ${corrupt.join(', ')}. These will fail at ` +
+        'sync time; re-enter them through the UI.'
+      );
+    }
+    console.log('Now set GAMESHELF_ENCRYPTION_KEY to the new value and restart Gameshelf.');
+  }
 } catch (err) {
   if (err.code === 'SQLITE_CANTOPEN') {
     console.error(

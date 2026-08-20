@@ -28,20 +28,22 @@ describe('buildCredentialPayload', () => {
     expect(payload.totp_secret).toBe('JBSWY3DPEHPK3PXP');
   });
 
-  it('drops the TOTP secret only when the user explicitly turned it off', () => {
+  it('asks the server to CLEAR the secret when the user explicitly turned it off', () => {
+    // The server merges, so omitting the field means "unchanged". Removal has to be
+    // stated explicitly or unticking the box would silently do nothing.
     const payload = buildCredentialPayload({
       username: 'karl',
       totp_secret: 'JBSWY3DPEHPK3PXP',
       totpEnabled: false,
     });
 
-    expect(payload.totp_secret).toBeUndefined();
+    expect(payload.totp_secret).toBe('');
   });
 
-  it('never sends a secret it was not given', () => {
+  it('still asks for a clear when the box is off and the field is empty', () => {
     const payload = buildCredentialPayload({ username: 'karl', totpEnabled: false });
 
-    expect('totp_secret' in payload).toBe(false);
+    expect(payload.totp_secret).toBe('');
   });
 
   it('does NOT drop a secret merely because the page was reloaded', () => {
@@ -53,11 +55,10 @@ describe('buildCredentialPayload', () => {
     const payload = buildCredentialPayload({
       username: 'karl',
       password: 'corrected',
-      totp_secret: 'JBSWY3DPEHPK3PXP',
-      // totpEnabled deliberately absent
+      // totp_secret and totpEnabled both absent — exactly what a reloaded form holds
     });
 
-    expect(payload.totp_secret).toBe('JBSWY3DPEHPK3PXP');
+    expect('totp_secret' in payload).toBe(false);
   });
 
   it('normalises the TOTP secret so the stored value matches the QR', () => {

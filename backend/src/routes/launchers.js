@@ -240,9 +240,45 @@ router.post('/:id/credentials', async (req, res) => {
     if (totp_secret) payload.totp_secret = totp_secret;
   }
 
-  const encryptedCredentials = encrypt(JSON.stringify(payload));
-
   const db = req.app.locals.db;
+
+  // Merge over what is already stored rather than replacing it. The Setup form has no
+  // read-back of stored secrets by design, so after a page reload it holds nothing —
+  // and a wholesale replace meant that re-saving a corrected password destroyed the
+  // TOTP secret the user could never re-supply from the UI.
+  //
+  // Absence therefore means "unchanged". Removal stays possible by sending the field
+  // explicitly empty, which the client only does for a field the user can actually see
+  // and clear. auth_code and session_cookie exchanges replace outright: those mint a
+  // whole new session, so merging stale fields into them would be wrong.
+  let merged = payload;
+
+  if (launcher.auth_type !== 'auth_code' && launcher.auth_type !== 'session_cookie') {
+    const existingRow = db
+      .prepare('SELECT credentials_json FROM launchers WHERE name = ?')
+      .get(id);
+
+    let existing = {};
+    if (existingRow && existingRow.credentials_json) {
+      try {
+        existing = JSON.parse(decrypt(existingRow.credentials_json));
+      } catch {
+        // Unreadable stored blob: treat as absent rather than failing the save, so a
+        // key change or lost salt does not also block the operator from recovering by
+        // re-entering credentials.
+        existing = {};
+      }
+    }
+
+    merged = { ...existing, ...payload };
+
+    // An explicitly empty value is a deliberate clear.
+    for (const field of ['username', 'password', 'api_key', 'steamid64', 'totp_secret']) {
+      if (req.body && req.body[field] === '') delete merged[field];
+    }
+  }
+
+  const encryptedCredentials = encrypt(JSON.stringify(merged));
 
   // Upsert: insert or update by name
   db.prepare(`

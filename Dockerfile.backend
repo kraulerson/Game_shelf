@@ -12,6 +12,8 @@ COPY src/ ./src/
 # The rotation script is the documented recovery path for changing
 # GAMESHELF_ENCRYPTION_KEY. It must be run against a STOPPED backend (see the script
 # header), so the form is:
+#   docker compose build backend      # the script ships only in images built
+#                                     # from this change onwards
 #   docker compose stop backend
 #   docker compose run --rm \
 #     -e GAMESHELF_ENCRYPTION_KEY=<current> \
