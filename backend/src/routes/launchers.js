@@ -23,20 +23,41 @@ const AVAILABLE_LAUNCHERS = [
 
 const LAUNCHER_MAP = Object.fromEntries(AVAILABLE_LAUNCHERS.map(l => [l.id, l]));
 
+// Whether a TOTP secret is on file — never the secret itself. Nothing reads a stored
+// secret back out to the client; the form is write-only by design.
+//
+// Unreadable counts as "not configured" rather than as a fault. The boot probe and
+// Test Connection both already name that condition; this answers where a checkbox
+// starts, and it must not be the reason the Setup page fails to load.
+function hasTotpSecret(blob) {
+  if (!blob) return false;
+  try {
+    return !!JSON.parse(decrypt(blob)).totp_secret;
+  } catch {
+    return false;
+  }
+}
+
 // GET /api/launchers/available
 router.get('/available', (req, res) => {
   const db = req.app.locals.db;
   const dbLaunchers = db.prepare(
-    'SELECT name, credentials_json IS NOT NULL as configured, priority, sync_locked FROM launchers'
+    'SELECT name, credentials_json, priority, sync_locked FROM launchers'
   ).all();
   const dbMap = Object.fromEntries(dbLaunchers.map(r => [r.name, r]));
 
-  const result = AVAILABLE_LAUNCHERS.map(l => ({
-    ...l,
-    configured: !!(dbMap[l.id]?.configured),
-    priority: dbMap[l.id]?.priority ?? 99,
-    sync_locked: !!(dbMap[l.id]?.sync_locked),
-  }));
+  const result = AVAILABLE_LAUNCHERS.map(l => {
+    const row = dbMap[l.id];
+    return {
+      ...l,
+      configured: row?.credentials_json != null,
+      priority: row?.priority ?? 99,
+      sync_locked: !!(row?.sync_locked),
+      // Gated on otp_supported so a Steam API key is never decrypted to answer a
+      // question about TOTP.
+      totp_configured: l.otp_supported ? hasTotpSecret(row?.credentials_json) : false,
+    };
+  });
 
   res.json(result);
 });

@@ -31,27 +31,26 @@ export function buildCredentialPayload(creds = {}) {
   }
 
   // The server merges over what is stored, so ABSENCE means "unchanged" — which is
-  // what makes a reloaded form safe. Removal therefore has to be said out loud: an
-  // explicit empty string clears the field.
+  // what makes a reloaded form safe. An empty VALUE means the same thing there, by
+  // design: too many ordinary things produce a blank field for one to be read as a
+  // decision to destroy a secret. Removal is therefore a verb, not a value.
   //
   // Only an EXPLICIT false is a removal. After a reload totpEnabled is undefined,
   // which means "the form does not know", not "the user turned it off".
   if (creds.totpEnabled === false) {
-    payload.totp_secret = '';
+    delete payload.totp_secret;
+    payload.remove_totp_secret = true;
+    return payload;
   }
 
-  if (payload.totp_secret && creds.totpEnabled !== false) {
-    const normalised = normaliseTotpSecret(payload.totp_secret);
+  if ('totp_secret' in payload) {
+    // Match the QR builder, so the stored secret and the scanned one agree. An empty
+    // result means the field held only whitespace or padding — nothing was entered —
+    // so omit it and leave whatever is stored alone.
+    const normalised = normaliseTotpSecret(payload.totp_secret ?? '');
 
-    // An empty normalisation result means the field held only whitespace or padding —
-    // nothing was entered. It must NOT become an explicit '', because the server reads
-    // that as a deliberate clear and would destroy a stored secret the UI can never
-    // re-supply. Omit it instead, so the merge leaves the stored value alone.
-    if (normalised) {
-      payload.totp_secret = normalised;
-    } else {
-      delete payload.totp_secret;
-    }
+    if (normalised) payload.totp_secret = normalised;
+    else delete payload.totp_secret;
   }
 
   return payload;

@@ -41,7 +41,21 @@ export default function Setup() {
   useEffect(() => {
     fetch('/api/launchers/available', { credentials: 'same-origin' })
       .then((res) => res.json())
-      .then(setAvailableLaunchers)
+      .then((launchers) => {
+        setAvailableLaunchers(launchers);
+
+        // The form cannot show a stored secret — nothing reads one back out, by
+        // design — but it must not render "no 2FA" for an account that has it. The
+        // server reports only whether one is on file; start the box from that, so
+        // unticking is a decision made by someone who could see the true state.
+        setCredentials((prev) => {
+          const next = { ...prev };
+          for (const l of launchers) {
+            if (l.totp_configured) next[l.id] = { ...next[l.id], totpEnabled: true };
+          }
+          return next;
+        });
+      })
       .catch(() => {});
   }, []);
 
