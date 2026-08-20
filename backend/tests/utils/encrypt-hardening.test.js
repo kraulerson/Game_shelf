@@ -436,3 +436,53 @@ describe('boot reports unreadable credentials without guessing the cause', () =>
     );
   });
 });
+
+describe('declared base64 keys accept every legitimate encoding', () => {
+  const testDbPath = path.join(__dirname, '..', 'data', 'key-b64', 'test.db');
+
+  function withKey(key) {
+    delete require.cache[require.resolve('../../src/utils/encrypt')];
+    process.env.GAMESHELF_ENCRYPTION_KEY = key;
+    process.env.GAMESHELF_DB_PATH = testDbPath;
+    fs.mkdirSync(path.dirname(testDbPath), { recursive: true });
+    return require('../../src/utils/encrypt');
+  }
+
+  after(() => {
+    delete process.env.GAMESHELF_ENCRYPTION_KEY;
+    delete process.env.GAMESHELF_DB_PATH;
+  });
+
+  const key = crypto.randomBytes(32);
+
+  it('accepts padded base64', () => {
+    assert.doesNotThrow(() => withKey('base64:' + key.toString('base64')));
+  });
+
+  it('accepts unpadded base64 — what `openssl rand -base64 32 | tr -d =` produces', () => {
+    // The round-trip check re-added padding and then declared the input truncated, so
+    // the app refused to boot and told the operator to hunt a corruption that did not
+    // exist. server.js turns that throw into a FATAL exit.
+    assert.doesNotThrow(() => withKey('base64:' + key.toString('base64').replace(/=+$/, '')));
+  });
+
+  it('accepts base64url, which decodes to byte-identical material', () => {
+    assert.doesNotThrow(() => withKey('base64:' + key.toString('base64url')));
+  });
+
+  it('still rejects a key whose characters were genuinely altered', () => {
+    assert.throws(
+      () => withKey('base64:cd4NS+E5vMKJa7Zdo+FAKvxuaGPFWnTSHbxioWPyjij='),
+      /not valid|dropped/i
+    );
+  });
+
+  it('derives the same key from all three encodings of the same bytes', () => {
+    const a = withKey('base64:' + key.toString('base64')).encrypt('x');
+    const modB = withKey('base64:' + key.toString('base64').replace(/=+$/, ''));
+    assert.equal(modB.decrypt(a), 'x', 'padding must not change the derived key');
+
+    const modC = withKey('base64:' + key.toString('base64url'));
+    assert.equal(modC.decrypt(a), 'x', 'base64url must not change the derived key');
+  });
+});

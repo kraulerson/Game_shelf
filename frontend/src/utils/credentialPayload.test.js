@@ -71,4 +71,29 @@ describe('buildCredentialPayload', () => {
 
     expect(payload.totp_secret).toBe('JBSWY3DPEHPK3PXP');
   });
+
+  it('treats a whitespace-only secret as nothing entered, not as a request to clear', () => {
+    // The normaliser strips whitespace, so '   ' became '' — and the server now reads
+    // an explicit '' as a deliberate clear. A stray space in the field would therefore
+    // destroy a stored secret the UI can never re-supply, returning 200 and "Saved".
+    const payload = buildCredentialPayload({
+      username: 'karl',
+      password: 'p',
+      totp_secret: '   ',
+      totpEnabled: true,
+    });
+
+    expect('totp_secret' in payload).toBe(false);
+  });
+
+  it('treats a padding-only secret the same way', () => {
+    const payload = buildCredentialPayload({
+      username: 'karl',
+      totp_secret: '====',
+      totpEnabled: true,
+    });
+
+    expect('totp_secret' in payload).toBe(false);
+  });
+
 });

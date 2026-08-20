@@ -62,12 +62,27 @@ function saltFilePath() {
   return path.join(path.dirname(dbPath), 'encryption-salt');
 }
 
+const SALT_BYTES = 32;
+
 function loadOrCreateSalt() {
   const file = saltFilePath();
 
-  if (fs.existsSync(file)) return fs.readFileSync(file);
+  if (fs.existsSync(file)) {
+    const existing = fs.readFileSync(file);
+    if (existing.length !== SALT_BYTES) {
+      // scryptSync accepts a short salt happily and derives a key nothing was sealed
+      // under, so every credential fails to open while the file sits there looking
+      // fine. Refuse rather than derive from it.
+      throw new Error(
+        `The encryption salt at ${file} is ${existing.length} bytes, expected ` +
+        `${SALT_BYTES}. It is truncated or corrupt — restore it from the same backup ` +
+        'as the database. Deriving from it would produce the wrong key silently.'
+      );
+    }
+    return existing;
+  }
 
-  const salt = crypto.randomBytes(32);
+  const salt = crypto.randomBytes(SALT_BYTES);
   fs.mkdirSync(path.dirname(file), { recursive: true });
 
   try {
@@ -75,7 +90,18 @@ function loadOrCreateSalt() {
     // processes racing a first boot each write a different salt and the loser
     // seals everything under a salt that is no longer on disk — permanently
     // unreadable, with no error at the time it happens.
-    fs.writeFileSync(file, salt, { flag: 'wx', mode: 0o600 });
+    // Write to a temp file and rename: writeFileSync is not atomic, so a crash or a
+    // full disk mid-write leaves a short salt that reads back as valid. 'wx' on the
+    // temp keeps the two-process race guard.
+    const tmp = `${file}.${process.pid}.tmp`;
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try {
+      fs.writeSync(fd, salt);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
     // Say so. Minting is a legitimate first-run event, but it is also what happens
     // when a container starts before its data volume is attached — and then every
     // credential saved in that window is sealed under a salt that disappears on the
@@ -100,16 +126,18 @@ const RAW_KEY_PREFIXES = {
   'base64:': 'base64',
 };
 
-function asRawKey(value) {
+function asRawKey(value, label = 'GAMESHELF_ENCRYPTION_KEY') {
   for (const [prefix, encoding] of Object.entries(RAW_KEY_PREFIXES)) {
     if (!value.startsWith(prefix)) continue;
 
     const encoded = value.slice(prefix.length);
-    const decoded = Buffer.from(encoded, encoding);
+    // Decode base64url through the base64url decoder: feeding '-'/'_' to the base64
+    // decoder drops them, which is precisely the silent truncation this guards against.
+    const decoded = Buffer.from(encoded, encoding === 'base64' && /[-_]/.test(encoded) ? 'base64url' : encoding);
 
     if (decoded.length !== KEY_BYTES) {
       throw new Error(
-        `GAMESHELF_ENCRYPTION_KEY declared "${prefix}" must decode to exactly ` +
+        `${label} declared "${prefix}" must decode to exactly ` +
         `${KEY_BYTES} bytes (64 hex characters, or 44 base64). Got ${decoded.length}.`
       );
     }
@@ -118,15 +146,22 @@ function asRawKey(value) {
     // mistyped or truncated key can still yield 32 bytes — different bytes than the
     // operator intended, accepted silently, discovered only when they try to restore
     // from the value they believe they saved. Re-encoding proves nothing was dropped.
-    const canonical = decoded.toString(encoding);
-    const matches =
+    //
+    // Both sides are normalised first, or the check rejects legitimate keys: padded
+    // base64, unpadded base64 (`openssl rand -base64 32 | tr -d '='`) and base64url
+    // all decode to byte-identical material, and re-encoding always produces the
+    // padded standard form. Comparing raw made two of those three fail to boot with a
+    // "characters were dropped" message describing a corruption that did not exist.
+    const normalise = (v) =>
       encoding === 'hex'
-        ? canonical.toLowerCase() === encoded.toLowerCase()
-        : canonical === encoded;
+        ? v.toLowerCase()
+        : v.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+
+    const matches = normalise(decoded.toString(encoding)) === normalise(encoded);
 
     if (!matches) {
       throw new Error(
-        `GAMESHELF_ENCRYPTION_KEY declared "${prefix}" is not valid ${encoding}: ` +
+        `${label} declared "${prefix}" is not valid ${encoding}: ` +
         'characters were dropped when decoding it, so the key in use would not be ' +
         'the one you supplied. Check for a truncated or mistyped value.'
       );
@@ -146,11 +181,6 @@ asRawKey(rawKey);
 /** 'raw' when the key was declared as key material, 'scrypt' when it is stretched. */
 function derivationMode() {
   return asRawKey(rawKey) ? 'raw' : 'scrypt';
-}
-
-/** True when this configuration depends on the salt file existing. */
-function usesSalt() {
-  return derivationMode() === 'scrypt';
 }
 
 // scrypt is deliberately expensive, and rotation derives keys once per row.
@@ -279,6 +309,15 @@ function isSealedWith(ciphertext, passphrase) {
   return payload.v === SCHEMA_VERSION && payload.kid === keyIdFor(deriveKey(passphrase));
 }
 
+// One table drives reads for every version. The write side stamps SCHEMA_VERSION, so
+// a literal on the read side meant bumping the constant produced blobs the same build
+// could not open microseconds later — the exact failure explicit versioning exists to
+// prevent. Adding a version means adding a row here and nothing else.
+const KEY_DERIVERS = {
+  0: deriveLegacyKey,
+  1: deriveKey,
+};
+
 // The envelope says which derivation sealed it, so old and new blobs coexist and
 // a half-finished migration still reads correctly.
 function open(ciphertext, passphrase) {
@@ -292,16 +331,15 @@ function open(ciphertext, passphrase) {
   // current-vs-legacy test means the next SCHEMA_VERSION bump silently routes every
   // existing v1 blob to the old weak derivation — the exact failure a versioned
   // envelope exists to prevent.
-  let key;
-  if (payload.v === undefined || payload.v === 0) {
-    key = deriveLegacyKey(passphrase);
-  } else if (payload.v === 1) {
-    key = deriveKey(passphrase);
-  } else {
+  const deriver = KEY_DERIVERS[payload.v === undefined ? 0 : payload.v];
+
+  if (!deriver) {
     throw new Error(
       `Stored credential uses envelope version ${payload.v}, which this build cannot read`
     );
   }
+
+  const key = deriver(passphrase);
 
   return openWith(payload, key);
 }
@@ -334,6 +372,5 @@ module.exports = {
   activeKey: () => rawKey,
   envelopeVersion,
   derivationMode,
-  usesSalt,
   saltFilePath,
 };

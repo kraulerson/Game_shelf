@@ -313,13 +313,15 @@ function runMigrations(dbPath) {
     encryptModule.setSaltDirectory(path.dirname(dbPath));
   }
 
-  // One pass over the stored blobs: their envelope versions and a sample of each.
-  // (The previous version ran this query twice and re-parsed every envelope.)
-  const storedRows = encryptModule
+  // Which envelope versions are present. Only the versions are needed here, so the
+  // ciphertext is not retained. (The unreadable scan below deliberately re-queries:
+  // the re-seal may have rewritten rows in between, and reporting on pre-rotation
+  // bytes would be wrong.)
+  const storedVersions = encryptModule
     ? db
-        .prepare('SELECT name, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
+        .prepare('SELECT credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
         .all()
-        .map((row) => ({ ...row, version: encryptModule.envelopeVersion(row.credentials_json) }))
+        .map((row) => encryptModule.envelopeVersion(row.credentials_json))
     : [];
 
   // Re-seal pre-versioned blobs under the salted derivation. No completion marker:
@@ -327,7 +329,7 @@ function runMigrations(dbPath) {
   // with a mistyped key they disabled the upgrade permanently, and withheld for a
   // corrupt row they let the same error print forever. The condition below is live, so
   // it stops on its own the moment there is nothing left to upgrade.
-  if (storedRows.some((row) => row.version === 0)) {
+  if (storedVersions.includes(0)) {
     const { rotateAllCredentials } = require('../utils/rotateCredentials');
     // The key encrypt.js actually holds, not a second read of the environment:
     // the two can differ once anything has loaded the module already.
@@ -384,7 +386,11 @@ function runMigrations(dbPath) {
       .prepare('SELECT name, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
       .all()
       .filter((row) => {
-        if (encryptModule.envelopeVersion(row.credentials_json) === null) return false;
+        // A value that does not parse as an envelope is a fault too, and this is the
+        // only always-on check: reporting it solely from the v0 branch meant that on a
+        // fully-upgraded store — every install after the first boot — a truncated blob
+        // produced a completely clean log and then failed at sync time.
+        if (encryptModule.envelopeVersion(row.credentials_json) === null) return true;
         try {
           encryptModule.decrypt(row.credentials_json);
           return false;

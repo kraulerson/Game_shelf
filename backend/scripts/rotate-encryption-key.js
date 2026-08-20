@@ -57,7 +57,7 @@ try {
   // and length, so a malformed declared key passed here and — with no credentials to
   // rotate — was never exercised by rotate() either. The script reported success and
   // the app then refused to boot on the key the operator had just adopted.
-  encrypt.parseDeclaredKey(newKey);
+  encrypt.parseDeclaredKey(newKey, 'GAMESHELF_ENCRYPTION_KEY_NEW');
 } catch (err) {
   console.error(`${err.message}\nNothing has been changed.`);
   process.exit(1);
@@ -83,9 +83,9 @@ try {
   // genuinely leave a file the app cannot read.
   const saltFile = encrypt.saltFilePath();
   if (
-    // Gate on the NEW key, which is what will actually be derived: usesSalt() reports
-    // on the key already loaded, so rotating from a declared hex:/base64: key to a
-    // passphrase suppressed this warning in one of the two cases that creates a salt.
+    // Gate on the NEW key, which is what will actually be derived. Gating on the key
+    // already loaded suppressed this warning when rotating from a declared
+    // hex:/base64: key to a passphrase — one of the two cases that creates a salt.
     !encrypt.parseDeclaredKey(newKey) &&
     !require('node:fs').existsSync(saltFile) &&
     typeof process.getuid === 'function'
@@ -134,7 +134,8 @@ try {
       '(no credentials stored, or already sealed under the new key).'
     );
     console.log(
-      `Verified: all ${written.length} stored credential(s) open with the new key.`
+      `Verified: ${written.length - corrupt.length} stored credential(s) re-opened ` +
+      'with the new key.'
     );
     if (corrupt.length > 0) {
       console.warn(

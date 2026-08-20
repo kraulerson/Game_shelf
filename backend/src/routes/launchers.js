@@ -252,6 +252,7 @@ router.post('/:id/credentials', async (req, res) => {
   // and clear. auth_code and session_cookie exchanges replace outright: those mint a
   // whole new session, so merging stale fields into them would be wrong.
   let merged = payload;
+  let priorUnreadable = false;
 
   if (launcher.auth_type !== 'auth_code' && launcher.auth_type !== 'session_cookie') {
     const existingRow = db
@@ -262,19 +263,29 @@ router.post('/:id/credentials', async (req, res) => {
     if (existingRow && existingRow.credentials_json) {
       try {
         existing = JSON.parse(decrypt(existingRow.credentials_json));
-      } catch {
-        // Unreadable stored blob: treat as absent rather than failing the save, so a
-        // key change or lost salt does not also block the operator from recovering by
-        // re-entering credentials.
+      } catch (err) {
+        // Unreadable stored blob: proceed rather than fail, so a key change or lost
+        // salt does not also block recovery by re-entering credentials. But say so —
+        // silently substituting {} means the operator cannot tell "your other fields
+        // were preserved" from "they were unrecoverable and you have just overwritten
+        // them".
         existing = {};
+        priorUnreadable = true;
+        console.error(
+          `[launchers] Existing credentials for ${id} could not be decrypted ` +
+            `(${err.message}); saving will replace them with only the fields supplied.`
+        );
       }
     }
 
     merged = { ...existing, ...payload };
 
-    // An explicitly empty value is a deliberate clear.
-    for (const field of ['username', 'password', 'api_key', 'steamid64', 'totp_secret']) {
-      if (req.body && req.body[field] === '') delete merged[field];
+    // An explicitly empty value is a deliberate clear. Driven by what the request
+    // actually contains rather than a hardcoded field list — a second copy of the
+    // credential contract here would silently stop honouring a clear for any field
+    // added to the form later, while still returning 200.
+    for (const [field, value] of Object.entries(req.body || {})) {
+      if (value === '') delete merged[field];
     }
   }
 
@@ -289,7 +300,9 @@ router.post('/:id/credentials', async (req, res) => {
       enabled = 1
   `).run(id, launcher.display_name, encryptedCredentials);
 
-  res.json({ ok: true });
+  // Only surfaced when it happened: adding a field unconditionally would change the
+  // response shape for every existing caller for a condition that is almost never true.
+  res.json(priorUnreadable ? { ok: true, priorUnreadable: true } : { ok: true });
 });
 
 // GET /api/launchers/:id/test

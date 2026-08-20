@@ -40,8 +40,18 @@ export function buildCredentialPayload(creds = {}) {
     payload.totp_secret = '';
   }
 
-  if (payload.totp_secret) {
-    payload.totp_secret = normaliseTotpSecret(payload.totp_secret);
+  if (payload.totp_secret && creds.totpEnabled !== false) {
+    const normalised = normaliseTotpSecret(payload.totp_secret);
+
+    // An empty normalisation result means the field held only whitespace or padding —
+    // nothing was entered. It must NOT become an explicit '', because the server reads
+    // that as a deliberate clear and would destroy a stored secret the UI can never
+    // re-supply. Omit it instead, so the merge leaves the stored value alone.
+    if (normalised) {
+      payload.totp_secret = normalised;
+    } else {
+      delete payload.totp_secret;
+    }
   }
 
   return payload;

@@ -9,6 +9,11 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY src/ ./src/
+# NOTE: the first start on this image re-seals every stored credential under the
+# salted key derivation. Earlier images cannot read the result, so rolling back after
+# that first start leaves every launcher credential unreadable. Back up the data volume
+# before the first start.
+#
 # The rotation script is the documented recovery path for changing
 # GAMESHELF_ENCRYPTION_KEY. It must be run against a STOPPED backend (see the script
 # header), so the form is:

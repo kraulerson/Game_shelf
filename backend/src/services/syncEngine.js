@@ -49,10 +49,23 @@ async function syncLauncher(launcherName, db, otpCode) {
     // Authenticate and fetch games
     let session = await instance.refreshIfNeeded(credentials);
 
-    // If launcher returned updated credentials (e.g. Epic token refresh), persist them
+    // If launcher returned updated credentials (e.g. Epic token refresh), persist them.
+    //
+    // MERGE, do not replace. A launcher that returns only its refreshed token bundle
+    // rather than the whole credential object would otherwise drop every other stored
+    // field — username, totp_secret, steamid64 — on a scheduled sync, with no user
+    // action and no log line. The HTTP save path was fixed to merge; this write is the
+    // other half of the same invariant, and fixing only one made "absence means
+    // unchanged" true for saves and false for syncs.
+    //
+    // otp_code is stripped: it is injected into the decrypted object above for the
+    // launcher's benefit, and a launcher that echoes its input back would persist a
+    // one-time code into the store.
     if (session && session.updatedCredentials) {
       const { encrypt } = require('../utils/encrypt');
-      const encrypted = encrypt(JSON.stringify(session.updatedCredentials));
+      const merged = { ...credentials, ...session.updatedCredentials };
+      delete merged.otp_code;
+      const encrypted = encrypt(JSON.stringify(merged));
       db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(encrypted, launcherName);
     }
     // Always unwrap: refreshIfNeeded returns { session, updatedCredentials }
