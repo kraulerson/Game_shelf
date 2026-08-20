@@ -157,22 +157,14 @@ export default function Setup() {
     async function saveCredentials(launcher) {
       const creds = credentials[launcher.id] || {};
 
-      // Send only credential fields. UI state (qrUri, qrError, saved, testing…) has no
-      // server meaning, and qrUri embeds the TOTP secret in its `secret=` parameter —
-      // posting the whole object put the secret in the request body twice.
-      const payload = {};
-      for (const field of [
-        'username',
-        'password',
-        'api_key',
-        'steamid64',
-        'totp_secret',
-        'otp_code',
-        'auth_code',
-        'session_cookie',
-      ]) {
-        if (creds[field]) payload[field] = creds[field];
-      }
+      // Strip UI-only state rather than enumerating the server's field list, which
+      // would be a second copy of its contract: it had already drifted (otp_code is
+      // not accepted there), and a credential field added to the form later would be
+      // silently dropped while the user saw "saved".
+      const UI_ONLY = ['qrUri', 'qrError', 'saved', 'error', 'testing', 'testResult'];
+      const payload = Object.fromEntries(
+        Object.entries(creds).filter(([field]) => !UI_ONLY.includes(field))
+      );
 
       try {
         const res = await fetch(`/api/launchers/${launcher.id}/credentials`, {

@@ -62,10 +62,29 @@ function saltFilePath() {
   return path.join(path.dirname(dbPath), 'encryption-salt');
 }
 
+let saltMintingAllowed = true;
+
+/**
+ * Forbid creating a salt. migrate.js sets this when salted credentials exist but the
+ * salt file does not: minting one there would permanently orphan them AND erase the
+ * only evidence of what went wrong, because the file would exist on every later boot.
+ */
+function setSaltMintingAllowed(allowed) {
+  saltMintingAllowed = allowed;
+}
+
 function loadOrCreateSalt() {
   const file = saltFilePath();
 
   if (fs.existsSync(file)) return fs.readFileSync(file);
+
+  if (!saltMintingAllowed) {
+    throw new Error(
+      `The encryption salt at ${file} is missing, and stored credentials were sealed ` +
+      'with it. Restore that file from the same backup as the database. Refusing to ' +
+      'create a new one, which would make those credentials unrecoverable.'
+    );
+  }
 
   const salt = crypto.randomBytes(32);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -83,22 +102,47 @@ function loadOrCreateSalt() {
   }
 }
 
-// A 32-byte key supplied directly as hex or base64 skips the KDF entirely, which
-// is both stronger and faster than stretching a human-chosen passphrase.
-function asRawKey(value) {
-  if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, 'hex');
+// Raw key material must be DECLARED, never guessed from shape. Sniffing looked
+// convenient and was dangerous: .env.example's own 43-character placeholder matches
+// the base64url alphabet and decodes to exactly 32 bytes, so a low-entropy English
+// string was used verbatim as the AES-256 key with the KDF skipped — strictly worse
+// than the unsalted SHA-256 this module replaced. Any 43-character passphrase an
+// operator happened to choose got the same treatment, silently.
+const RAW_KEY_PREFIXES = {
+  'hex:': 'hex',
+  'base64:': 'base64',
+};
 
-  // Padded base64, unpadded base64, and base64url (which `randomBytes(32)
-  // .toString('base64url')` produces, using - and _). Accepting only the padded form
-  // sent base64url keys down the scrypt path instead — contradicting .env.example's
-  // claim that the salt is unused for raw keys, and silently making a database-only
-  // backup insufficient.
-  if (/^[A-Za-z0-9+/\-_]{43}={0,1}$/.test(value)) {
-    const decoded = Buffer.from(value, 'base64url');
-    if (decoded.length === KEY_BYTES) return decoded;
+function asRawKey(value) {
+  for (const [prefix, encoding] of Object.entries(RAW_KEY_PREFIXES)) {
+    if (!value.startsWith(prefix)) continue;
+
+    const decoded = Buffer.from(value.slice(prefix.length), encoding);
+    if (decoded.length !== KEY_BYTES) {
+      throw new Error(
+        `GAMESHELF_ENCRYPTION_KEY declared "${prefix}" must decode to exactly ` +
+        `${KEY_BYTES} bytes (64 hex characters, or 44 base64). Got ${decoded.length}.`
+      );
+    }
+    return decoded;
   }
 
   return null;
+}
+
+// Validate a declared raw key at startup rather than on the first credential save:
+// a malformed one is a configuration error, and finding out about it when someone
+// tries to store a password is far too late.
+asRawKey(rawKey);
+
+/** 'raw' when the key was declared as key material, 'scrypt' when it is stretched. */
+function derivationMode() {
+  return asRawKey(rawKey) ? 'raw' : 'scrypt';
+}
+
+/** True when this configuration depends on the salt file existing. */
+function usesSalt() {
+  return derivationMode() === 'scrypt';
 }
 
 // scrypt is deliberately expensive, and rotation derives keys once per row.
@@ -106,12 +150,16 @@ function asRawKey(value) {
 const keyCache = new Map();
 
 function deriveKey(passphrase) {
-  if (keyCache.has(passphrase)) return keyCache.get(passphrase);
+  // Keyed by digest, never by the passphrase itself: rotation derives under both the
+  // old and the new key, so a plaintext-keyed cache left both master passphrases
+  // resident in the heap for the life of the process.
+  const cacheKey = crypto.createHash('sha256').update(passphrase).digest('hex');
+  if (keyCache.has(cacheKey)) return keyCache.get(cacheKey);
 
   const raw = asRawKey(passphrase);
   const key = raw || crypto.scryptSync(passphrase, loadOrCreateSalt(), KEY_BYTES, SCRYPT_PARAMS);
 
-  keyCache.set(passphrase, key);
+  keyCache.set(cacheKey, key);
   return key;
 }
 
@@ -178,18 +226,6 @@ function envelopeVersion(ciphertext) {
   return payload.v === undefined ? 0 : payload.v;
 }
 
-/**
- * True when a stored blob predates the versioned envelope and can be upgraded.
- *
- * Anything that is not a readable envelope answers false: there is nothing to
- * upgrade, and this is called during startup migration where throwing would take
- * the whole process down. `WHERE credentials_json IS NOT NULL` admits empty
- * strings and arbitrary junk, so this must tolerate both.
- */
-function isLegacyEnvelope(ciphertext) {
-  const payload = parseEnvelope(ciphertext);
-  return payload !== null && payload.v !== SCHEMA_VERSION;
-}
 
 function parseEnvelope(ciphertext) {
   if (typeof ciphertext !== 'string' || ciphertext === '') return null;
@@ -217,7 +253,12 @@ function parseEnvelope(ciphertext) {
 /** True when this blob is already sealed under the key `passphrase` derives. */
 function isSealedWith(ciphertext, passphrase) {
   const payload = parseEnvelope(ciphertext);
-  return payload !== null && payload.kid === keyIdFor(deriveKey(passphrase));
+  if (payload === null) return false;
+
+  // Version as well as key id. deriveKey is version-independent, so comparing the key
+  // id alone would report every v1 blob as already-sealed after a SCHEMA_VERSION bump,
+  // and the v1 -> v2 migration would skip all of them and report success.
+  return payload.v === SCHEMA_VERSION && payload.kid === keyIdFor(deriveKey(passphrase));
 }
 
 // The envelope says which derivation sealed it, so old and new blobs coexist and
@@ -268,9 +309,12 @@ module.exports = {
   encrypt,
   decrypt,
   rotate,
-  isLegacyEnvelope,
   isSealedWith,
   setSaltDirectory,
+  setSaltMintingAllowed,
   assertUsableKey,
   envelopeVersion,
+  derivationMode,
+  usesSalt,
+  saltFilePath,
 };

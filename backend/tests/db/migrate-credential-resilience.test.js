@@ -125,11 +125,11 @@ describe('startup credential re-seal resilience', () => {
     db.close();
 
     delete require.cache[require.resolve('../../src/utils/encrypt')];
-    const { isLegacyEnvelope, decrypt } = require('../../src/utils/encrypt');
+    const { envelopeVersion, decrypt } = require('../../src/utils/encrypt');
 
     assert.equal(
-      isLegacyEnvelope(good.credentials_json),
-      false,
+      envelopeVersion(good.credentials_json),
+      1,
       'one unreadable credential must not block the others from being upgraded'
     );
     assert.deepEqual(JSON.parse(decrypt(good.credentials_json)), { token: 'good' });

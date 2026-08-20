@@ -23,6 +23,8 @@
  * two keys with nothing recording which is which, so it is made impossible.
  */
 
+const path = require('node:path');
+
 const newKey = process.env.GAMESHELF_ENCRYPTION_KEY_NEW;
 
 if (!newKey) {
@@ -62,6 +64,12 @@ let db;
 try {
   const Database = require('better-sqlite3');
   const { rotateAllCredentials } = require('../src/utils/rotateCredentials');
+
+  // Pin the salt to the database being rewritten, exactly as runMigrations does.
+  // Without this the script re-derives the location from the environment while the
+  // migration derives it from its argument — the divergence setSaltDirectory exists
+  // to close, reintroduced in the one tool that rewrites every credential at once.
+  require('../src/utils/encrypt').setSaltDirectory(path.dirname(dbPath));
 
   db = new Database(dbPath, { fileMustExist: true });
 

@@ -64,9 +64,9 @@ describe('credential envelope migration', () => {
     db.close();
 
     delete require.cache[require.resolve('../../src/utils/encrypt')];
-    const { decrypt, isLegacyEnvelope } = require('../../src/utils/encrypt');
+    const { decrypt, envelopeVersion } = require('../../src/utils/encrypt');
 
-    assert.equal(isLegacyEnvelope(stored), false, 'blob should have been upgraded to the versioned envelope');
+    assert.equal(envelopeVersion(stored), 1, 'blob should have been upgraded to the versioned envelope');
     assert.deepEqual(
       JSON.parse(decrypt(stored)),
       { password: 'hunter2' },

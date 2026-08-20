@@ -303,23 +303,15 @@ function runMigrations(dbPath) {
   // which would put the salt beside a different database than the credentials it
   // protects. Tolerate a missing key: without one nothing gets sealed anyway.
   let encryptModule = null;
-  try {
+  if (process.env.GAMESHELF_ENCRYPTION_KEY) {
+    // Only a genuinely ABSENT key is tolerable here. Testing the thrown message for
+    // 'GAMESHELF_ENCRYPTION_KEY' also matched the too-short-key error, so a broken
+    // configuration silently skipped the pinning, the re-seal and the salt
+    // diagnostic alike. Checking the variable itself makes that impossible, and any
+    // error from the require is now a real fault that propagates.
     encryptModule = require('../utils/encrypt');
     encryptModule.setSaltDirectory(path.dirname(dbPath));
-  } catch (err) {
-    if (!/GAMESHELF_ENCRYPTION_KEY/.test(err.message)) throw err;
-    // No encryption key configured: nothing can be sealed, so nothing to pin. Any
-    // other failure here is a real fault and must not be absorbed — swallowing it
-    // would leave the salt beside whatever GAMESHELF_DB_PATH points at, which is the
-    // unrecoverable mismatch this pinning exists to prevent.
   }
-
-  // Load the crypto modules only when there is something to upgrade: encrypt.js throws
-  // at require-time without GAMESHELF_ENCRYPTION_KEY, and a database with no stored
-  // credentials must still migrate without a key configured.
-  const hasStoredCreds = db
-    .prepare('SELECT 1 FROM launchers WHERE credentials_json IS NOT NULL LIMIT 1')
-    .get();
 
   // Classify the stored blobs by envelope version. This is pure parsing — no key
   // derivation — so it is cheap and safe before any key exists.
@@ -335,29 +327,55 @@ function runMigrations(dbPath) {
   // whether anything needs re-sealing: once every blob is already v1 the re-seal does
   // nothing, and without this the app would boot looking healthy while every sync
   // failed with a generic authentication error pointing at nothing.
-  if (storedBlobs.includes(1) && !fs.existsSync(path.join(path.dirname(dbPath), 'encryption-salt'))) {
+  // Only meaningful when the key is a passphrase: a declared raw key skips the KDF, so
+  // no salt is ever created and this would fire on every boot forever, making a real
+  // loss indistinguishable from routine noise. The path comes from encrypt.js so the
+  // two cannot drift.
+  if (
+    encryptModule &&
+    encryptModule.usesSalt() &&
+    storedBlobs.includes(1) &&
+    !fs.existsSync(encryptModule.saltFilePath())
+  ) {
     console.error(
-      `[Migration] The encryption salt beside ${dbPath} is MISSING, but stored ` +
-        'credentials were sealed with it. They cannot be read without that file.'
+      `[Migration] The encryption salt at ${encryptModule.saltFilePath()} is MISSING, ` +
+        'but stored credentials were sealed with it. They cannot be read without it.'
     );
     console.error(
       '[Migration] If you restored the database from a backup, restore the ' +
         'encryption-salt file from that same backup. Otherwise every launcher ' +
         'credential must be re-entered.'
     );
+    // Refuse to create a replacement. Minting one here would orphan those credentials
+    // permanently AND erase the evidence: the file would exist on every later boot, so
+    // this warning would never appear again.
+    encryptModule.setSaltMintingAllowed(false);
   }
 
   // Only derive a key when something actually needs upgrading. Reaching the same
   // verdict inside the rotation loop would pay one scryptSync (~32MB, ~50-100ms) on
   // every container start forever, before the HTTP listener binds.
-  if (storedBlobs.includes(0)) {
+  const resealMarker = db
+    .prepare("SELECT value FROM settings WHERE key = 'credential_reseal_attempted'")
+    .get();
+
+  if (storedBlobs.includes(0) && !resealMarker) {
     const { rotateAllCredentials } = require('../utils/rotateCredentials');
     const passphrase = process.env.GAMESHELF_ENCRYPTION_KEY;
-
 
     const { rotated, failed } = rotateAllCredentials(db, passphrase, passphrase, {
       onError: 'skip',
     });
+
+    // Record the attempt so a blob that can never be re-sealed — one sealed under a
+    // key the app no longer has — does not keep this branch alive forever, paying a
+    // scryptSync before the listener binds and re-printing the same error on every
+    // single start with no way to acknowledge it. Rotation via the script clears
+    // nothing here because it re-seals to v1, removing the v0 blobs entirely.
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('credential_reseal_attempted', ?) " +
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+    ).run(new Date().toISOString());
 
 
     if (rotated > 0) {

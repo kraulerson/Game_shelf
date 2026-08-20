@@ -135,8 +135,8 @@ describe('startup re-seal survives a broken salt file', () => {
       if (fs.existsSync(f)) fs.unlinkSync(f);
     }
     if (fs.existsSync(saltPath)) {
-      fs.chmodSync(saltPath, 0o600);
-      fs.unlinkSync(saltPath);
+      if (fs.statSync(saltPath).isDirectory()) fs.rmSync(saltPath, { recursive: true });
+      else fs.unlinkSync(saltPath);
     }
     delete require.cache[require.resolve('../../src/utils/encrypt')];
     delete require.cache[require.resolve('../../src/utils/rotateCredentials')];
@@ -173,11 +173,16 @@ describe('startup re-seal survives a broken salt file', () => {
     );
     db.close();
 
-    // Salt unreadable: the exact state left by running the rotation script as root
-    // inside the container, which creates the 0600 salt owned by root while the app
-    // runs as `node`. Key derivation then throws from inside the row loop.
+    // Salt unreadable: the state left by running the rotation script as root inside
+    // the container, which creates the 0600 salt owned by root while the app runs as
+    // `node`. Key derivation then throws from inside the row loop.
+    //
+    // A directory where the salt path is occupied by a directory reproduces the EISDIR
+    // failure for every user, including root — chmod 0o000 is a no-op as root, so a
+    // permissions-based version of this test would pass trivially in the container CI
+    // most likely to run it.
     if (fs.existsSync(saltPath)) fs.unlinkSync(saltPath);
-    fs.writeFileSync(saltPath, crypto.randomBytes(32), { mode: 0o000 });
+    fs.mkdirSync(saltPath, { recursive: true });
 
     delete require.cache[require.resolve('../../src/utils/encrypt')];
     delete require.cache[require.resolve('../../src/utils/rotateCredentials')];
@@ -189,5 +194,58 @@ describe('startup re-seal survives a broken salt file', () => {
       boot = run2(testDbPath);
     }, 'an unreadable salt must be reported, not turned into an endless restart loop');
     if (boot) boot.close();
+  });
+});
+
+describe('key material is never guessed from shape', () => {
+  const testDbPath = path.join(__dirname, '..', 'data', 'key-mode', 'test.db');
+  const saltPath = path.join(path.dirname(testDbPath), 'encryption-salt');
+
+  function withKey(key) {
+    if (fs.existsSync(saltPath)) fs.unlinkSync(saltPath);
+    delete require.cache[require.resolve('../../src/utils/encrypt')];
+    process.env.GAMESHELF_ENCRYPTION_KEY = key;
+    process.env.GAMESHELF_DB_PATH = testDbPath;
+    fs.mkdirSync(path.dirname(testDbPath), { recursive: true });
+    return require('../../src/utils/encrypt');
+  }
+
+  after(() => {
+    if (fs.existsSync(saltPath)) fs.unlinkSync(saltPath);
+    delete process.env.GAMESHELF_ENCRYPTION_KEY;
+    delete process.env.GAMESHELF_DB_PATH;
+  });
+
+  it('treats a human passphrase as a passphrase even at raw-key length', () => {
+    // .env.example's own placeholder is 43 chars, matches the base64url alphabet, and
+    // decodes to exactly 32 bytes — so shape-sniffing used this low-entropy English
+    // string verbatim as the AES-256 key with the KDF skipped entirely. Worse than
+    // the unsalted SHA-256 this work set out to replace.
+    const mod = withKey('change_this_to_a_random_32_plus_char_string');
+
+    assert.equal(
+      mod.derivationMode(),
+      'scrypt',
+      'an unprefixed value must be stretched, whatever its length or alphabet'
+    );
+    mod.encrypt('x');
+    assert.ok(fs.existsSync(saltPath), 'the passphrase path must actually use a salt');
+  });
+
+  it('uses a raw key only when it is explicitly declared', () => {
+    const raw = 'hex:' + 'ab'.repeat(32);
+    const mod = withKey(raw);
+
+    assert.equal(mod.derivationMode(), 'raw', 'an explicit prefix selects raw key material');
+    mod.encrypt('x');
+    assert.ok(!fs.existsSync(saltPath), 'raw keys need no salt');
+  });
+
+  it('rejects a declared raw key that is not the right size', () => {
+    assert.throws(
+      () => withKey('hex:' + 'ab'.repeat(20)),
+      /32 bytes|64 hex/i,
+      'a malformed declared key must fail loudly, not fall back to treating it as text'
+    );
   });
 });

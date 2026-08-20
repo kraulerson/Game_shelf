@@ -170,14 +170,14 @@ describe('encrypt utility', () => {
     assert.equal(decrypt(legacyBlob), 'legacy-launcher-password');
   });
 
-  it('should report a legacy envelope as needing migration and a current one as not', () => {
+  it('should report the envelope version of legacy and current blobs', () => {
     delete require.cache[require.resolve('../../src/utils/encrypt')];
-    const { encrypt, isLegacyEnvelope } = require('../../src/utils/encrypt');
+    const { encrypt, envelopeVersion } = require('../../src/utils/encrypt');
 
     const legacyBlob = Buffer.from(JSON.stringify({ iv: '00', tag: '00', data: '00' })).toString('base64');
 
-    assert.equal(isLegacyEnvelope(legacyBlob), true);
-    assert.equal(isLegacyEnvelope(encrypt('anything')), false);
+    assert.equal(envelopeVersion(legacyBlob), 0, 'pre-versioned blobs report version 0');
+    assert.equal(envelopeVersion(encrypt('anything')), 1, 'current blobs report version 1');
   });
 
 });

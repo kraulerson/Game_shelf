@@ -24,7 +24,12 @@ export function buildOtpAuthUri(launcherId, username, secret) {
     throw new Error('Enter a TOTP secret first.');
   }
 
-  if (!BASE32.test(secret)) {
+  // Sites display secrets in space-separated groups. Save already accepts that form,
+  // so rejecting it here contradicted a save that had just succeeded — with a message
+  // blaming Steam base64, which was not the cause.
+  const compact = secret.replace(/\s+/g, '');
+
+  if (!BASE32.test(compact)) {
     throw new Error(
       'That TOTP secret is not valid base32. Authenticator secrets use only the ' +
       'letters A–Z and digits 2–7. Steam shared_secret values are base64 and will ' +
@@ -39,7 +44,7 @@ export function buildOtpAuthUri(launcherId, username, secret) {
   const account = encodeURIComponent(`${launcherId}:${username || launcherId}`);
 
   const params = new URLSearchParams({
-    secret,
+    secret: compact,
     issuer: ISSUER,
     algorithm: 'SHA1',
     digits: '6',
