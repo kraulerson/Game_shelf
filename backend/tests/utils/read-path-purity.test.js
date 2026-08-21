@@ -64,12 +64,32 @@ describe('Invariant A — reading never writes', () => {
     // operator to discard the old one. Its only tool for that used to be rotate(),
     // which seals an envelope it discards and whose derivation may create the salt —
     // verifying on the write path, which is what this invariant rules out.
-    const sealed = fresh().encrypt('launcher-password');
-    fs.unlinkSync(saltPath);
-    const mod = fresh();
+    //
+    // The blob must be PRE-VERSIONED for this to discriminate. A v1 blob makes
+    // rotate() throw from open() before it ever derives the new key, so the impure
+    // implementation looks pure and the test passes either way — which is exactly what
+    // the first version of this test did. v0 dispatches to the legacy derivation,
+    // which needs no salt, so open() succeeds and the seal that follows is reached.
+    // That is also the only case in which the old verifier could really have minted.
+    const crypto = require('node:crypto');
+    fresh();
+    const legacy = crypto.createHash('sha256').update(KEY).digest();
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', legacy, iv);
+    let data = cipher.update('launcher-password', 'utf8', 'hex');
+    data += cipher.final('hex');
+    const sealedV0 = Buffer.from(
+      JSON.stringify({ iv: iv.toString('hex'), tag: cipher.getAuthTag().toString('hex'), data })
+    ).toString('base64');
 
-    assert.throws(() => mod.decryptWith(sealed, process.env.GAMESHELF_ENCRYPTION_KEY), /salt/i);
-    assert.ok(!fs.existsSync(saltPath), 'verifying must not mint the salt it is verifying against');
+    const mod = fresh();
+    assert.ok(!fs.existsSync(saltPath), 'the salt must be absent for the check to mean anything');
+
+    assert.equal(mod.decryptWith(sealedV0, KEY), 'launcher-password');
+    assert.ok(
+      !fs.existsSync(saltPath),
+      'verifying must not mint a salt — rotate() in this position would have'
+    );
   });
 
   it('names the missing salt file, so no caller has to guess the cause', () => {
