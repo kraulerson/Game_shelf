@@ -167,6 +167,23 @@ describe('POST /api/launchers/:id/credentials preserves unsent fields', () => {
     assert.equal(after.password, 'p');
   });
 
+  it('does not re-enable a disabled launcher', async () => {
+    // The save path upserts with enabled = 1, which is right for a save and wrong for
+    // a removal: taking one field away is not a decision to turn the launcher back on.
+    const { encrypt } = require('../../src/utils/encrypt');
+    db.prepare('UPDATE launchers SET credentials_json = ?, enabled = 0 WHERE name = ?').run(
+      encrypt(JSON.stringify({ username: 'karl', password: 'p', totp_secret: 'JBSWY3DPEHPK3PXP' })),
+      'ubisoft'
+    );
+
+    const res = await post({ remove_totp_secret: true });
+    assert.equal(res.status, 200);
+
+    const row = db.prepare('SELECT enabled FROM launchers WHERE name = ?').get('ubisoft');
+    assert.equal(row.enabled, 0, 'a removal must not turn the launcher back on');
+    assert.ok(!stored().totp_secret, 'and must still do what it was asked');
+  });
+
   it('refuses a removal when there is nothing stored to remove from', async () => {
     // Otherwise a removal-only request creates a launcher row holding an empty
     // credential, which then reports itself as configured.

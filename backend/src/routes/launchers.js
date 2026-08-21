@@ -235,9 +235,18 @@ router.post('/:id/credentials', async (req, res) => {
   // the fields required to CREATE a credential are not required of it. Unticking 2FA
   // happens from a reloaded page, which holds no password to send — demanding one made
   // the removal impossible from the only state it is ever done in.
+  // auth_code and session_cookie exchanges replace the credential outright rather than
+  // merging, so a removal means nothing there: it would fall through to an undefined
+  // payload field and wipe the stored session. Requiring the merge path as well as
+  // otp_supported keeps the exemption where removal actually has a meaning, whatever
+  // launcher is added to the table later.
+  const mergesCredentials =
+    launcher.auth_type !== 'auth_code' && launcher.auth_type !== 'session_cookie';
+
   const removalOnly =
     remove_totp_secret === true &&
     launcher.otp_supported &&
+    mergesCredentials &&
     ![username, password, api_key, steamid64, totp_secret, auth_code, session_cookie].some(given);
 
   if (removalOnly) {
@@ -357,13 +366,20 @@ router.post('/:id/credentials', async (req, res) => {
 
     encrypted = encrypt(JSON.stringify(merged));
 
-    db.prepare(`
-      INSERT INTO launchers (name, display_name, enabled, credentials_json)
-      VALUES (?, ?, 1, ?)
-      ON CONFLICT(name) DO UPDATE SET
-        credentials_json = excluded.credentials_json,
-        enabled = 1
-    `).run(id, launcher.display_name, encrypted);
+    if (removalOnly) {
+      // Taking one field away is not a decision to turn the launcher back on, and the
+      // row is known to exist — the 404 above guarantees it. The save path's upsert
+      // would have set enabled = 1 as a side effect of the removal.
+      db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(encrypted, id);
+    } else {
+      db.prepare(`
+        INSERT INTO launchers (name, display_name, enabled, credentials_json)
+        VALUES (?, ?, 1, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          credentials_json = excluded.credentials_json,
+          enabled = 1
+      `).run(id, launcher.display_name, encrypted);
+    }
   });
 
   applyMerge();
