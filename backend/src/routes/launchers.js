@@ -213,13 +213,23 @@ router.post('/:id/credentials', async (req, res) => {
 
   const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie, remove_totp_secret } = req.body || {};
 
-  // Every credential field is a string. [] and {} are truthy, so without this they
-  // were stored verbatim over a real secret — a request field VALUE destroying a
-  // credential, which this contract forbids. It is worse than a plain overwrite:
-  // totp_configured still reported true afterwards, so the UI showed 2FA configured
-  // while code generation threw. "Supplied" means the same thing here and in the
-  // validation below, so a non-string is refused rather than silently dropped.
-  const given = (value) => typeof value === 'string' && value !== '';
+  // Every credential field is a string with something in it. [] and {} are truthy, so
+  // without the type check they were stored verbatim over a real secret — a request
+  // field VALUE destroying a credential, which this contract forbids. It is worse than
+  // a plain overwrite: totp_configured reads !!totp_secret, so the UI still showed 2FA
+  // configured while code generation threw.
+  //
+  // Whitespace does exactly the same damage and IS a string, so the type check alone
+  // is not enough: ' ' stored over a real secret still reports as configured and
+  // generates codes that can never authenticate.
+  //
+  // Trimming decides only whether a value counts as supplied — the value itself is
+  // stored as sent, because a leading or trailing space in a password is legitimate
+  // and silently trimming it would lock the operator out.
+  //
+  // "Supplied" means the same thing here and in the validation below, so a value that
+  // does not count is refused rather than silently dropped.
+  const given = (value) => typeof value === 'string' && value.trim() !== '';
 
   // A request that only asks for a removal is not creating or replacing anything, so
   // the fields required to CREATE a credential are not required of it. Unticking 2FA

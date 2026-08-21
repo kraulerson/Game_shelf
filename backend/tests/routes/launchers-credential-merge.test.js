@@ -186,7 +186,11 @@ describe('POST /api/launchers/:id/credentials preserves unsent fields', () => {
     // the UI shows 2FA configured while code generation throws.
     const { encrypt } = require('../../src/utils/encrypt');
 
-    for (const hostile of [[], {}, 42, true]) {
+    // ' ' and '\t\n' are strings, so a type check alone lets them through — and they
+    // are as destructive as an array: totp_configured reads !!totp_secret, so ' ' still
+    // reports 2FA as configured, while code generation either returns a code that can
+    // never authenticate or throws on an invalid character.
+    for (const hostile of [[], {}, 42, true, ' ', '\t\n', '   ']) {
       db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(
         encrypt(JSON.stringify({ username: 'karl', password: 'p', totp_secret: 'JBSWY3DPEHPK3PXP' })),
         'ubisoft'
