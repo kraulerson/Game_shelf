@@ -84,6 +84,30 @@ branch. The live volume was never mounted writable and was byte-identical afterw
   eight decrypt attempts. Deleting the salt afterwards makes every launcher report by
   name quoting the missing file, and it is still not recreated.
 
+## Post-plan adversarial review
+
+A full adversarial review of the finished branch found ten defects. Eight are fixed
+here, one commit each, test-first; two were already-known deferrals. Three of the ten
+were in work done during this plan, which is the point of reviewing after finishing
+rather than only during.
+
+| Severity | Defect | Fix |
+|---|---|---|
+| HIGH | The sync merge was defeated for the launcher it was written for. Step 8 made the merge *base* fresh, but the *overlay* was still stale, and spread makes the overlay win. Ubisoft returns the username and password it was handed, so a password corrected mid-sync was reverted. | `1f580b9` — three-way merge: only fields the launcher actually **changed** win over the store |
+| HIGH | The test guarding step 8 proved nothing. Its fake returned `{token:'refreshed'}` — a shape no launcher produces, sharing no field with the store — so the merge could not go wrong however it was written. | same commit — the fake echoes its input, and a second test pins the opposite direction |
+| MED-HIGH | Rotating a `hex:` install to a passphrase was impossible. The "already sealed under the new key?" short-circuit derives that key on the *read* path, which refuses to create the salt a hex install has never had, and the error told the operator to restore a file that has never existed. | `8eb438b` — a missing salt answers that question `false`; `rotate()` creates it on the seal path |
+| MED | Unticking 2FA from a reloaded page returned 400. The page holds no password to send, so the removal-only body failed the create-a-credential validation — the feature did not work from the one state it is used in. | `081a330` — a removal is not a create, exempt only when genuinely alone |
+| MED | `priorUnreadable` had no consumer anywhere. The recovery save after a lost salt showed a green "Saved" while sealing under a **new** salt, leaving every other launcher sealed under the lost one. | `669c817` — surfaced in the UI, and added to the UI-only key set so it is not posted back |
+| MED | A test whose named scenario was never entered: it seeded a v0 blob, which uses the legacy derivation and never reads the salt, so occupying the salt path changed nothing. Deleting the code it covers would not have failed it. | `f5cac06` — seeded under the current scheme; verified by deleting that code and watching it go red |
+| LOW-MED | The rotation script counted rows it never opened as verified — on the one tool whose selling point is verifying before you discard the old key. | `36e4487` |
+| LOW | Invariant C broke on one shape a browser cannot produce: `[]` and `{}` are truthy, so they overwrote a stored TOTP secret while `totp_configured` still reported `true`. | `65279f2` — "supplied" means a non-empty string, in validation and payload alike |
+| LOW | The script *verified* by calling `rotate()` — the write path, whose derivation may create the salt. | `36e4487` — new `decryptWith`, proven pure by the read-path test |
+| LOW | `onError: 'skip'`, its `failed` list, and the `activeKey` / `saltExists` exports had no callers left. | `d867d6b` |
+
+Invariant verdicts from that review: **A held** (hooked every fs write, drove the whole
+read surface with the salt deleted — zero writes), **B held**, **C held for every shape
+a browser can produce** and broke only on the non-string values fixed above.
+
 ## Deferred
 
 - Unreadable credentials are reported to the log only. `/api/health` or
@@ -93,4 +117,11 @@ branch. The live volume was never mounted writable and was byte-identical afterw
   history.
 - `saltExists` and `activeKey` are exported from `encrypt.js` with no callers anywhere,
   including tests — leftovers from the stripped subsystems.
+- For `session_cookie` launchers the merge is skipped entirely, so re-pasting a Humble
+  cookie replaces the whole credential. Harmless today because nothing else is stored
+  for Humble, and by design — those exchanges mint a new session — but it is the one
+  place where absence does not mean unchanged.
+- A salt created inside the rotation transaction is not rolled back if a later row
+  fails. Benign in both reachable cases: a hex install ignores a stray salt, and a
+  passphrase install fails at `open()` before anything is created.
 - Pre-existing and out of scope: `GET /api/health` asserts a hardcoded version.
