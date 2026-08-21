@@ -73,7 +73,6 @@ describe('rotating from a declared hex key to a passphrase', () => {
     const result = rotateAllCredentials(db, HEX_KEY, PASSPHRASE);
 
     assert.equal(result.rotated, 2);
-    assert.deepEqual(result.failed, []);
     assert.ok(fs.existsSync(saltPath), 'sealing under a passphrase must create one');
 
     process.env.GAMESHELF_ENCRYPTION_KEY = PASSPHRASE;

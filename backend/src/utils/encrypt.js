@@ -392,10 +392,8 @@ module.exports = {
   setSaltDirectory,
   assertUsableKey,
   parseDeclaredKey: asRawKey,
-  activeKey: () => rawKey,
   envelopeVersion,
   derivationMode,
   saltFilePath,
   SaltMissingError,
-  saltExists: () => fs.existsSync(saltFilePath()),
 };

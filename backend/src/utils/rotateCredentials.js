@@ -32,28 +32,22 @@ function alreadySealedUnder(ciphertext, newPassphrase) {
  * This is what makes changing GAMESHELF_ENCRYPTION_KEY a recoverable operation.
  * Without it, changing the key leaves every credential permanently unreadable.
  *
- * `onError` selects the two callers' genuinely different needs:
+ * All or nothing. A partial rotation would leave credentials split across two keys
+ * with nothing recording which is which, so any failure rolls the whole batch back.
+ * (There used to be a 'skip' mode for the startup migration, which re-sealed on boot
+ * and could not be allowed to throw into a restart loop. Boot no longer writes
+ * credentials at all, so the mode had no caller and its `failed` list no reader.)
  *
- *   'abort' (default) — the operator-run rotation script. A partial rotation would
- *     leave credentials split across two keys with nothing recording which is which,
- *     so any failure rolls the whole batch back.
- *
- *   'skip' — the startup migration. Throwing there is uncaught at server.js and,
- *     with docker-compose's `restart: unless-stopped`, becomes an endless crash loop
- *     with no in-app recovery. Reads dispatch on the envelope version, so leaving an
- *     un-re-sealable blob alone is safe; it is reported instead.
- *
- * Returns { rotated, skipped, failed, unreadable }. `skipped` counts launchers with
- * no credentials plus those already sealed under the target key; `unreadable` names
- * rows whose stored value is not an envelope at all, which is a real fault and must
- * not be reported as "nothing stored".
+ * Returns { rotated, skipped, unreadable }. `skipped` counts launchers with no
+ * credentials plus those already sealed under the target key; `unreadable` names rows
+ * whose stored value is not an envelope at all, which is a real fault and must not be
+ * reported as "nothing stored".
  */
-function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abort' } = {}) {
+function rotateAllCredentials(db, oldPassphrase, newPassphrase) {
   const update = db.prepare('UPDATE launchers SET credentials_json = ? WHERE id = ?');
 
   let rotated = 0;
   let skipped = 0;
-  const failed = [];
   const unreadable = [];
 
   // All-or-nothing under 'abort'. The SELECT lives inside the transaction so the rows
@@ -71,7 +65,6 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
   const runAll = db.transaction(() => {
     rotated = 0;
     skipped = 0;
-    failed.length = 0;
     unreadable.length = 0;
 
     const rows = db.prepare('SELECT id, name, credentials_json FROM launchers').all();
@@ -92,31 +85,22 @@ function rotateAllCredentials(db, oldPassphrase, newPassphrase, { onError = 'abo
         continue;
       }
 
-      try {
-        // Already under the target key — a re-run after an interrupted rotation.
-        // Without this, the first such row fails GCM authentication and aborts the
-        // batch, reporting a decryption error for work that had already succeeded.
-        //
-        // Inside the try because it derives a key, which reads (or creates) the salt
-        // file: a disk-full or permission error here would otherwise escape the loop,
-        // the transaction and runMigrations, crash-looping the container.
-        if (alreadySealedUnder(row.credentials_json, newPassphrase)) {
-          skipped++;
-          continue;
-        }
-
-        update.run(rotate(row.credentials_json, oldPassphrase, newPassphrase), row.id);
-        rotated++;
-      } catch (err) {
-        if (onError === 'abort') throw err;
-        failed.push({ name: row.name, reason: err.message });
+      // Already under the target key — a re-run after an interrupted rotation. Without
+      // this, the first such row fails GCM authentication and aborts the batch,
+      // reporting a decryption error for work that had already succeeded.
+      if (alreadySealedUnder(row.credentials_json, newPassphrase)) {
+        skipped++;
+        continue;
       }
+
+      update.run(rotate(row.credentials_json, oldPassphrase, newPassphrase), row.id);
+      rotated++;
     }
   });
 
   runAll();
 
-  return { rotated, skipped, failed, unreadable };
+  return { rotated, skipped, unreadable };
 }
 
 module.exports = { rotateAllCredentials };
