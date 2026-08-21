@@ -108,6 +108,25 @@ Invariant verdicts from that review: **A held** (hooked every fs write, drove th
 read surface with the salt deleted — zero writes), **B held**, **C held for every shape
 a browser can produce** and broke only on the non-string values fixed above.
 
+## Verification round
+
+The remediation was itself reviewed. Seven of the eight fixes were confirmed working;
+the reviewer could not break the three-way merge, and verified the left-to-right
+evaluation claim behind the rotation fix empirically rather than on trust. Four things
+came back, two of them real.
+
+| Severity | Defect | Fix |
+|---|---|---|
+| MEDIUM | `given()` required a string but `' '` is a string, so whitespace still destroyed a stored secret — the exact failure that commit's own comment described. Stored as `' '`, `totp_configured` still reported `true`. | `8a4b42e` — trimmed emptiness decides whether a value counts; the value is still stored as sent, because a space in a password is legitimate |
+| MEDIUM | The new `decryptWith` purity test could not fail for the change it named: against a v1 blob the impure form throws from `open()` before deriving, so both implementations passed. The same mistake this round was called in to fix, made while fixing it. | `5933041` — a pre-versioned blob discriminates, checked by making `decryptWith` impure and watching it go red |
+| LOW (latent) | A removal-only request went through the save path's upsert, so it set `enabled = 1` on a disabled launcher. | `f514ce0` |
+| LOW (latent) | The exemption was gated on `otp_supported` alone; an `otp_supported` launcher on the replace-not-merge path would have stored an empty credential. | `f514ce0` — the exemption now also requires the merge path |
+
+The reviewer also confirmed one residual is **pre-existing, not introduced**: with a
+passphrase install and a lost salt, a v0 row still rotates and mints a fresh salt,
+because `isSealedWith` short-circuits before deriving. Verified byte-identical against
+the pre-round code. Recorded below.
+
 ## Deferred
 
 - Unreadable credentials are reported to the log only. `/api/health` or
@@ -124,4 +143,11 @@ a browser can produce** and broke only on the non-string values fixed above.
 - A salt created inside the rotation transaction is not rolled back if a later row
   fails. Benign in both reachable cases: a hex install ignores a stray salt, and a
   passphrase install fails at `open()` before anything is created.
+- With a passphrase install and a lost salt, a v0 row rotates and mints a fresh salt:
+  `isSealedWith` short-circuits on the version before deriving, so the missing-salt
+  swallow never sees it. In a mixed store the minted salt then turns the next row's
+  clean `SaltMissingError` into an opaque GCM failure. Pre-existing, verified identical
+  against the pre-round code.
+- `priorUnreadable` is not cleared by a failed save, so the warning persists while the
+  operator edits. Arguably correct; cosmetic either way.
 - Pre-existing and out of scope: `GET /api/health` asserts a hardcoded version.
