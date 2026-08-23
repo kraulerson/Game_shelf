@@ -224,6 +224,58 @@ describe('Launcher routes', () => {
     assert.ok('sync_locked' in xbox, 'sync_locked field should be present');
   });
 
+  // The Setup form never reads a stored secret back — that endpoint was removed
+  // deliberately. But the 2FA checkbox has to start in the right position, or after a
+  // reload it renders unticked for an account that does have a secret, and the first
+  // save then looks to the user like an untick. A boolean says enough without handing
+  // the secret out.
+  it('GET /api/launchers/available reports whether a TOTP secret is stored', async () => {
+    const post = (body) =>
+      makeFetch(app, '/api/launchers/ubisoft/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: authCookie() },
+        body: JSON.stringify(body),
+      });
+    const available = async () => {
+      const res = await makeFetch(app, '/api/launchers/available', {
+        headers: { Cookie: authCookie() },
+      });
+      return (await res.json()).find((l) => l.id === 'ubisoft');
+    };
+
+    await post({ username: 'karl', password: 'p' });
+    assert.equal(
+      (await available()).totp_configured,
+      false,
+      'credentials without a secret must report false'
+    );
+
+    await post({ username: 'karl', password: 'p', totp_secret: 'JBSWY3DPEHPK3PXP' });
+    assert.equal((await available()).totp_configured, true, 'a stored secret must report true');
+
+    await post({ username: 'karl', password: 'p', remove_totp_secret: true });
+    assert.equal((await available()).totp_configured, false, 'and removal must be reflected');
+  });
+
+  it('GET /api/launchers/available survives a credential blob it cannot read', async () => {
+    // An unreadable blob is already named by the boot probe and by Test Connection.
+    // This endpoint answering a checkbox question must not become the third reporter,
+    // and must certainly not 500 the whole Setup page over it.
+    const db = app.locals.db;
+    db.prepare("UPDATE launchers SET credentials_json = 'not-an-envelope' WHERE name = 'ubisoft'").run();
+
+    try {
+      const res = await makeFetch(app, '/api/launchers/available', {
+        headers: { Cookie: authCookie() },
+      });
+      assert.equal(res.status, 200);
+      const ubisoft = (await res.json()).find((l) => l.id === 'ubisoft');
+      assert.equal(ubisoft.totp_configured, false);
+    } finally {
+      db.prepare("UPDATE launchers SET credentials_json = NULL WHERE name = 'ubisoft'").run();
+    }
+  });
+
   it('POST /api/sync/:launcherName should return 409 when sync-locked', async () => {
     const db = app.locals.db;
     db.prepare('UPDATE launchers SET sync_locked = 1 WHERE name = ?').run('steam');

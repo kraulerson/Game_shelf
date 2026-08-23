@@ -286,6 +286,68 @@ function runMigrations(dbPath) {
     console.log('[Migration] #222: added game_editions.gog_slug');
   }
 
+  // Credential envelope: reads dispatch on the version, so a pre-versioned blob works
+  // indefinitely. Upgrading is hardening, not a correctness prerequisite — and boot is
+  // the wrong place for it.
+  //
+  // Boot cannot ask the operator anything, runs under `restart: unless-stopped`, and
+  // races the state it inspects. An automatic re-seal here derived a key, which minted
+  // a salt, which re-sealed salt-independent v0 rows under a throwaway salt and
+  // destroyed them the moment the real salt was restored. A salt-loss detector added
+  // to catch that then fired permanently on raw-key installs and skipped the real
+  // diagnosis. Both are gone. The upgrade belongs to scripts/rotate-encryption-key.js,
+  // run once, offline, verified, after a backup.
+  //
+  // What remains is a read-only probe: report what will not open, and nothing else.
+  // Safe now only because decrypt() cannot write (Invariant A, encrypt.js).
+  let encryptModule = null;
+  if (process.env.GAMESHELF_ENCRYPTION_KEY) {
+    // Only a genuinely ABSENT key is tolerable: a database with no stored credentials
+    // must still migrate without one. Any error from the require is a real fault.
+    encryptModule = require('../utils/encrypt');
+
+    // Pin the salt to the database we were handed. runMigrations takes the path as an
+    // argument while encrypt.js otherwise reads the environment, and the two can
+    // differ — which would put the salt beside a different database than the
+    // credentials it protects.
+    encryptModule.setSaltDirectory(path.dirname(dbPath));
+
+    // State the derivation in force: it is what decides whether the salt file is part
+    // of the backup contract at all, and nothing else surfaces it.
+    console.log(
+      `[Migration] Credential key derivation: ${encryptModule.derivationMode()}` +
+        (encryptModule.derivationMode() === 'scrypt'
+          ? ` (salt: ${encryptModule.saltFilePath()} — include it in backups)`
+          : ' (declared raw key; no salt file involved)')
+    );
+  }
+
+  if (encryptModule) {
+    // Report per launcher, quoting the error. Since step 1 the error identifies itself
+    // — SaltMissingError names the file, a wrong key gives the GCM failure — so this
+    // does not, and must not, assert a cause of its own. Earlier revisions guessed and
+    // were wrong in both directions: telling raw-key installs to restore a salt that
+    // never existed, and reporting a genuinely lost salt only when a v0 blob happened
+    // to coexist.
+    for (const row of db
+      .prepare('SELECT name, credentials_json FROM launchers WHERE credentials_json IS NOT NULL')
+      .all()) {
+      if (encryptModule.envelopeVersion(row.credentials_json) === null) {
+        console.error(
+          `[Migration] ${row.name}: stored value is not a credential envelope. It will ` +
+            'fail at sync time; re-enter it in Settings.'
+        );
+        continue;
+      }
+
+      try {
+        encryptModule.decrypt(row.credentials_json);
+      } catch (err) {
+        console.error(`[Migration] ${row.name}: cannot be decrypted — ${err.message}`);
+      }
+    }
+  }
+
   return db;
 }
 

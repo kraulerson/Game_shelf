@@ -1,23 +1,20 @@
 require('dotenv').config();
 
 // Validate required env vars before anything else
-const requiredEnv = [
-  { name: 'GAMESHELF_ENCRYPTION_KEY', minLength: 32 },
-  { name: 'GAMESHELF_JWT_SECRET', minLength: 1 },
-];
+if (!process.env.GAMESHELF_JWT_SECRET) {
+  console.error('FATAL: GAMESHELF_JWT_SECRET environment variable is required.');
+  process.exit(1);
+}
 
-for (const { name, minLength } of requiredEnv) {
-  const val = process.env[name];
-  if (!val) {
-    console.error(`FATAL: ${name} environment variable is required.`);
-    process.exit(1);
-  }
-  if (val.length < minLength) {
-    console.error(
-      `FATAL: ${name} must be at least ${minLength} characters. Current: ${val.length}`
-    );
-    process.exit(1);
-  }
+// The encryption key is validated by encrypt.js, which owns the definition of a
+// usable key — including the declared hex: form. A length test here was a third copy
+// of that rule and did not understand it, so a malformed declared key passed boot and
+// failed later at the first credential save.
+try {
+  require('./utils/encrypt');
+} catch (err) {
+  console.error(`FATAL: ${err.message}`);
+  process.exit(1);
 }
 
 // Lancache orchestrator integration (F14) is OPTIONAL — the app boots without it.

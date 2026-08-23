@@ -4,6 +4,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { buildOtpAuthUri } from '../utils/otpauth';
+import { buildCredentialPayload } from '../utils/credentialPayload';
 
 function SortableItem({ launcher, index }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: launcher.id });
@@ -39,7 +41,21 @@ export default function Setup() {
   useEffect(() => {
     fetch('/api/launchers/available', { credentials: 'same-origin' })
       .then((res) => res.json())
-      .then(setAvailableLaunchers)
+      .then((launchers) => {
+        setAvailableLaunchers(launchers);
+
+        // The form cannot show a stored secret — nothing reads one back out, by
+        // design — but it must not render "no 2FA" for an account that has it. The
+        // server reports only whether one is on file; start the box from that, so
+        // unticking is a decision made by someone who could see the true state.
+        setCredentials((prev) => {
+          const next = { ...prev };
+          for (const l of launchers) {
+            if (l.totp_configured) next[l.id] = { ...next[l.id], totpEnabled: true };
+          }
+          return next;
+        });
+      })
       .catch(() => {});
   }, []);
 
@@ -155,17 +171,30 @@ export default function Setup() {
   if (step === 3) {
     async function saveCredentials(launcher) {
       const creds = credentials[launcher.id] || {};
+
+      const payload = buildCredentialPayload(creds);
+
       try {
         const res = await fetch(`/api/launchers/${launcher.id}/credentials`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify(creds),
+          body: JSON.stringify(payload),
         });
         if (res.ok) {
+          // The route reports when the credentials it was about to merge over could
+          // not be decrypted. That is the difference between "your other fields were
+          // preserved" and "they were unrecoverable and you have just overwritten
+          // them", and a green Saved cannot carry it.
+          const body = await res.json().catch(() => ({}));
           setCredentials((prev) => ({
             ...prev,
-            [launcher.id]: { ...prev[launcher.id], saved: true, error: '' },
+            [launcher.id]: {
+              ...prev[launcher.id],
+              saved: true,
+              error: '',
+              priorUnreadable: body.priorUnreadable === true,
+            },
           }));
         } else {
           const data = await res.json();
@@ -202,24 +231,46 @@ export default function Setup() {
       }
     }
 
-    async function loadQR(launcher) {
-      try {
-        const res = await fetch(`/api/setup/qr/${launcher.id}`, { credentials: 'same-origin' });
-        const data = await res.json();
-        setCredentials((prev) => ({
-          ...prev,
-          [launcher.id]: { ...prev[launcher.id], qrUri: data.uri },
-        }));
-      } catch {
-        // QR load failed silently
-      }
+    // Built locally from the secret already in this form. The server has no
+    // endpoint that reads a stored TOTP secret back out, by design.
+    function showQR(launcher) {
+      setCredentials((prev) => {
+        const creds = prev[launcher.id] || {};
+
+        try {
+          return {
+            ...prev,
+            [launcher.id]: {
+              ...creds,
+              qrError: '',
+              qrUri: buildOtpAuthUri(launcher.id, creds.username, creds.totp_secret),
+            },
+          };
+        } catch (err) {
+          return {
+            ...prev,
+            [launcher.id]: { ...creds, qrUri: '', qrError: err.message },
+          };
+        }
+      });
     }
 
     function updateField(launcherId, field, value) {
-      setCredentials((prev) => ({
-        ...prev,
-        [launcherId]: { ...prev[launcherId], [field]: value, saved: false },
-      }));
+      setCredentials((prev) => {
+        const next = { ...prev[launcherId], [field]: value, saved: false };
+
+        // A rendered QR encodes the secret as it was when the button was clicked.
+        // Editing the secret afterwards must invalidate it, or the user scans a QR
+        // for the OLD value while the server stores the new one, and every generated
+        // code fails. The deleted server endpoint could not have this bug, because it
+        // read the stored value each time.
+        if (field === 'totp_secret' || field === 'username') {
+          next.qrUri = '';
+          next.qrError = '';
+        }
+
+        return { ...prev, [launcherId]: next };
+      });
     }
 
     const allSaved = selectedLaunchers.every((l) => credentials[l.id]?.saved);
@@ -388,13 +439,25 @@ export default function Setup() {
                               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           </div>
-                          {creds.saved && (
+                          {creds.saved ? (
                             <button
-                              onClick={() => loadQR(launcher)}
+                              onClick={() => showQR(launcher)}
                               className="text-sm text-blue-400 hover:text-blue-300"
                             >
                               Or scan QR code
                             </button>
+                          ) : (
+                            // The QR is built from the secret in this form, because the
+                            // server has no endpoint that reads a stored one back. So
+                            // after a reload there is nothing to build from. Say that,
+                            // rather than rendering no button and no explanation.
+                            <p className="text-gray-400 text-sm">
+                              To show a QR code, re-enter the TOTP secret above and save.
+                              It is never read back from the server.
+                            </p>
+                          )}
+                          {creds.qrError && (
+                            <p className="text-red-400 text-sm" role="alert">{creds.qrError}</p>
                           )}
                           {creds.qrUri && (
                             <div className="bg-white p-3 rounded inline-block">
@@ -408,6 +471,14 @@ export default function Setup() {
 
                   {creds.error && <p className="text-red-400 text-sm mb-2">{creds.error}</p>}
                   {creds.saved && <p className="text-green-400 text-sm mb-2">Saved</p>}
+                  {creds.priorUnreadable && (
+                    <p className="text-amber-400 text-sm mb-2">
+                      Warning: the credentials previously stored for this launcher could not be
+                      read, so only the fields you just entered are stored now. Any other
+                      launcher showing the same problem needs re-entering too — check the
+                      server log, which names them.
+                    </p>
+                  )}
 
                   {creds.testResult && (
                     <p className={`text-sm mb-2 ${creds.testResult.success ? 'text-green-400' : 'text-red-400'}`}>

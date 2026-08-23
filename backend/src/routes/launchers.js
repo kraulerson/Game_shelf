@@ -23,20 +23,41 @@ const AVAILABLE_LAUNCHERS = [
 
 const LAUNCHER_MAP = Object.fromEntries(AVAILABLE_LAUNCHERS.map(l => [l.id, l]));
 
+// Whether a TOTP secret is on file — never the secret itself. Nothing reads a stored
+// secret back out to the client; the form is write-only by design.
+//
+// Unreadable counts as "not configured" rather than as a fault. The boot probe and
+// Test Connection both already name that condition; this answers where a checkbox
+// starts, and it must not be the reason the Setup page fails to load.
+function hasTotpSecret(blob) {
+  if (!blob) return false;
+  try {
+    return !!JSON.parse(decrypt(blob)).totp_secret;
+  } catch {
+    return false;
+  }
+}
+
 // GET /api/launchers/available
 router.get('/available', (req, res) => {
   const db = req.app.locals.db;
   const dbLaunchers = db.prepare(
-    'SELECT name, credentials_json IS NOT NULL as configured, priority, sync_locked FROM launchers'
+    'SELECT name, credentials_json, priority, sync_locked FROM launchers'
   ).all();
   const dbMap = Object.fromEntries(dbLaunchers.map(r => [r.name, r]));
 
-  const result = AVAILABLE_LAUNCHERS.map(l => ({
-    ...l,
-    configured: !!(dbMap[l.id]?.configured),
-    priority: dbMap[l.id]?.priority ?? 99,
-    sync_locked: !!(dbMap[l.id]?.sync_locked),
-  }));
+  const result = AVAILABLE_LAUNCHERS.map(l => {
+    const row = dbMap[l.id];
+    return {
+      ...l,
+      configured: row?.credentials_json != null,
+      priority: row?.priority ?? 99,
+      sync_locked: !!(row?.sync_locked),
+      // Gated on otp_supported so a Steam API key is never decrypted to answer a
+      // question about TOTP.
+      totp_configured: l.otp_supported ? hasTotpSecret(row?.credentials_json) : false,
+    };
+  });
 
   res.json(result);
 });
@@ -190,31 +211,83 @@ router.post('/:id/credentials', async (req, res) => {
     return res.status(400).json({ error: `${launcher.display_name} uses file import — no credentials needed` });
   }
 
-  const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie } = req.body || {};
+  const { username, password, api_key, steamid64, totp_secret, auth_code, session_cookie, remove_totp_secret } = req.body || {};
 
-  // Validate required fields by auth_type
-  if (launcher.auth_type === 'api_key') {
-    if (!api_key) {
-      return res.status(400).json({ error: 'api_key is required for this launcher' });
-    }
-  } else if (launcher.auth_type === 'auth_code') {
-    if (!auth_code) {
-      return res.status(400).json({ error: 'auth_code is required for this launcher' });
-    }
-  } else if (launcher.auth_type === 'session_cookie') {
-    if (!session_cookie) {
-      return res.status(400).json({ error: 'session_cookie is required for this launcher' });
-    }
-  } else {
-    // credentials or credentials+totp
-    if (!username || !password) {
-      return res.status(400).json({ error: 'username and password are required for this launcher' });
+  // Every credential field is a string with something in it. [] and {} are truthy, so
+  // without the type check they were stored verbatim over a real secret — a request
+  // field VALUE destroying a credential, which this contract forbids. It is worse than
+  // a plain overwrite: totp_configured reads !!totp_secret, so the UI still showed 2FA
+  // configured while code generation threw.
+  //
+  // Whitespace does exactly the same damage and IS a string, so the type check alone
+  // is not enough: ' ' stored over a real secret still reports as configured and
+  // generates codes that can never authenticate.
+  //
+  // Trimming decides only whether a value counts as supplied — the value itself is
+  // stored as sent, because a leading or trailing space in a password is legitimate
+  // and silently trimming it would lock the operator out.
+  //
+  // "Supplied" means the same thing here and in the validation below, so a value that
+  // does not count is refused rather than silently dropped.
+  const given = (value) => typeof value === 'string' && value.trim() !== '';
+
+  // A request that only asks for a removal is not creating or replacing anything, so
+  // the fields required to CREATE a credential are not required of it. Unticking 2FA
+  // happens from a reloaded page, which holds no password to send — demanding one made
+  // the removal impossible from the only state it is ever done in.
+  // auth_code and session_cookie exchanges replace the credential outright rather than
+  // merging, so a removal means nothing there: it would fall through to an undefined
+  // payload field and wipe the stored session. Requiring the merge path as well as
+  // otp_supported keeps the exemption where removal actually has a meaning, whatever
+  // launcher is added to the table later.
+  const mergesCredentials =
+    launcher.auth_type !== 'auth_code' && launcher.auth_type !== 'session_cookie';
+
+  const removalOnly =
+    remove_totp_secret === true &&
+    launcher.otp_supported &&
+    mergesCredentials &&
+    ![username, password, api_key, steamid64, totp_secret, auth_code, session_cookie].some(given);
+
+  if (removalOnly) {
+    const stored = req.app.locals.db
+      .prepare('SELECT credentials_json FROM launchers WHERE name = ?')
+      .get(id);
+
+    // Without this a removal-only request inserts a row holding an empty credential,
+    // which then reports itself as configured.
+    if (!stored || !stored.credentials_json) {
+      return res.status(404).json({ error: 'No credentials stored for this launcher' });
     }
   }
 
-  // Steam requires steamid64 alongside api_key
-  if (id === 'steam' && !steamid64) {
-    return res.status(400).json({ error: 'steamid64 is required for Steam' });
+  // Validate required fields by auth_type. The whole chain is skipped for a
+  // removal-only request, not just its first arm — skipping one branch drops through
+  // to the else, which demands a username and password anyway.
+  if (!removalOnly) {
+    if (launcher.auth_type === 'api_key') {
+      if (!given(api_key)) {
+        return res.status(400).json({ error: 'api_key is required for this launcher' });
+      }
+    } else if (launcher.auth_type === 'auth_code') {
+      if (!given(auth_code)) {
+        return res.status(400).json({ error: 'auth_code is required for this launcher' });
+      }
+    } else if (launcher.auth_type === 'session_cookie') {
+      if (!given(session_cookie)) {
+        return res.status(400).json({ error: 'session_cookie is required for this launcher' });
+      }
+    } else {
+      // credentials or credentials+totp
+      if (!given(username) || !given(password)) {
+        return res.status(400).json({ error: 'username and password are required for this launcher' });
+      }
+    }
+
+    // Steam requires steamid64 alongside api_key
+    if (id === 'steam' && !given(steamid64)) {
+      return res.status(400).json({ error: 'steamid64 is required for Steam' });
+    }
   }
 
   let payload;
@@ -233,27 +306,87 @@ router.post('/:id/credentials', async (req, res) => {
     payload = { session_cookie };
   } else {
     payload = {};
-    if (username) payload.username = username;
-    if (password) payload.password = password;
-    if (api_key) payload.api_key = api_key;
-    if (steamid64) payload.steamid64 = steamid64;
-    if (totp_secret) payload.totp_secret = totp_secret;
+    if (given(username)) payload.username = username;
+    if (given(password)) payload.password = password;
+    if (given(api_key)) payload.api_key = api_key;
+    if (given(steamid64)) payload.steamid64 = steamid64;
+    if (given(totp_secret)) payload.totp_secret = totp_secret;
   }
-
-  const encryptedCredentials = encrypt(JSON.stringify(payload));
 
   const db = req.app.locals.db;
 
-  // Upsert: insert or update by name
-  db.prepare(`
-    INSERT INTO launchers (name, display_name, enabled, credentials_json)
-    VALUES (?, ?, 1, ?)
-    ON CONFLICT(name) DO UPDATE SET
-      credentials_json = excluded.credentials_json,
-      enabled = 1
-  `).run(id, launcher.display_name, encryptedCredentials);
+  // Merge over what is already stored rather than replacing it. The Setup form has no
+  // read-back of stored secrets by design, so after a page reload it holds nothing —
+  // and a wholesale replace meant that re-saving a corrected password destroyed the
+  // TOTP secret the user could never re-supply from the UI.
+  //
+  // Absence means "unchanged", and so does an empty value: a blank input is what a
+  // reloaded form holds, what autofill leaves behind, and what a client that always
+  // posts every key produces, none of which is a decision to destroy anything. No
+  // field VALUE is destructive; removal takes an explicit verb instead, so there is
+  // no shape a form can accidentally take that deletes a secret.
+  //
+  // auth_code and session_cookie exchanges replace outright: those mint a whole new
+  // session, so merging stale fields into them would be wrong.
+  let merged = payload;
+  let priorUnreadable = false;
+  let encrypted;
 
-  res.json({ ok: true });
+  const applyMerge = db.transaction(() => {
+    if (launcher.auth_type !== 'auth_code' && launcher.auth_type !== 'session_cookie') {
+      const existingRow = db
+        .prepare('SELECT credentials_json FROM launchers WHERE name = ?')
+        .get(id);
+
+      let existing = {};
+      if (existingRow && existingRow.credentials_json) {
+        try {
+          existing = JSON.parse(decrypt(existingRow.credentials_json));
+        } catch (err) {
+        // Unreadable stored blob: proceed rather than fail, so a key change or lost
+        // salt does not also block recovery by re-entering credentials. But say so —
+        // silently substituting {} means the operator cannot tell "your other fields
+        // were preserved" from "they were unrecoverable and you have just overwritten
+        // them".
+          existing = {};
+          priorUnreadable = true;
+          console.error(
+            `[launchers] Existing credentials for ${id} could not be decrypted ` +
+              `(${err.message}); saving will replace them with only the fields supplied.`
+          );
+        }
+      }
+
+      merged = { ...existing, ...payload };
+
+      // Applied after the merge so a request that both supplies and removes the same
+      // field resolves one way every time.
+      if (remove_totp_secret === true) delete merged.totp_secret;
+    }
+
+    encrypted = encrypt(JSON.stringify(merged));
+
+    if (removalOnly) {
+      // Taking one field away is not a decision to turn the launcher back on, and the
+      // row is known to exist — the 404 above guarantees it. The save path's upsert
+      // would have set enabled = 1 as a side effect of the removal.
+      db.prepare('UPDATE launchers SET credentials_json = ? WHERE name = ?').run(encrypted, id);
+    } else {
+      db.prepare(`
+        INSERT INTO launchers (name, display_name, enabled, credentials_json)
+        VALUES (?, ?, 1, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          credentials_json = excluded.credentials_json,
+          enabled = 1
+      `).run(id, launcher.display_name, encrypted);
+    }
+  });
+
+  applyMerge();
+
+  // Only surfaced when it happened: adding a field unconditionally would change the
+  // response shape for every existing caller for a condition that is almost never true.
+  res.json(priorUnreadable ? { ok: true, priorUnreadable: true } : { ok: true });
 });
 
 // GET /api/launchers/:id/test
@@ -272,8 +405,21 @@ router.get('/:id/test', (req, res) => {
     return res.status(404).json({ error: 'No credentials stored for this launcher' });
   }
 
-  // Decrypt to verify credentials are valid (readable)
-  decrypt(row.credentials_json);
+  // Decrypt to verify credentials are valid (readable). Every other path in this PR
+  // treats an unreadable blob as a named, reported condition; leaving this one as a
+  // raw throw turned "Test Connection" into an opaque 500 exactly when the operator
+  // is trying to work out what is wrong.
+  try {
+    decrypt(row.credentials_json);
+  } catch {
+    return res.status(409).json({
+      error:
+        'Stored credentials for this launcher cannot be decrypted. Either ' +
+        'GAMESHELF_ENCRYPTION_KEY changed without running the rotation script, or ' +
+        'the encryption-salt file beside the database is missing. Re-entering the ' +
+        'credentials also resolves it.',
+    });
+  }
 
   // TODO: Implement actual auth endpoint pinging per launcher
   res.json({ success: true, message: `Connection test not yet implemented for ${launcher.display_name}` });

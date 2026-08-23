@@ -16,22 +16,6 @@ function generateTOTPCode(secret) {
 }
 
 /**
- * Generate an otpauth:// URI suitable for QR code rendering.
- * The user can scan this to verify their TOTP secret matches their authenticator app.
- */
-function generateQRSetupData(launcherId, username, secret) {
-  const instance = new TOTP({
-    issuer: 'Gameshelf',
-    label: `${launcherId}:${username}`,
-    secret,
-    digits: 6,
-    period: 30,
-    algorithm: 'SHA1',
-  });
-  return instance.toString();
-}
-
-/**
  * Generate a Steam Guard authentication code from a shared_secret.
  *
  * Steam uses a non-standard TOTP implementation:
@@ -47,4 +31,4 @@ function generateSteamCode(sharedSecret) {
   return SteamTotp.generateAuthCode(sharedSecret);
 }
 
-module.exports = { generateTOTPCode, generateQRSetupData, generateSteamCode };
+module.exports = { generateTOTPCode, generateSteamCode };

@@ -9,6 +9,25 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY src/ ./src/
+# NOTE: starting this image changes nothing on disk. Credentials written by earlier
+# versions keep working, because reads dispatch on the stored format — so a rollback is
+# safe. Moving them onto the salted derivation is a deliberate, verified step: run the
+# rotation script once with the new key set to your current key (see .env.example).
+# Back up the data volume before doing that.
+#
+# The rotation script is the documented recovery path for changing
+# GAMESHELF_ENCRYPTION_KEY. It must be run against a STOPPED backend (see the script
+# header), so the form is:
+#   docker compose build backend      # the script ships only in images built
+#                                     # from this change onwards
+#   docker compose stop backend
+#   docker compose run --rm \
+#     -e GAMESHELF_ENCRYPTION_KEY=<current> \
+#     -e GAMESHELF_ENCRYPTION_KEY_NEW=<new> \
+#     backend node scripts/rotate-encryption-key.js
+# not `docker exec`, which requires the container to be running — the very thing that
+# causes the torn-key race the script warns about.
+COPY scripts/ ./scripts/
 
 # Create non-root user data directory
 RUN mkdir -p /app/data && chown -R node:node /app
