@@ -49,11 +49,15 @@ router.get('/filters', (req, res) => {
     GROUP BY t.name ORDER BY count DESC
   `).all();
 
+  // Every launcher that has owned games is a valid filter, whether or not its
+  // sync is enabled: Humble's sync is disabled by choice, yet its owned games
+  // (manual coverage) are in the library and were unfilterable because this
+  // query required `l.enabled = 1`. The JOIN on owned editions already excludes
+  // launchers with nothing to show.
   const launchers = db.prepare(`
     SELECT l.name, l.display_name, COUNT(DISTINCT ge.id) as count
     FROM launchers l
     JOIN game_editions ge ON ge.launcher_id = l.id AND ge.owned = 1 AND ge.parent_edition_id IS NULL
-    WHERE l.enabled = 1
     GROUP BY l.name ORDER BY ${EFFECTIVE_PRIORITY_SQL} ASC
   `).all();
 

@@ -14,11 +14,9 @@ describe('launcherToPlatform', () => {
 describe('cacheBadgeFor', () => {
   const cases = [
     [{ status: 'up_to_date', tracked: true }, 'CheckCircle', 'green', 'Cached'],
-    [{ status: 'downloading', tracked: true }, 'Download', 'blue', 'Downloading'],
     [{ status: 'pending_update', tracked: true }, 'ArrowUpCircle', 'amber', 'Update ready'],
     [{ status: 'not_downloaded', tracked: true }, 'Circle', 'gray', 'Not cached'],
-    [{ status: 'validation_failed', tracked: true }, 'AlertTriangle', 'amber', 'Partial'],
-    [{ status: 'failed', tracked: true }, 'XCircle', 'red', 'Failed'],
+    [{ status: 'validation_failed', tracked: true }, 'AlertTriangle', 'amber', 'Partly cached'],
     [{ status: 'unknown', tracked: true }, 'HelpCircle', 'gray', 'Unknown'],
   ];
   for (const [input, icon, tone, label] of cases) {
@@ -26,6 +24,13 @@ describe('cacheBadgeFor', () => {
       expect(cacheBadgeFor(input)).toEqual({ icon, tone, label });
     });
   }
+  it('retired job-outcome values (downloading, failed) are no cache truth and render as Unknown', () => {
+    // The orchestrator stopped writing these into games.status (cache validation
+    // integrity, 2026-09-07): 'downloading' and 'failed' were job outcomes, not
+    // cache contents. Legacy rows may still carry them until re-measured.
+    expect(cacheBadgeFor({ status: 'downloading', tracked: true })).toEqual({ icon: 'HelpCircle', tone: 'gray', label: 'Unknown' });
+    expect(cacheBadgeFor({ status: 'failed', tracked: true })).toEqual({ icon: 'HelpCircle', tone: 'gray', label: 'Unknown' });
+  });
   it('blocked overlays any status', () => {
     expect(cacheBadgeFor({ status: 'up_to_date', blocked: true, tracked: true })).toEqual({
       icon: 'Ban',
@@ -52,24 +57,24 @@ describe('cacheBadgeFor — validation_failed renders amber "Partial · N%"', ()
   it('computes the cached percentage from chunk counts', () => {
     expect(
       cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 90, chunksTotal: 100 })
-    ).toEqual({ icon: 'AlertTriangle', tone: 'amber', label: 'Partial · 90%' });
+    ).toEqual({ icon: 'AlertTriangle', tone: 'amber', label: 'Partly cached · 90%' });
   });
 
   it('rounds to the nearest percent', () => {
     // 39780 / 45415 = 0.8759… -> 88%
     expect(
       cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 39780, chunksTotal: 45415 }).label
-    ).toBe('Partial · 88%');
+    ).toBe('Partly cached · 88%');
   });
 
   it('falls back to bare "Partial" when counts are absent (orchestrator not yet upgraded)', () => {
-    expect(cacheBadgeFor({ status: 'validation_failed', tracked: true }).label).toBe('Partial');
+    expect(cacheBadgeFor({ status: 'validation_failed', tracked: true }).label).toBe('Partly cached');
   });
 
   it('falls back to bare "Partial" when total is zero (no divide-by-zero)', () => {
     expect(
       cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 0, chunksTotal: 0 }).label
-    ).toBe('Partial');
+    ).toBe('Partly cached');
   });
 
   it('never displays 100% for a partial game — caps at 99% (would round up)', () => {
@@ -77,20 +82,20 @@ describe('cacheBadgeFor — validation_failed renders amber "Partial · N%"', ()
     // so it must read 99%, not a self-contradictory "Partial · 100%".
     expect(
       cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 51147, chunksTotal: 51192 }).label
-    ).toBe('Partial · 99%');
+    ).toBe('Partly cached · 99%');
   });
 
   it('caps a nonsensical >100% at 99 too', () => {
     expect(
       cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 120, chunksTotal: 100 }).label
-    ).toBe('Partial · 99%');
+    ).toBe('Partly cached · 99%');
   });
 
   it('shows at least 1% when some chunks are cached (never rounds down to 0)', () => {
     // 2/1000 = 0.2% -> Math.round = 0, but a cached chunk exists -> show 1%.
     expect(
       cacheBadgeFor({ status: 'validation_failed', tracked: true, chunksCached: 2, chunksTotal: 1000 }).label
-    ).toBe('Partial · 1%');
+    ).toBe('Partly cached · 1%');
   });
 
   it('blocked still overlays validation_failed even with chunk counts', () => {
@@ -118,21 +123,23 @@ describe('cacheCounts', () => {
       { status: 'validation_failed', blocked: false },
       { status: 'failed', blocked: false },
     ];
+    // A legacy 'failed' row counts only toward total: 'failed' is a retired
+    // job-outcome value, not cache truth, and there is no Failed bucket any more.
     expect(cacheCounts(games)).toEqual({
-      total: 6, cached: 2, update_ready: 1, not_cached: 1, partial: 1, failed: 1, blocked: 1,
+      total: 6, cached: 2, update_ready: 1, not_cached: 1, partial: 1, blocked: 1,
     });
   });
-  it('counts validation_failed as partial, not failed (matches the amber Partial badge, #230)', () => {
+  it('counts validation_failed as partial (matches the amber Partly cached badge, #230) and has no failed bucket', () => {
     const c = cacheCounts([
       { status: 'validation_failed', blocked: false },
       { status: 'validation_failed', blocked: false },
       { status: 'failed', blocked: false },
     ]);
     expect(c.partial).toBe(2);
-    expect(c.failed).toBe(1);
+    expect(c).not.toHaveProperty('failed');
   });
   it('empty -> zeros', () => {
-    expect(cacheCounts([])).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, failed: 0, blocked: 0 });
+    expect(cacheCounts([])).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, blocked: 0 });
   });
 });
 
@@ -168,11 +175,10 @@ describe('cacheCounts — malformed-entry tolerance (F17)', () => {
     expect(c.cached).toBe(0);
     expect(c.update_ready).toBe(0);
     expect(c.not_cached).toBe(0);
-    expect(c.failed).toBe(0);
   });
 
   it('a non-array argument yields zeros', () => {
-    expect(cacheCounts(null)).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, failed: 0, blocked: 0 });
+    expect(cacheCounts(null)).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, blocked: 0 });
   });
 });
 

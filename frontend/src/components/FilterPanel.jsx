@@ -4,14 +4,15 @@ import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import Fuse from 'fuse.js';
 
+// Cache TRUTH values only: 'failed' and 'downloading' were job outcomes the
+// orchestrator no longer writes into games.status (cache validation integrity,
+// 2026-09-07), so they are not offered as filters any more.
 const CACHE_STATUS_OPTIONS = [
   { key: 'up_to_date', label: 'Cached' },
   { key: 'pending_update', label: 'Update ready' },
   { key: 'not_downloaded', label: 'Not cached' },
-  { key: 'validation_failed', label: 'Partial' },
-  { key: 'failed', label: 'Failed' },
+  { key: 'validation_failed', label: 'Partly cached' },
   { key: 'blocked', label: 'Blocked' },
-  { key: 'downloading', label: 'Downloading' },
   { key: 'unknown', label: 'Unknown' },
 ];
 

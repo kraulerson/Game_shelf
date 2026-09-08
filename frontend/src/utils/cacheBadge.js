@@ -8,17 +8,20 @@ export function launcherToPlatform(launcherName) {
   return TRACKED_LAUNCHERS[String(launcherName).toLowerCase()] || null;
 }
 
+// Cache TRUTH values only. The orchestrator (cache validation integrity,
+// 2026-09-07) stopped writing the job-outcome values 'downloading' and 'failed'
+// into games.status — they described how a job ended, not what is on disk — so
+// they are no longer mapped here. A legacy row still carrying one falls through
+// to Unknown until the sweep re-measures it.
 const STATUS_MAP = {
   up_to_date: { icon: 'CheckCircle', tone: 'green', label: 'Cached' },
-  downloading: { icon: 'Download', tone: 'blue', label: 'Downloading' },
   pending_update: { icon: 'ArrowUpCircle', tone: 'amber', label: 'Update ready' },
   not_downloaded: { icon: 'Circle', tone: 'gray', label: 'Not cached' },
-  // validation_failed is handled specially below (amber "Partial · N%"), not here.
-  failed: { icon: 'XCircle', tone: 'red', label: 'Failed' },
+  // validation_failed is handled specially below (amber "Partly cached · N%"), not here.
   unknown: { icon: 'HelpCircle', tone: 'gray', label: 'Unknown' },
 };
 
-// "Partial · 90%" when the cached fraction is known, else bare "Partial".
+// "Partly cached · 90%" when the cached fraction is known, else bare "Partly cached".
 // Guards against missing counts (older orchestrator) and total=0 (no divide).
 function partialLabel(chunksCached, chunksTotal) {
   if (Number.isFinite(chunksCached) && Number.isFinite(chunksTotal) && chunksTotal > 0) {
@@ -28,9 +31,9 @@ function partialLabel(chunksCached, chunksTotal) {
     let pct = Math.round((chunksCached / chunksTotal) * 100);
     if (pct >= 100) pct = 99;
     if (pct <= 0 && chunksCached > 0) pct = 1;
-    return `Partial · ${pct}%`;
+    return `Partly cached · ${pct}%`;
   }
-  return 'Partial';
+  return 'Partly cached';
 }
 
 // Precedence: offline > not-tracked > blocked > status (blocked overlays any status).
@@ -59,7 +62,7 @@ export function manualDownloadBadge(downloadStatus) {
 // Tally a games list into the user-facing buckets shown on the dashboard stats.
 export function cacheCounts(games = []) {
   const list = Array.isArray(games) ? games : [];
-  const c = { total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, failed: 0, blocked: 0 };
+  const c = { total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, blocked: 0 };
   for (const g of list) {
     if (!g || typeof g !== 'object') continue; // tolerate malformed rows
     c.total += 1;
@@ -67,11 +70,12 @@ export function cacheCounts(games = []) {
     if (g.status === 'up_to_date') c.cached += 1;
     else if (g.status === 'pending_update') c.update_ready += 1;
     else if (g.status === 'not_downloaded') c.not_cached += 1;
-    // #230: validation_failed renders as the amber "Partial · N%" badge, so it
-    // must tally under `partial`, NOT `failed` — else the tile and the badge
-    // disagree for the same game. Only a true `failed` counts as failed.
+    // #230: validation_failed renders as the amber "Partly cached · N%" badge, so
+    // it must tally under `partial` — else the tile and the badge disagree for
+    // the same game. There is no `failed` bucket: 'failed' was a job outcome,
+    // not a cache status, and the orchestrator no longer writes it; a legacy row
+    // counts only toward total.
     else if (g.status === 'validation_failed') c.partial += 1;
-    else if (g.status === 'failed') c.failed += 1;
   }
   return c;
 }

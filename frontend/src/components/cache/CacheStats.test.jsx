@@ -32,7 +32,7 @@ describe('CacheStats', () => {
     expect(ones.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('shows a Partial tile counting validation_failed games separately from Failed (#230)', async () => {
+  it('shows a "Partly cached" tile for validation_failed games and no Failed tile', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -46,8 +46,11 @@ describe('CacheStats', () => {
       })
     );
     wrap(<CacheStats />);
-    // A dedicated Partial tile exists (distinct from Failed).
-    expect(await screen.findByText('Partial')).toBeInTheDocument();
-    expect(screen.getByText('Failed')).toBeInTheDocument();
+    // #230 gave partial games their own tile; the orchestrator has since retired
+    // 'failed' as a cache status (it was a job outcome), so the Failed tile is gone
+    // and a legacy 'failed' row counts only toward Total.
+    expect(await screen.findByText('Partly cached')).toBeInTheDocument();
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Partial')).not.toBeInTheDocument();
   });
 });

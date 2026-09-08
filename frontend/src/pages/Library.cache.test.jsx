@@ -35,4 +35,9 @@ describe('Library cache-status integration', () => {
     await screen.findByPlaceholderText(/search games/i);
     expect(screen.queryByText(/cache status unavailable/i)).not.toBeInTheDocument();
   });
+
+  it('labels an active validation_failed filter chip "Partly cached"', async () => {
+    wrap('/library?cache_status=validation_failed');
+    expect(await screen.findByText('Partly cached')).toBeInTheDocument();
+  });
 });
