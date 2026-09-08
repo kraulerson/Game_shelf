@@ -37,7 +37,7 @@ describe('CachePanel', () => {
     expect(screen.getByText('GOG')).toBeInTheDocument();
   });
 
-  it('renders "Partial · N%" for a validation_failed edition with chunk counts', async () => {
+  it('renders "Partly cached · N%" for a validation_failed edition with chunk counts', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -58,7 +58,7 @@ describe('CachePanel', () => {
       })
     );
     wrap(<CachePanel editions={editions} />);
-    expect(await screen.findByText('Partial · 90%')).toBeInTheDocument();
+    expect(await screen.findByText('Partly cached · 90%')).toBeInTheDocument();
   });
 
   it('Validate shows "Validating…", polls the job, then settles', async () => {
@@ -93,7 +93,7 @@ describe('CachePanel', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     wrap(<CachePanel editions={editions} />);
-    await screen.findByText('Partial · 50%');
+    await screen.findByText('Partly cached · 50%');
 
     await userEvent.click(screen.getByRole('button', { name: /^validate$/i }));
     // busy state visible while the validate POST is in flight
@@ -161,7 +161,7 @@ describe('CachePanel', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     wrap(<CachePanel editions={editions} />);
-    await screen.findByText('Partial · 50%');
+    await screen.findByText('Partly cached · 50%');
 
     await userEvent.click(screen.getByRole('button', { name: /^complete re-download$/i }));
     expect(await screen.findByText('Re-downloading…')).toBeInTheDocument();
@@ -209,7 +209,7 @@ describe('CachePanel', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     const { unmount } = wrap(<CachePanel editions={editions} />);
-    await screen.findByText('Partial · 50%');
+    await screen.findByText('Partly cached · 50%');
     await userEvent.click(screen.getByRole('button', { name: /^validate$/i }));
     await screen.findByText('Validating…');
 

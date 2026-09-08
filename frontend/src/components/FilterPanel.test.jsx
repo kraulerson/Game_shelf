@@ -38,14 +38,23 @@ describe('FilterPanel cache status', () => {
   it('selecting two statuses comma-joins them', async () => {
     wrap();
     await userEvent.click(await screen.findByLabelText('Cached'));
-    await userEvent.click(screen.getByLabelText('Failed'));
-    expect(screen.getByTestId('cs').textContent).toBe('up_to_date,failed');
+    await userEvent.click(screen.getByLabelText('Blocked'));
+    expect(screen.getByTestId('cs').textContent).toBe('up_to_date,blocked');
   });
 
-  it('toggling "Partial" sets cache_status=validation_failed', async () => {
+  it('toggling "Partly cached" sets cache_status=validation_failed', async () => {
     wrap();
-    await userEvent.click(await screen.findByLabelText('Partial'));
+    await userEvent.click(await screen.findByLabelText('Partly cached'));
     expect(screen.getByTestId('cs').textContent).toBe('validation_failed');
+  });
+
+  it('no longer offers the retired "Failed" and "Downloading" options', async () => {
+    // The orchestrator never writes these into games.status any more (cache
+    // validation integrity, 2026-09-07) — they were job outcomes, not cache truth.
+    wrap();
+    await screen.findByLabelText('Cached');
+    expect(screen.queryByLabelText('Failed')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Downloading')).not.toBeInTheDocument();
   });
 
   it('toggling "Blocked" sets cache_status=blocked', async () => {

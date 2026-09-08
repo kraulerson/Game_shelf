@@ -108,7 +108,8 @@ describe('useCacheStatus counts', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.games).toHaveLength(2);
     expect(result.current.counts.total).toBe(2);
-    expect(result.current.counts.failed).toBe(1);
+    // 'failed' is a retired job-outcome value: no bucket, counts only toward total.
+    expect(result.current.counts).not.toHaveProperty('failed');
     expect(result.current.counts.blocked).toBe(1);
   });
 });

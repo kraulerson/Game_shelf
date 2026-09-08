@@ -173,7 +173,7 @@ export default function Library() {
           ))}
           {searchParams.get('cache_status') && searchParams.get('cache_status').split(',').map(s => (
             <span key={`c-${s}`} className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
-              {({ up_to_date: 'Cached', pending_update: 'Update ready', not_downloaded: 'Not cached', failed: 'Failed', downloading: 'Downloading', unknown: 'Unknown' })[s] || s}
+              {({ up_to_date: 'Cached', pending_update: 'Update ready', not_downloaded: 'Not cached', validation_failed: 'Partly cached', blocked: 'Blocked', unknown: 'Unknown' })[s] || s}
               <button onClick={() => {
                 const next = searchParams.get('cache_status').split(',').filter(v => v !== s);
                 const p = new URLSearchParams(searchParams);
