@@ -205,6 +205,28 @@ describe('Games routes', () => {
     assert.ok(Array.isArray(body.launchers), 'Should have launchers');
     assert.ok(body.genres.length > 0);
   });
+
+  it('GET /api/games/filters lists a disabled launcher that still has owned games (Humble, #GS-humble-filter)', async () => {
+    // Humble's sync is disabled by choice, but its owned games are still in the
+    // library (manual coverage). The filter list must offer every launcher the
+    // user can actually filter on, not only launchers whose sync is enabled.
+    const db = app.locals.db;
+    db.prepare('INSERT INTO launchers (name, display_name, enabled, priority) VALUES (?, ?, 0, ?)').run('humble', 'Humble Bundle', 7);
+    const humbleId = db.prepare('SELECT id FROM launchers WHERE name = ?').get('humble').id;
+    db.prepare('INSERT INTO games (title, slug) VALUES (?, ?)').run('Machinarium', 'machinarium');
+    const machId = db.prepare('SELECT id FROM games WHERE slug = ?').get('machinarium').id;
+    db.prepare('INSERT INTO game_editions (game_id, launcher_id, launcher_game_id, title, owned) VALUES (?, ?, ?, ?, 1)').run(machId, humbleId, 'machinarium', 'Machinarium');
+    // A disabled launcher with NO owned games must still be absent.
+    db.prepare('INSERT INTO launchers (name, display_name, enabled, priority) VALUES (?, ?, 0, ?)').run('ea', 'EA app', 8);
+
+    const res = await makeFetch(app, '/api/games/filters', { headers: { Cookie: authCookie() } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const names = body.launchers.map(l => l.name);
+    assert.ok(names.includes('humble'), `disabled launcher with owned games should be listed, got ${JSON.stringify(names)}`);
+    assert.equal(body.launchers.find(l => l.name === 'humble').count, 1);
+    assert.ok(!names.includes('ea'), 'disabled launcher without owned games must not be listed');
+  });
 });
 
 function makeFetch(app, urlPath, options = {}) {
