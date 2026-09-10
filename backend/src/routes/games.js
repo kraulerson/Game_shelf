@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const pathMod = require('node:path');
 const authMiddleware = require('../middleware/auth');
 const { getCacheStatusSnapshot } = require('../services/cacheSnapshot');
-const { resolveCacheLauncher, EFFECTIVE_PRIORITY_SQL } = require('../services/cacheLauncher');
+const { resolveCacheLauncher, EFFECTIVE_PRIORITY_SQL, CACHE_LAUNCHER_ORDER_SQL, LANCACHE_LAUNCHERS } = require('../services/cacheLauncher');
 const { syncCrossLauncherExclusions } = require('../services/crossLauncherExclusions');
 const { manualDownloadSets } = require('../services/manualCoverage');
 const { MANUAL_LAUNCHERS } = require('../services/manualLaunchers');
@@ -487,25 +487,49 @@ router.get('/', async (req, res) => {
       // option, so Failed=failed and Partial=partial are distinct.)
       const expanded = [...new Set(cache_status.split(',').map(s => s.trim()).filter(Boolean))];
 
-      const existsParams = [];
-      let launcherInExists = '';
+      const cacheParams = [];
+      let launcherInPick = '';
       if (launcher) {
+        // The interaction rule: with a launcher filter active, "the displayed
+        // edition" means the top-priority owned edition AMONG THE SELECTED
+        // launchers — so launcher=epic&cache_status=blocked still finds a game
+        // whose Epic copy is blocked even when Steam is the global primary.
         const launchers = launcher.split(',').map(l => l.trim());
-        launcherInExists = `AND l2.name IN (${launchers.map(() => '?').join(',')})`;
-        existsParams.push(...launchers);
+        launcherInPick = `AND l.name IN (${launchers.map(() => '?').join(',')})`;
+        cacheParams.push(...launchers);
       }
       const stPlaceholders = expanded.map(() => '?').join(',');
-      existsParams.push(...expanded);
+      cacheParams.push(...expanded);
 
-      outerConditions.push(`EXISTS (
-        SELECT 1 FROM game_editions ge2
-        JOIN launchers l2 ON l2.id = ge2.launcher_id
-        LEFT JOIN _cache_status cs ON cs.platform = l2.name AND cs.app_id = CAST(ge2.launcher_game_id AS TEXT)
-        WHERE ge2.game_id = g.id AND ge2.owned = 1 AND ge2.parent_edition_id IS NULL
-          ${launcherInExists}
-          AND COALESCE(cs.status, 'unknown') IN (${stPlaceholders})
-      )`);
-      outerParams.push(...existsParams);
+      // LANCACHE_LAUNCHERS is a trusted compile-time constant (not user input),
+      // so inlining it as quoted literals is injection-safe and keeps the outer
+      // query's bound-param order unchanged.
+      const lancacheNamesSql = LANCACHE_LAUNCHERS.map((n) => `'${n}'`).join(',');
+
+      // The status of the ONE edition whose badge the card shows — the same pick
+      // resolveCacheLauncher() makes, restricted to lancache-tracked launchers.
+      // Two consequences, both deliberate:
+      //   * a game owned only on manual launchers yields NO row, so the subquery
+      //     is NULL and `NULL IN (...)` is never true — it matches no status at
+      //     all, 'unknown' included (a GOG/Amazon game is not "unknown", it is
+      //     simply not a lancache concern);
+      //   * a game cached on Steam and blocked on Epic answers for Steam only,
+      //     so the filter agrees with the badge instead of matching any edition.
+      // The inner ge/l/et aliases shadow the outer query's in `duplicates=show`
+      // mode; the subquery is self-contained and correlates only on g.id.
+      outerConditions.push(`(
+        SELECT COALESCE(cs.status, 'unknown')
+        FROM game_editions ge
+        JOIN launchers l ON l.id = ge.launcher_id
+        LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
+        LEFT JOIN _cache_status cs ON cs.platform = l.name AND cs.app_id = CAST(ge.launcher_game_id AS TEXT)
+        WHERE ge.game_id = g.id AND ge.owned = 1 AND ge.parent_edition_id IS NULL
+          AND l.name IN (${lancacheNamesSql})
+          ${launcherInPick}
+        ORDER BY ${CACHE_LAUNCHER_ORDER_SQL}
+        LIMIT 1
+      ) IN (${stPlaceholders})`);
+      outerParams.push(...cacheParams);
     }
   }
 

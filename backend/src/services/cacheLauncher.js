@@ -36,6 +36,34 @@ const CANONICAL_ORDER_SQL = `CASE l.name
 const EFFECTIVE_PRIORITY_SQL = `CASE WHEN l.priority = 0 THEN 999 ELSE l.priority END`;
 
 /**
+ * The launchers lancache actually tracks. The orchestrator only ever reports
+ * Steam and Epic, so a GOG/Amazon/Humble/Itch/EA/Ubisoft/Xbox edition has no
+ * cache status at all — not even 'unknown'. Anything outside this list must be
+ * invisible to the cache_status facet; a manual launcher's download state is
+ * the separate download_status facet's business.
+ *
+ * Mirrors the frontend's TRACKED_LAUNCHERS in frontend/src/utils/cacheBadge.js —
+ * keep the two in step.
+ * @type {string[]}
+ */
+const LANCACHE_LAUNCHERS = ['steam', 'epic'];
+
+/**
+ * The one ORDER BY that decides WHICH owned edition's cache status represents a
+ * game — i.e. which badge the card shows. Shared verbatim by
+ * resolveCacheLauncher() (which renders the badge) and by the cache_status
+ * filter in routes/games.js, so the filter can never match a game on an edition
+ * whose badge is not the one displayed. Do not let the two drift.
+ *
+ * Assumes the caller aliases game_editions `ge`, launchers `l`, edition_tiers `et`.
+ */
+const CACHE_LAUNCHER_ORDER_SQL = `COALESCE(et.is_display_edition, 0) DESC,
+       ${EFFECTIVE_PRIORITY_SQL} ASC,
+       ${CANONICAL_ORDER_SQL} ASC,
+       COALESCE(et.tier, 0) DESC,
+       ge.id ASC`;
+
+/**
  * Resolve the launcher (name + launcher_game_id) whose cache status should be
  * shown for a grouped game.
  * @param {import('better-sqlite3').Database} db
@@ -51,15 +79,17 @@ function resolveCacheLauncher(db, gameId) {
        JOIN launchers l ON l.id = ge.launcher_id
        LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
        WHERE ge.game_id = ? AND ge.owned = 1 AND ge.parent_edition_id IS NULL
-       ORDER BY COALESCE(et.is_display_edition, 0) DESC,
-                ${EFFECTIVE_PRIORITY_SQL} ASC,
-                ${CANONICAL_ORDER_SQL} ASC,
-                COALESCE(et.tier, 0) DESC,
-                ge.id ASC
+       ORDER BY ${CACHE_LAUNCHER_ORDER_SQL}
        LIMIT 1`
     )
     .get(gameId);
   return row || null;
 }
 
-module.exports = { resolveCacheLauncher, CANONICAL_ORDER_SQL, EFFECTIVE_PRIORITY_SQL };
+module.exports = {
+  resolveCacheLauncher,
+  CANONICAL_ORDER_SQL,
+  EFFECTIVE_PRIORITY_SQL,
+  CACHE_LAUNCHER_ORDER_SQL,
+  LANCACHE_LAUNCHERS,
+};
