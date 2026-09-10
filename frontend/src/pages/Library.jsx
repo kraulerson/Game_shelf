@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { Fragment, useState, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search, Grid3X3, List, RefreshCw, Loader2, X, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -6,6 +6,48 @@ import GameCard from '../components/GameCard';
 import GameRow from '../components/GameRow';
 import FilterPanel from '../components/FilterPanel';
 import { isAnySyncRunning } from '../utils/syncStatus';
+import { STORE_SYMBOLS } from '../utils/perStoreStatus';
+
+// The toolbar legend. The glyphs are NOT restated here — they are read from
+// STORE_SYMBOLS, so the legend can never drift from what the cards actually
+// draw. Three groups, hairline-separated: lancache statuses (Steam/Epic), the
+// two manual-store download states, then the two that are neither.
+const STATUS_LEGEND = [
+  { kind: 'cached', label: 'Cached' },
+  { kind: 'update_ready', label: 'Update ready' },
+  { kind: 'partial', label: 'Partly cached' },
+  { kind: 'not_cached', label: 'Not cached' },
+  { kind: 'blocked', label: 'Blocked' },
+  { kind: 'unknown', label: 'Unknown' },
+  { kind: 'downloaded', label: 'Downloaded', groupStart: true },
+  { kind: 'not_downloaded', label: 'Not downloaded' },
+  { kind: 'offline', label: 'Offline', groupStart: true },
+  { kind: 'none', label: 'No status' },
+];
+
+// Karl's standing rule: never colour alone. Every entry carries its glyph AND
+// its written label, so the legend reads identically in greyscale.
+function StatusLegend() {
+  return (
+    <div
+      data-testid="status-legend"
+      className="ml-auto flex items-center flex-wrap gap-x-2.5 gap-y-1 text-[11px] leading-none text-gray-400"
+    >
+      <span className="text-gray-500 uppercase tracking-wide">Legend</span>
+      {STATUS_LEGEND.map((entry, i) => (
+        <Fragment key={entry.kind}>
+          {entry.groupStart && i > 0 && (
+            <span aria-hidden="true" className="text-gray-700">|</span>
+          )}
+          <span data-testid={`legend-${entry.kind}`} className="flex items-center gap-1 whitespace-nowrap">
+            <span aria-hidden="true" className="text-gray-300">{STORE_SYMBOLS[entry.kind]}</span>
+            {entry.label}
+          </span>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
 
 export default function Library() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -94,9 +136,12 @@ export default function Library() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
+      {/* Toolbar + alphabet stay pinned while the grid scrolls under them.
+          No overflow here: the filter panel must be free to overhang. */}
+      <div data-testid="library-sticky-header" className="sticky top-0 z-30 bg-gray-900">
       <div className="border-b border-gray-800 px-4 py-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative flex-1 min-w-[200px]">
+        <div data-testid="toolbar-row-primary" className="flex items-center gap-3 flex-wrap">
+          <div className="relative w-full max-w-[14rem] sm:max-w-[18rem]">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
@@ -115,7 +160,21 @@ export default function Library() {
             )}
           </div>
 
-          <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1">
+          {/* The panel is absolutely positioned against THIS wrapper, so the
+              anchor travels with the button it belongs to. */}
+          <div data-testid="filter-panel-anchor" className="relative">
+            <button onClick={() => setFilterOpen(!filterOpen)} className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white">
+              <SlidersHorizontal size={14} />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{activeFilterCount}</span>
+              )}
+            </button>
+
+            <FilterPanel open={filterOpen} onClose={() => setFilterOpen(false)} />
+          </div>
+
+          <div className="ml-auto flex items-center gap-1 bg-gray-800 rounded-lg p-1">
             <button onClick={() => setView('grid')} className={`p-1.5 rounded ${view === 'grid' ? 'bg-gray-700 text-white' : 'text-gray-400'}`}>
               <Grid3X3 size={16} />
             </button>
@@ -138,19 +197,12 @@ export default function Library() {
           </button>
         </div>
 
-        <div className="flex items-center gap-2 mt-2 flex-wrap relative">
-          <button onClick={() => setFilterOpen(!filterOpen)} className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white">
-            <SlidersHorizontal size={14} />
-            Filters
-            {activeFilterCount > 0 && (
-              <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{activeFilterCount}</span>
-            )}
-          </button>
-
-          <FilterPanel open={filterOpen} onClose={() => setFilterOpen(false)} />
-
+        {/* Legend row: active-filter chips on the left, the always-visible
+            status legend pinned right so it does not shuffle as chips come
+            and go. */}
+        <div data-testid="toolbar-row-legend" className="flex items-center gap-2 mt-2 flex-wrap">
           {searchParams.get('genre') && searchParams.get('genre').split(',').map(g => (
-            <span key={`g-${g}`} className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
+            <span key={`g-${g}`} data-testid="filter-chip" className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
               {g}
               <button onClick={() => {
                 const genres = searchParams.get('genre').split(',').filter(v => v !== g);
@@ -161,7 +213,7 @@ export default function Library() {
             </span>
           ))}
           {searchParams.get('launcher') && searchParams.get('launcher').split(',').map(l => (
-            <span key={`l-${l}`} className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
+            <span key={`l-${l}`} data-testid="filter-chip" className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
               {l}
               <button onClick={() => {
                 const launchers = searchParams.get('launcher').split(',').filter(v => v !== l);
@@ -172,7 +224,7 @@ export default function Library() {
             </span>
           ))}
           {searchParams.get('cache_status') && searchParams.get('cache_status').split(',').map(s => (
-            <span key={`c-${s}`} className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
+            <span key={`c-${s}`} data-testid="filter-chip" className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
               {({ up_to_date: 'Cached', pending_update: 'Update ready', not_downloaded: 'Not cached', validation_failed: 'Partly cached', blocked: 'Blocked', unknown: 'Unknown' })[s] || s}
               <button onClick={() => {
                 const next = searchParams.get('cache_status').split(',').filter(v => v !== s);
@@ -187,6 +239,8 @@ export default function Library() {
           {activeFilterCount > 0 && (
             <button onClick={clearAllFilters} className="text-xs text-gray-400 hover:text-white">Clear all</button>
           )}
+
+          <StatusLegend />
         </div>
       </div>
 
@@ -219,6 +273,7 @@ export default function Library() {
             );
           })}
         </div>
+      </div>
       </div>
 
       <div className="p-4">

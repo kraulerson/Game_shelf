@@ -38,6 +38,8 @@ describe('Library cache-status integration', () => {
 
   it('labels an active validation_failed filter chip "Partly cached"', async () => {
     wrap('/library?cache_status=validation_failed');
-    expect(await screen.findByText('Partly cached')).toBeInTheDocument();
+    // Scoped to the chip: the toolbar legend also spells out "Partly cached".
+    const chips = await screen.findAllByTestId('filter-chip');
+    expect(chips.map(c => c.textContent)).toContain('Partly cached');
   });
 });
