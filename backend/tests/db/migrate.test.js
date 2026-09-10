@@ -113,6 +113,24 @@ describe('migration runner', () => {
     testDb.close();
   });
 
+  // game_editions carried exactly one index — (launcher_id, launcher_game_id) —
+  // so every per-game correlated lookup fell back to scanning. Measured on the
+  // live library (2247 games / 2995 editions) the cache-status filter went
+  // 274ms -> 4.0ms in its old any-edition form, 740ms -> 7.1ms in the
+  // displayed-edition form this branch introduces.
+  it('should index game_editions(game_id, owned)', () => {
+    delete require.cache[require.resolve('../../src/db/migrate')];
+    const { runMigrations } = require('../../src/db/migrate');
+    const testDb = runMigrations(testDbPath);
+    const idx = testDb.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_game_editions_game'"
+    ).get();
+    assert.ok(idx, 'idx_game_editions_game should exist after migration');
+    const cols = testDb.pragma('index_info(idx_game_editions_game)').map((c) => c.name);
+    assert.deepEqual(cols, ['game_id', 'owned']);
+    testDb.close();
+  });
+
   it('should add manual_title column to games table', () => {
     delete require.cache[require.resolve('../../src/db/migrate')];
     const { runMigrations } = require('../../src/db/migrate');
