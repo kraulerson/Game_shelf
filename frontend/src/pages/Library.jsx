@@ -141,7 +141,24 @@ export default function Library() {
       <div data-testid="library-sticky-header" className="sticky top-0 z-30 bg-gray-900">
       <div className="border-b border-gray-800 px-4 py-3">
         <div data-testid="toolbar-row-primary" className="flex items-center gap-3 flex-wrap">
-          <div className="relative w-full max-w-[14rem] sm:max-w-[18rem]">
+          {/* The panel is absolutely positioned against THIS wrapper, so the
+              anchor travels with the button it belongs to. Filters leads the row
+              so the search box behind it can take all the remaining width. */}
+          <div data-testid="filter-panel-anchor" className="relative">
+            <button onClick={() => setFilterOpen(!filterOpen)} className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white">
+              <SlidersHorizontal size={14} />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{activeFilterCount}</span>
+              )}
+            </button>
+
+            <FilterPanel open={filterOpen} onClose={() => setFilterOpen(false)} />
+          </div>
+
+          {/* Grows into the gap between Filters and the right-aligned controls;
+              min-w stops it collapsing when the row wraps on a narrow screen. */}
+          <div className="relative flex-1 min-w-[12rem]">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
@@ -158,20 +175,6 @@ export default function Library() {
                 <X size={14} />
               </button>
             )}
-          </div>
-
-          {/* The panel is absolutely positioned against THIS wrapper, so the
-              anchor travels with the button it belongs to. */}
-          <div data-testid="filter-panel-anchor" className="relative">
-            <button onClick={() => setFilterOpen(!filterOpen)} className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white">
-              <SlidersHorizontal size={14} />
-              Filters
-              {activeFilterCount > 0 && (
-                <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{activeFilterCount}</span>
-              )}
-            </button>
-
-            <FilterPanel open={filterOpen} onClose={() => setFilterOpen(false)} />
           </div>
 
           <div className="ml-auto flex items-center gap-1 bg-gray-800 rounded-lg p-1">
