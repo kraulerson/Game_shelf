@@ -65,17 +65,19 @@ describe('Library toolbar layout', () => {
     const filters = screen.getByRole('button', { name: /filters/i });
     expect(row).toContainElement(input);
     expect(row).toContainElement(filters);
-    // ...and Filters comes after the search box, so both sit on the left.
-    expect(input.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Filters sits at the far LEFT, before the search box, so the search box has
+    // the whole middle of the row to expand into.
+    expect(filters.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('no longer lets the search box grow to fill the row', async () => {
+  it('lets the search box grow rightwards into the free space', async () => {
     wrap();
     const input = await screen.findByPlaceholderText(/search games/i);
     const wrapper = input.closest('div');
-    expect(wrapper.className).not.toMatch(/\bflex-1\b/);
-    // It is bounded instead.
-    expect(wrapper.className).toMatch(/max-w-/);
+    // It fills the gap between Filters and the right-aligned controls...
+    expect(wrapper.className).toMatch(/\bflex-1\b/);
+    // ...but never collapses to nothing on a narrow screen.
+    expect(wrapper.className).toMatch(/min-w-/);
   });
 
   it('right-aligns the view/sort/sync controls so search + Filters stay left', async () => {
