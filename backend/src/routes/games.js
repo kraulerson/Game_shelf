@@ -716,12 +716,31 @@ router.get('/', async (req, res) => {
   const rows = db.prepare(query).all(...allParams);
 
   // Build platforms, genres, tags for each game
+  // #31: each platform entry also carries ITS OWN launcher_game_id, so the card can
+  // resolve that store's lancache status client-side (the cache hook is keyed
+  // platform:app_id). A game can own several editions on one launcher, so pick one
+  // row per launcher — the same edition the primary badge prefers (display-edition
+  // override, then tier, then id) — instead of the old bare DISTINCT, which with
+  // the id added would emit one row per edition. Launcher ordering is unchanged.
   const platformsStmt = db.prepare(`
-    SELECT DISTINCT l.name as launcher_name, l.display_name as launcher_display_name
-    FROM game_editions ge
-    JOIN launchers l ON l.id = ge.launcher_id
-    WHERE ge.game_id = ? AND ge.owned = 1 AND ge.parent_edition_id IS NULL
-    ORDER BY ${EFFECTIVE_PRIORITY_SQL} ASC
+    SELECT launcher_name, launcher_display_name, launcher_game_id
+    FROM (
+      SELECT l.name as launcher_name, l.display_name as launcher_display_name,
+             ge.launcher_game_id as launcher_game_id,
+             ${EFFECTIVE_PRIORITY_SQL} as _prio,
+             ROW_NUMBER() OVER (
+               PARTITION BY l.name
+               ORDER BY COALESCE(et.is_display_edition, 0) DESC,
+                        COALESCE(et.tier, 0) DESC,
+                        ge.id ASC
+             ) as _rn
+      FROM game_editions ge
+      JOIN launchers l ON l.id = ge.launcher_id
+      LEFT JOIN edition_tiers et ON et.game_edition_id = ge.id
+      WHERE ge.game_id = ? AND ge.owned = 1 AND ge.parent_edition_id IS NULL
+    )
+    WHERE _rn = 1
+    ORDER BY _prio ASC
   `);
   const genresStmt = db.prepare(`
     SELECT gr.name FROM genres gr
@@ -735,6 +754,20 @@ router.get('/', async (req, res) => {
   const dlcCountStmt = db.prepare(
     'SELECT COUNT(*) as c FROM game_editions WHERE game_id = ? AND parent_edition_id IS NOT NULL AND owned = 1'
   );
+
+  // #31: per-store manual download status. The top-level download_status is the
+  // UNION across every manual launcher; a card that names each store needs the
+  // per-launcher truth instead, which downloadedByLauncher (#29) already carries.
+  // A lancache (or otherwise non-manual) launcher gets an explicit null — its
+  // status is a cache status, resolved client-side from launcher_game_id.
+  const manualLauncherNames = new Set(MANUAL_LAUNCHERS.map((l) => l.name));
+  const withPerStoreDownloadStatus = (list, gameId) =>
+    list.map((p) => ({
+      ...p,
+      download_status: manualLauncherNames.has(p.launcher_name)
+        ? (downloadedByLauncher.get(p.launcher_name)?.has(gameId) ? 'downloaded' : 'not_downloaded')
+        : null,
+    }));
 
   const games = rows.map(row => {
     const gameId = row.id;
@@ -776,10 +809,14 @@ router.get('/', async (req, res) => {
       cache_launcher_game_id: cacheLauncher?.launcher_game_id || row.launcher_game_id,
       display_edition_title: row.display_edition_title || row.r_title,
       display_tier: row.display_tier || 0,
-      platforms: platformsList.length > 0 ? platformsList : [{
-        launcher_name: row.launcher_name,
-        launcher_display_name: row.launcher_display_name,
-      }],
+      platforms: withPerStoreDownloadStatus(
+        platformsList.length > 0 ? platformsList : [{
+          launcher_name: row.launcher_name,
+          launcher_display_name: row.launcher_display_name,
+          launcher_game_id: row.launcher_game_id,
+        }],
+        gameId
+      ),
       dlc_count: gameId ? (dlcCountStmt.get(gameId)?.c || 0) : 0,
     };
   });

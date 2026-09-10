@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 import LauncherBadge from './LauncherBadge';
-import CacheBadge from './cache/CacheBadge';
+import CardStatusSection from './cache/CardStatusSection';
 import { useCacheStatus } from '../hooks/useCacheStatus';
 import { launcherToPlatform, manualDownloadBadge } from '../utils/cacheBadge';
+import { storeStatusList } from '../utils/perStoreStatus';
 
 function getInitials(title) {
   if (!title) return '?';
@@ -18,10 +19,9 @@ function formatPlaytime(minutes) {
 export default function GameCard({ game }) {
   const navigate = useNavigate();
 
-  const platforms = game.platforms || [];
   const playtime = formatPlaytime(game.playtime_minutes);
 
-  const { statusFor, isOffline } = useCacheStatus();
+  const { statusFor, isOffline, isLoading } = useCacheStatus();
   // #223/#224: the cache badge follows the highest-priority owned launcher
   // (cache_launcher_*), not the display edition's launcher — a game cached on
   // Steam but displayed as its Epic edition must still read as cached. Falls
@@ -34,6 +34,10 @@ export default function GameCard({ game }) {
   // download status instead of the neutral dash. Multi-launcher games (Steam+GOG)
   // keep the lancache badge — download state shows on the game-detail page.
   const manualBadge = platform ? null : manualDownloadBadge(game.download_status);
+  // #31: each owned store's OWN status, resolved from that store's
+  // launcher_game_id. Drives both the per-store symbol on each launcher badge and
+  // the explanatory line the status section shows when the stores disagree.
+  const stores = storeStatusList(game, { statusFor, offline: isOffline });
 
   return (
     <div
@@ -68,15 +72,20 @@ export default function GameCard({ game }) {
           <p className="text-gray-400 text-xs truncate">{game.display_edition_title}</p>
         )}
 
-        {/* Platform tags */}
-        <div className="flex flex-wrap gap-1 mb-1">
-          {platforms.map((p) => (
+        {/* Platform tags. #31: nowrap + clip — with 4 stores a wrapping row would
+            add a second line and make this card taller than its neighbours. Each
+            badge carries its own store's status symbol; the wording is in its
+            tooltip and in the sr-only text. */}
+        <div data-testid="platform-row" className="flex flex-nowrap gap-1 mb-1 overflow-hidden">
+          {stores.map((s) => (
             <LauncherBadge
-              key={p.launcher_name}
-              launcherName={p.launcher_name}
-              displayName={p.launcher_display_name}
+              key={s.launcherName}
+              launcherName={s.launcherName}
+              displayName={s.displayName}
               primary
               size="small"
+              statusSymbol={s.symbol}
+              statusLabel={s.label}
             />
           ))}
         </div>
@@ -91,17 +100,21 @@ export default function GameCard({ game }) {
           )}
         </div>
 
-        {/* Cache/prefill status (relocated under the info) */}
-        <div className="mt-1">
-          <CacheBadge
-            status={cache?.status}
-            blocked={cache?.blocked}
-            tracked={Boolean(platform)}
-            offline={isOffline}
-            badge={manualBadge}
-            size="small"
-          />
-        </div>
+        {/* Cache/prefill status — a fixed-height section (#31). Agreeing stores
+            keep the single primary badge; disagreeing ones get the per-store line,
+            inside the SAME reserved height so no card grows. */}
+        <CardStatusSection
+          stores={stores}
+          loading={isLoading}
+          badge={{
+            status: cache?.status,
+            blocked: cache?.blocked,
+            tracked: Boolean(platform),
+            offline: isOffline,
+            badge: manualBadge,
+            size: 'small',
+          }}
+        />
       </div>
     </div>
   );
