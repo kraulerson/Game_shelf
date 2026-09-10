@@ -301,6 +301,45 @@ describe('manualCoverage.manualDownloadSets (union over registry)', () => {
     assert.deepEqual([...downloadedIds].sort((a, b) => a - b), [10, 20, 30, 40]);
     assert.deepEqual([...manualGameIds].sort((a, b) => a - b), [10, 20, 30, 40]);
   });
+
+  // The per-launcher detail is ADDITIVE: downloadedIds / manualGameIds keep the
+  // exact contents they had before, for the per-row surfacing call site.
+  it('adds downloadedByLauncher without changing downloadedIds/manualGameIds', async () => {
+    const owned = {
+      gog: [
+        { id: 10, title: 'Trine 2', slug: 'trine-2', gog_slug: null, edition_title: null },
+        { id: 30, title: 'Toki Tori', slug: 'toki-tori', gog_slug: null, edition_title: null },
+      ],
+      amazon: [],
+      humble: [
+        { id: 30, title: 'Toki Tori', slug: 'toki-tori', gog_slug: null, edition_title: null },
+        { id: 10, title: 'Trine 2', slug: 'trine-2', gog_slug: null, edition_title: null },
+      ],
+      itchio: [],
+    };
+    const db = {
+      prepare: (sql) => ({
+        all: (...args) => {
+          if (/DISTINCT ge\.game_id/.test(sql)) return [10, 30].map((id) => ({ id }));
+          return owned[args[args.length - 1]] || [];
+        },
+      }),
+    };
+    const entriesByFolder = {
+      GOG: ['trine_2'], // 10 downloaded on gog only
+      'Humble Bundle': ['TokiTori.zip'], // 30 downloaded on humble only
+    };
+    const getSnapshot = async (folder) => ({ present: true, entries: entriesByFolder[folder] || [], stale: false });
+    const r = await manualDownloadSets(db, getSnapshot);
+    assert.deepEqual([...r.downloadedIds].sort((a, b) => a - b), [10, 30]);
+    assert.deepEqual([...r.manualGameIds].sort((a, b) => a - b), [10, 30]);
+    assert.ok(r.downloadedByLauncher instanceof Map, 'downloadedByLauncher is a Map');
+    assert.deepEqual([...r.downloadedByLauncher.keys()].sort(), ['amazon', 'gog', 'humble', 'itchio']);
+    assert.deepEqual([...r.downloadedByLauncher.get('gog')], [10]);
+    assert.deepEqual([...r.downloadedByLauncher.get('humble')], [30]);
+    assert.deepEqual([...r.downloadedByLauncher.get('amazon')], []);
+    assert.deepEqual([...r.downloadedByLauncher.get('itchio')], []);
+  });
 });
 
 describe('manualCoverage review-fix regressions (#222)', () => {

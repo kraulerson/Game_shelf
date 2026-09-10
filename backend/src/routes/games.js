@@ -513,27 +513,65 @@ router.get('/', async (req, res) => {
   // every manual launcher (GOG/Amazon/Humble/Itch). Compute the union downloaded set
   // + the set of games owned on any manual launcher, for per-row surfacing; build a
   // temp table only when the download_status filter is set.
-  const { downloadedIds, manualGameIds } = await manualDownloadSets(db, getManualDownloadsSnapshot);
+  const { downloadedIds, manualGameIds, downloadedByLauncher } = await manualDownloadSets(
+    db,
+    getManualDownloadsSnapshot
+  );
   if (download_status) {
     const dlStatuses = [...new Set(download_status.split(',').map((s) => s.trim()).filter(Boolean))];
-    db.exec('CREATE TEMP TABLE IF NOT EXISTS _manual_downloaded(game_id INTEGER PRIMARY KEY)');
-    db.exec('DELETE FROM _manual_downloaded');
-    const insDl = db.prepare('INSERT OR IGNORE INTO _manual_downloaded(game_id) VALUES (?)');
-    db.transaction((ids) => { for (const id of ids) insDl.run(id); })([...downloadedIds]);
+    // MANUAL_LAUNCHERS names are a trusted compile-time constant (not user input),
+    // so inlining them as quoted literals is injection-safe and keeps the outer
+    // query's bound-param order unchanged.
+    const namesSql = MANUAL_LAUNCHERS.map((l) => `'${l.name}'`).join(',');
     const parts = [];
-    if (dlStatuses.includes('downloaded')) {
-      parts.push('g.id IN (SELECT game_id FROM _manual_downloaded)');
+    if (launcher) {
+      // Launcher-correlated: the download status must hold ON A SELECTED LAUNCHER,
+      // not on some other manual launcher the game happens to be owned on. Same
+      // EXISTS-over-editions shape the cache_status filter uses above. A
+      // non-manual selection (steam/epic) intersects the manual-launcher list to
+      // nothing and so returns no rows — a consequence of the correlation, not a
+      // special case.
+      db.exec('CREATE TEMP TABLE IF NOT EXISTS _manual_downloaded_launcher(launcher TEXT, game_id INTEGER, PRIMARY KEY(launcher, game_id))');
+      db.exec('DELETE FROM _manual_downloaded_launcher');
+      const insDlL = db.prepare('INSERT OR IGNORE INTO _manual_downloaded_launcher(launcher, game_id) VALUES (?, ?)');
+      db.transaction((byLauncher) => {
+        for (const [name, gameIds] of byLauncher) {
+          for (const id of gameIds) insDlL.run(name, id);
+        }
+      })(downloadedByLauncher);
+
+      const dlExists = `EXISTS (SELECT 1 FROM _manual_downloaded_launcher m WHERE m.launcher = l2.name AND m.game_id = ge2.game_id)`;
+      const statusParts = [];
+      if (dlStatuses.includes('downloaded')) statusParts.push(dlExists);
+      if (dlStatuses.includes('not_downloaded')) statusParts.push(`NOT ${dlExists}`);
+      if (statusParts.length > 0) {
+        const selected = launcher.split(',').map((l) => l.trim());
+        outerConditions.push(`EXISTS (
+          SELECT 1 FROM game_editions ge2
+          JOIN launchers l2 ON l2.id = ge2.launcher_id
+          WHERE ge2.game_id = g.id AND ge2.owned = 1 AND ge2.parent_edition_id IS NULL
+            AND l2.name IN (${selected.map(() => '?').join(',')})
+            AND l2.name IN (${namesSql})
+            AND (${statusParts.join(' OR ')})
+        )`);
+        outerParams.push(...selected);
+      }
+    } else {
+      // No launcher selection: the legacy game-level union over every manual launcher.
+      db.exec('CREATE TEMP TABLE IF NOT EXISTS _manual_downloaded(game_id INTEGER PRIMARY KEY)');
+      db.exec('DELETE FROM _manual_downloaded');
+      const insDl = db.prepare('INSERT OR IGNORE INTO _manual_downloaded(game_id) VALUES (?)');
+      db.transaction((ids) => { for (const id of ids) insDl.run(id); })([...downloadedIds]);
+      if (dlStatuses.includes('downloaded')) {
+        parts.push('g.id IN (SELECT game_id FROM _manual_downloaded)');
+      }
+      if (dlStatuses.includes('not_downloaded')) {
+        parts.push(
+          `(g.id IN (SELECT ge2.game_id FROM game_editions ge2 JOIN launchers l2 ON l2.id = ge2.launcher_id WHERE l2.name IN (${namesSql})) AND g.id NOT IN (SELECT game_id FROM _manual_downloaded))`
+        );
+      }
+      if (parts.length > 0) outerConditions.push('(' + parts.join(' OR ') + ')');
     }
-    if (dlStatuses.includes('not_downloaded')) {
-      // MANUAL_LAUNCHERS names are a trusted compile-time constant (not user input),
-      // so inlining them as quoted literals is injection-safe and keeps the outer
-      // query's bound-param order unchanged.
-      const namesSql = MANUAL_LAUNCHERS.map((l) => `'${l.name}'`).join(',');
-      parts.push(
-        `(g.id IN (SELECT ge2.game_id FROM game_editions ge2 JOIN launchers l2 ON l2.id = ge2.launcher_id WHERE l2.name IN (${namesSql})) AND g.id NOT IN (SELECT game_id FROM _manual_downloaded))`
-      );
-    }
-    if (parts.length > 0) outerConditions.push('(' + parts.join(' OR ') + ')');
   }
 
   const outerWhere = outerConditions.length > 0 ? 'AND ' + outerConditions.join(' AND ') : '';

@@ -216,13 +216,19 @@ async function fetchManualCoverage(db, launcherFolder, { client = orchestrator }
 
 // Union download-status sets over every manual launcher (#222). `getSnapshot` is
 // manualCoverageSnapshot.getManualDownloadsSnapshot (folder, {includeFiles}).
-// Returns { downloadedIds, manualGameIds } — the games actually downloaded, and
-// the games that HAVE an owned edition on any manual launcher (for surfacing).
+// Returns { downloadedIds, manualGameIds, downloadedByLauncher } — the games
+// actually downloaded (unioned, for per-row surfacing), the games that HAVE an
+// owned edition on any manual launcher, and the per-launcher detail as
+// Map<launcherName, Set<gameId>> keyed by EVERY MANUAL_LAUNCHERS name (an empty
+// Set where nothing is downloaded), so a caller can correlate a download status
+// with a specific launcher instead of the flattened union.
 async function manualDownloadSets(db, getSnapshot) {
   const downloadedIds = new Set();
+  const downloadedByLauncher = new Map();
   for (const { name, folder, mode } of MANUAL_LAUNCHERS) {
     const { entries } = await getSnapshot(folder, { includeFiles: mode === 'file' });
     const ids = downloadedGameIds(db, name, entries, { mode, aliases: aliasesFor(name) });
+    downloadedByLauncher.set(name, ids);
     for (const id of ids) downloadedIds.add(id);
   }
   const names = MANUAL_LAUNCHERS.map((l) => l.name);
@@ -236,7 +242,7 @@ async function manualDownloadSets(db, getSnapshot) {
       .all(...names)
       .map((r) => r.id)
   );
-  return { downloadedIds, manualGameIds };
+  return { downloadedIds, manualGameIds, downloadedByLauncher };
 }
 
 module.exports = {
