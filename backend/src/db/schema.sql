@@ -58,6 +58,19 @@ CREATE TABLE IF NOT EXISTS game_editions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_game_editions_launcher_game
   ON game_editions(launcher_id, launcher_game_id);
 
+-- game_editions had exactly ONE index (the unique one above), and none on
+-- game_id, so every per-game correlated lookup fell back to scanning every row
+-- of a launcher. Measured on the live library (2247 owned games / 2995
+-- editions), a whole-library cache_status filter:
+--     old any-edition EXISTS      274ms -> 4.0ms
+--     displayed-edition subquery  740ms -> 7.1ms
+-- Plan goes from SEARCH ge USING INDEX idx_game_editions_launcher_game
+-- (launcher_id=?) to SEARCH ge USING INDEX idx_game_editions_game
+-- (game_id=? AND owned=?). This helps every game_id join on the table, not just
+-- the cache filter; `owned` is included because nearly all of them also filter
+-- on it, which keeps the lookup covering.
+CREATE INDEX IF NOT EXISTS idx_game_editions_game ON game_editions(game_id, owned);
+
 CREATE TABLE IF NOT EXISTS genres (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE
