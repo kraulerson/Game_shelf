@@ -113,6 +113,11 @@ export default function GameCard({ game }) {
             offline: isOffline,
             badge: manualBadge,
             size: 'small',
+            // #309: when the status was last MEASURED. Renders inside the same
+            // reserved h-5 section, so a card with an age and one without stay
+            // pixel-identical (Karl's constraint from #31). Undefined for a
+            // never-measured game, which renders no age at all.
+            measuredAt: cache?.status_measured_at,
           }}
         />
       </div>

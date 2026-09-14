@@ -14,7 +14,8 @@ async function fetchCacheGames() {
 }
 
 // Bulk-fetch the orchestrator's games ONCE and expose a (platform, app_id) lookup.
-// Value = { id (orchestrator game id), status, blocked, chunks_cached, chunks_total }.
+// Value = { id (orchestrator game id), status, blocked, chunks_cached, chunks_total,
+//           status_measured_at }.
 // The chunk counts (latest validation) drive the "Partial · N%" badge; they're
 // undefined against an orchestrator that predates that field. react-query dedupes
 // the shared queryKey, so many cards/panels mounting this hook = one network call.
@@ -35,6 +36,9 @@ export function useCacheStatus() {
       blocked: g.blocked,
       chunks_cached: g.chunks_cached,
       chunks_total: g.chunks_total,
+      // When a measurement last looked at the disk (#309). Undefined against an
+      // orchestrator predating the field, which renders no age rather than a guess.
+      status_measured_at: g.status_measured_at,
     });
   }
 
