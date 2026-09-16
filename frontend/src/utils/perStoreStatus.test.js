@@ -239,3 +239,76 @@ describe('layoutStoreLine', () => {
     expect(out.shown[0].launcherName).toBe('steam');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The partial-percentage wiring (UAT session 16).
+//
+// cacheBadgeFor() is thoroughly unit-tested for the percentage, its rounding,
+// the missing-counts fallback and the 99% cap. CacheBadge.jsx is tested for
+// rendering them. What was NOT tested is the seam between the two: storeStatus()
+// reading `cache?.chunks_cached` / `cache?.chunks_total` off the orchestrator
+// payload and passing them in as `chunksCached` / `chunksTotal`.
+//
+// A typo there — `cache?.chunksCached`, say, which is simply undefined — silently
+// degrades "Partly cached · 79%" to a bare "Partial" with no test failing. The
+// only game in the live library that would reveal it is not visible in
+// Game_shelf, so nobody could catch it by looking either.
+// ---------------------------------------------------------------------------
+
+const PARTIAL_GAME = {
+  id: 2,
+  title: "John Carpenter's Toxic Commando",
+  launcher_name: 'steam',
+  launcher_game_id: '4576320',
+  cache_launcher_name: 'steam',
+  cache_launcher_game_id: '4576320',
+  platforms: [
+    { launcher_name: 'steam', launcher_display_name: 'Steam', launcher_game_id: '4576320' },
+  ],
+};
+
+describe('storeStatus — partial percentage wiring', () => {
+  it('passes the orchestrator chunk counts through, so a partial store reads N%', () => {
+    // 11 of 14 chunks = 78.57% -> 79%. Real numbers from the live library.
+    const statusFor = makeStatusFor({
+      'steam:4576320': {
+        status: 'validation_failed',
+        blocked: false,
+        chunks_cached: 11,
+        chunks_total: 14,
+      },
+    });
+
+    const [steam] = storeStatusList(PARTIAL_GAME, { statusFor });
+
+    expect(steam.label).toBe('Partly cached · 79%');
+  });
+
+  it('falls back to a bare partial label when the orchestrator sends no counts', () => {
+    // An older orchestrator, or a row measured before chunk counts were stored.
+    // The badge must still say "partial", never claim a percentage it lacks.
+    const statusFor = makeStatusFor({
+      'steam:4576320': { status: 'validation_failed', blocked: false },
+    });
+
+    const [steam] = storeStatusList(PARTIAL_GAME, { statusFor });
+
+    expect(steam.label).toBe('Partly cached');
+    expect(steam.label).not.toMatch(/%/);
+  });
+
+  it('reports a partial store with its own tone, not the cached one', () => {
+    const statusFor = makeStatusFor({
+      'steam:4576320': {
+        status: 'validation_failed',
+        blocked: false,
+        chunks_cached: 11,
+        chunks_total: 14,
+      },
+    });
+
+    const [steam] = storeStatusList(PARTIAL_GAME, { statusFor });
+
+    expect(steam.tone).toBe('amber');
+  });
+});
