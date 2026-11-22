@@ -36,13 +36,26 @@ function partialLabel(chunksCached, chunksTotal) {
   return 'Partly cached';
 }
 
-// Precedence: offline > not-tracked > blocked > status (blocked overlays any status).
+// Frontend twin of backend/src/services/cacheRules.js. The two must agree; the
+// agreement test is backend/tests/services/newRuleAgreement.test.js, so run the
+// backend suite after changing this rule.
+// The one badge rule for "New - Not Cached": a game first seen recently (the
+// orchestrator's is_new) that is not blocked and has nothing on disk yet. Strict
+// `=== true` so an older orchestrator that omits is_new behaves as false.
+export function isNewNotCached({ status, blocked, isNew } = {}) {
+  return isNew === true && !blocked && (status === 'unknown' || status === 'not_downloaded');
+}
+
+// Precedence: offline > not-tracked > blocked > new rule > status (blocked overlays any status).
 // A validation_failed game is "partially cached", not broken — render it amber with
 // the cached percentage (from the latest validation) so the user sees how close it is.
-export function cacheBadgeFor({ status, blocked, tracked, offline, chunksCached, chunksTotal } = {}) {
+export function cacheBadgeFor({ status, blocked, tracked, offline, chunksCached, chunksTotal, isNew } = {}) {
   if (offline) return { icon: 'CloudOff', tone: 'neutral', label: '—' };
   if (!tracked) return { icon: 'Minus', tone: 'neutral', label: '—' };
   if (blocked) return { icon: 'Ban', tone: 'slate', label: 'Blocked' };
+  if (isNewNotCached({ status, blocked, isNew })) {
+    return { icon: 'Sparkles', tone: 'sky', label: 'New - Not Cached' };
+  }
   if (status === 'validation_failed') {
     return { icon: 'AlertTriangle', tone: 'amber', label: partialLabel(chunksCached, chunksTotal) };
   }
@@ -62,12 +75,13 @@ export function manualDownloadBadge(downloadStatus) {
 // Tally a games list into the user-facing buckets shown on the dashboard stats.
 export function cacheCounts(games = []) {
   const list = Array.isArray(games) ? games : [];
-  const c = { total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, blocked: 0 };
+  const c = { total: 0, cached: 0, update_ready: 0, not_cached: 0, new_not_cached: 0, partial: 0, blocked: 0 };
   for (const g of list) {
     if (!g || typeof g !== 'object') continue; // tolerate malformed rows
     c.total += 1;
     if (g.blocked) c.blocked += 1;
-    if (g.status === 'up_to_date') c.cached += 1;
+    if (isNewNotCached({ status: g.status, blocked: g.blocked, isNew: g.is_new })) c.new_not_cached += 1;
+    else if (g.status === 'up_to_date') c.cached += 1;
     else if (g.status === 'pending_update') c.update_ready += 1;
     else if (g.status === 'not_downloaded') c.not_cached += 1;
     // #230: validation_failed renders as the amber "Partly cached · N%" badge, so

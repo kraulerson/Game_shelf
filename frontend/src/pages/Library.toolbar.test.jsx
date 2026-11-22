@@ -42,12 +42,13 @@ beforeEach(() => {
   }));
 });
 
-// The legend's ten entries, in render order: lancache statuses, then the two
+// The legend's eleven entries, in render order: lancache statuses, then the two
 // manual-download states, then the two that are neither.
 const LEGEND = [
   ['cached', 'Cached'],
   ['update_ready', 'Update ready'],
   ['partial', 'Partly cached'],
+  ['new_not_cached', 'New - Not Cached'],
   ['not_cached', 'Not cached'],
   ['blocked', 'Blocked'],
   ['unknown', 'Unknown'],
@@ -100,7 +101,7 @@ describe('Library toolbar layout', () => {
 });
 
 describe('Library status legend', () => {
-  it('shows all ten symbols with their labels, glyphs taken from STORE_SYMBOLS', async () => {
+  it('shows all eleven symbols with their labels, glyphs taken from STORE_SYMBOLS', async () => {
     wrap();
     const legend = await screen.findByTestId('status-legend');
     expect(LEGEND).toHaveLength(Object.keys(STORE_SYMBOLS).length);

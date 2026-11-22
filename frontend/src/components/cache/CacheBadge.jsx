@@ -9,6 +9,7 @@ import {
   Ban,
   Minus,
   CloudOff,
+  Sparkles,
 } from 'lucide-react';
 import { cacheBadgeFor } from '../../utils/cacheBadge';
 import { formatMeasuredAge } from '../../utils/measuredAge';
@@ -24,6 +25,7 @@ const ICONS = {
   Ban,
   Minus,
   CloudOff,
+  Sparkles,
 };
 
 const TONE = {
@@ -33,6 +35,7 @@ const TONE = {
   red: 'bg-red-700 text-red-100',
   gray: 'bg-gray-700 text-gray-200',
   slate: 'bg-slate-600 text-slate-100',
+  sky: 'bg-sky-700 text-sky-100',
   neutral: 'bg-gray-800 text-gray-400',
 };
 
@@ -43,6 +46,7 @@ export default function CacheBadge({
   offline = false,
   chunksCached,
   chunksTotal,
+  isNew,
   size = 'default',
   badge,
   measuredAt,
@@ -50,7 +54,7 @@ export default function CacheBadge({
   // `badge` is a pre-computed { icon, tone, label } descriptor (e.g. a GOG
   // manual-download badge). When provided it overrides the lancache cache-status
   // computation; otherwise the badge is derived from the cache status.
-  const { icon, tone, label } = badge || cacheBadgeFor({ status, blocked, tracked, offline, chunksCached, chunksTotal });
+  const { icon, tone, label } = badge || cacheBadgeFor({ status, blocked, tracked, offline, chunksCached, chunksTotal, isNew });
   const Icon = ICONS[icon];
   const sizeClasses = size === 'small' ? 'text-xs px-1.5 py-0.5 gap-0.5' : 'text-sm px-2.5 py-0.5 gap-1';
   // How long ago the status was MEASURED (#309). Rendered as a sibling, never

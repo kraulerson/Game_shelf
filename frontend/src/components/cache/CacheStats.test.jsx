@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import CacheStats from './CacheStats';
 
@@ -52,5 +52,25 @@ describe('CacheStats', () => {
     expect(await screen.findByText('Partly cached')).toBeInTheDocument();
     expect(screen.queryByText('Failed')).not.toBeInTheDocument();
     expect(screen.queryByText('Partial')).not.toBeInTheDocument();
+  });
+
+  it('shows a New - Not Cached tile and keeps new games out of "Not cached"', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          games: [
+            { id: 1, platform: 'steam', app_id: '1', status: 'unknown', blocked: false, is_new: true },
+            { id: 2, platform: 'steam', app_id: '2', status: 'not_downloaded', blocked: false, is_new: true },
+            { id: 3, platform: 'steam', app_id: '3', status: 'not_downloaded', blocked: false },
+          ],
+        }),
+      })
+    );
+    wrap(<CacheStats />);
+    const newTile = (await screen.findByText('New - Not Cached')).parentElement;
+    await within(newTile).findByText('2');
+    expect(within(screen.getByText('Not cached').parentElement).getByText('1')).toBeInTheDocument();
   });
 });

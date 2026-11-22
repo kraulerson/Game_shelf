@@ -27,4 +27,10 @@ describe('CacheBadge', () => {
     render(<CacheBadge status="validation_failed" tracked />);
     expect(screen.getByText('Partly cached')).toBeInTheDocument();
   });
+
+  it('renders "New - Not Cached" with its icon when isNew is forwarded', () => {
+    const { container } = render(<CacheBadge status="unknown" isNew tracked />);
+    expect(screen.getByText('New - Not Cached')).toBeInTheDocument();
+    expect(container.querySelector('svg')).not.toBeNull();
+  });
 });

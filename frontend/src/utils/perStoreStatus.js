@@ -22,6 +22,7 @@ export const STORE_SYMBOLS = {
   update_ready: '↑',
   partial: '▲',
   not_cached: '○',
+  new_not_cached: '✦',
   blocked: '⊘',
   unknown: '?',
   downloaded: '■',
@@ -37,6 +38,7 @@ const LANCACHE_ICON_KIND = {
   ArrowUpCircle: 'update_ready',
   AlertTriangle: 'partial',
   Circle: 'not_cached',
+  Sparkles: 'new_not_cached',
   HelpCircle: 'unknown',
   Ban: 'blocked',
   Minus: 'none',
@@ -63,6 +65,7 @@ function storeStatus(platform, { statusFor, offline }) {
       offline,
       chunksCached: cache?.chunks_cached,
       chunksTotal: cache?.chunks_total,
+      isNew: cache?.is_new,
     });
     return { kind: LANCACHE_ICON_KIND[badge.icon] || 'unknown', label: badge.label, tone: badge.tone };
   }
