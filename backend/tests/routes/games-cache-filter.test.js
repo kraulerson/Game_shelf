@@ -18,6 +18,9 @@ const ORCH_GAMES = [
   // Blocked game: its underlying status is 'failed', but blocked=true must make
   // it report 'blocked' — never surfacing under the "Failed" filter.
   { id: 7, platform: 'epic', app_id: '60', status: 'failed', blocked: true },
+  // New - Not Cached: is_new + nothing on disk. Snapshot value 'new'.
+  { id: 8, platform: 'steam', app_id: '70', status: 'not_downloaded', is_new: true },
+  { id: 9, platform: 'steam', app_id: '80', status: 'unknown', is_new: true },
 ];
 let orchUp = true;
 
@@ -58,6 +61,8 @@ function seed(db) {
     [5, 'Unknown Steam', 'unknown-steam', 1, '99'],
     [6, 'Broken Steam', 'broken-steam', 1, '50'],
     [7, 'Blocked Epic', 'blocked-epic', 2, '60'],
+    [8, 'New Steam A', 'new-steam-a', 1, '70'],
+    [9, 'New Steam B', 'new-steam-b', 1, '80'],
   ];
   for (const [gid, title, slug] of rows) insGame.run(gid, title, slug);
   for (const [gid, , , lid, lgid] of rows) insEd.run(gid, lid, lgid, 'ed');
@@ -91,6 +96,14 @@ describe('cache_status filter', () => {
   it('cache_status=not_downloaded returns both uncached games', async () => {
     const body = await get('cache_status=not_downloaded');
     assert.deepEqual(body.games.map(g => g.title).sort(), ['Uncached Epic', 'Uncached Steam']);
+  });
+  it('cache_status=new returns exactly the new games', async () => {
+    const body = await get('cache_status=new');
+    assert.deepEqual(body.games.map(g => g.title).sort(), ['New Steam A', 'New Steam B']);
+  });
+  it('cache_status=not_downloaded,unknown excludes the new games', async () => {
+    const body = await get('cache_status=not_downloaded,unknown');
+    assert.deepEqual(body.games.map(g => g.title).sort(), ['Uncached Epic', 'Uncached Steam', 'Unknown Steam']);
   });
   it('failed matches only failed (validation_failed is Partial; blocked is excluded)', async () => {
     const body = await get('cache_status=failed');

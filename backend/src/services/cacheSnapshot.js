@@ -1,4 +1,5 @@
 const orchestrator = require('./orchestrator');
+const { isNewNotCached } = require('./cacheRules');
 
 const DEFAULT_TTL_MS = 60_000;
 
@@ -21,9 +22,12 @@ function makeCacheSnapshot({ client = orchestrator, ttlMs = DEFAULT_TTL_MS, now 
         const map = new Map();
         // A blocked game (excluded from prefill) reports 'blocked' rather than its
         // underlying cache status, so it never shows under "Failed" and can be
-        // filtered on its own. `blocked` overrides everything else.
+        // filtered on its own. `blocked` overrides everything else. A new game
+        // with nothing on disk reports 'new' so the filter follows the badge.
         for (const g of games) {
-          map.set(`${g.platform}:${g.app_id}`, g.blocked ? 'blocked' : g.status);
+          map.set(`${g.platform}:${g.app_id}`, g.blocked
+            ? 'blocked'
+            : (isNewNotCached({ status: g.status, blocked: false, isNew: g.is_new === true }) ? 'new' : g.status));
         }
         cached = { map, fetchedAt: now() };
         return { map, stale: false };

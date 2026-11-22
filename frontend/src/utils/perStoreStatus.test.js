@@ -312,3 +312,21 @@ describe('storeStatus — partial percentage wiring', () => {
     expect(steam.tone).toBe('amber');
   });
 });
+
+describe('storeStatus — New - Not Cached', () => {
+  it('shows the Sparkles kind, symbol and label for a new uncached store', () => {
+    const statusFor = makeStatusFor({
+      'steam:4576320': { status: 'not_downloaded', blocked: false, is_new: true },
+    });
+    const [steam] = storeStatusList(PARTIAL_GAME, { statusFor });
+    expect(steam.kind).toBe('new_not_cached');
+    expect(steam.symbol).toBe(STORE_SYMBOLS.new_not_cached);
+    expect(steam.label).toBe('New - Not Cached');
+    expect(steam.tone).toBe('sky');
+  });
+  it('a store without is_new keeps the old label', () => {
+    const statusFor = makeStatusFor({ 'steam:4576320': { status: 'not_downloaded', blocked: false } });
+    const [steam] = storeStatusList(PARTIAL_GAME, { statusFor });
+    expect(steam.label).toBe('Not cached');
+  });
+});

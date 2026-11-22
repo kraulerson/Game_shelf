@@ -100,4 +100,28 @@ describe('GameCard measured age', () => {
     expect(section.className).toContain(STATUS_SECTION_HEIGHT_CLASS);
     expect(section.className).toContain('overflow-hidden');
   });
+
+describe('GameCard New - Not Cached', () => {
+  const row = (extra) => ({ id: 1, platform: 'steam', app_id: '730', status: 'unknown', blocked: false, ...extra });
+
+  it('renders the label with an icon for a new game', async () => {
+    stubGames([row({ is_new: true })]);
+    const { container } = renderCard(STEAM_CS);
+    expect(await screen.findByText('New - Not Cached')).toBeInTheDocument();
+    expect(container.querySelector('[data-testid="card-status"] svg')).not.toBeNull();
+  });
+
+  for (const [desc, extra] of [
+    ['missing', {}],
+    ['null', { is_new: null }],
+    ['the string "true"', { is_new: 'true' }],
+  ]) {
+    it(`falls back to Unknown when is_new is ${desc}`, async () => {
+      stubGames([row(extra)]);
+      renderCard(STEAM_CS);
+      expect(await screen.findByText('Unknown')).toBeInTheDocument();
+      expect(screen.queryByText('New - Not Cached')).not.toBeInTheDocument();
+    });
+  }
+});
 });

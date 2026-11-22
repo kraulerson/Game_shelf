@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { launcherToPlatform, cacheBadgeFor } from './cacheBadge';
+import { launcherToPlatform, cacheBadgeFor, cacheCounts, isNewNotCached } from './cacheBadge';
 
 describe('launcherToPlatform', () => {
   it('maps steam/epic, others null', () => {
@@ -126,7 +126,7 @@ describe('cacheCounts', () => {
     // A legacy 'failed' row counts only toward total: 'failed' is a retired
     // job-outcome value, not cache truth, and there is no Failed bucket any more.
     expect(cacheCounts(games)).toEqual({
-      total: 6, cached: 2, update_ready: 1, not_cached: 1, partial: 1, blocked: 1,
+      total: 6, cached: 2, update_ready: 1, not_cached: 1, new_not_cached: 0, partial: 1, blocked: 1,
     });
   });
   it('counts validation_failed as partial (matches the amber Partly cached badge, #230) and has no failed bucket', () => {
@@ -139,7 +139,7 @@ describe('cacheCounts', () => {
     expect(c).not.toHaveProperty('failed');
   });
   it('empty -> zeros', () => {
-    expect(cacheCounts([])).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, blocked: 0 });
+    expect(cacheCounts([])).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, new_not_cached: 0, partial: 0, blocked: 0 });
   });
 });
 
@@ -178,7 +178,7 @@ describe('cacheCounts — malformed-entry tolerance (F17)', () => {
   });
 
   it('a non-array argument yields zeros', () => {
-    expect(cacheCounts(null)).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, partial: 0, blocked: 0 });
+    expect(cacheCounts(null)).toEqual({ total: 0, cached: 0, update_ready: 0, not_cached: 0, new_not_cached: 0, partial: 0, blocked: 0 });
   });
 });
 
@@ -195,5 +195,57 @@ describe('manualDownloadBadge (#222 GOG manual-download status)', () => {
     expect(manualDownloadBadge(null)).toBeNull();
     expect(manualDownloadBadge(undefined)).toBeNull();
     expect(manualDownloadBadge('whatever')).toBeNull();
+  });
+});
+
+describe('New - Not Cached', () => {
+  const base = { tracked: true, offline: false };
+  const NEW = { icon: 'Sparkles', tone: 'sky', label: 'New - Not Cached' };
+
+  it('isNew unknown -> New - Not Cached', () => {
+    expect(cacheBadgeFor({ ...base, status: 'unknown', isNew: true })).toEqual(NEW);
+  });
+  it('isNew not_downloaded -> New - Not Cached', () => {
+    expect(cacheBadgeFor({ ...base, status: 'not_downloaded', isNew: true })).toEqual(NEW);
+  });
+  it('isNew validation_failed stays Partly cached', () => {
+    const b = cacheBadgeFor({ ...base, status: 'validation_failed', isNew: true, chunksCached: 11, chunksTotal: 14 });
+    expect(b.label).toBe('Partly cached · 79%');
+  });
+  it('isNew up_to_date -> Cached', () => {
+    expect(cacheBadgeFor({ ...base, status: 'up_to_date', isNew: true }).label).toBe('Cached');
+  });
+  it('isNew blocked -> Blocked', () => {
+    expect(cacheBadgeFor({ ...base, status: 'not_downloaded', blocked: true, isNew: true }).label).toBe('Blocked');
+  });
+  it('offline and not-tracked outrank the new rule', () => {
+    expect(cacheBadgeFor({ ...base, status: 'unknown', isNew: true, offline: true }).label).toBe('—');
+    expect(cacheBadgeFor({ status: 'unknown', isNew: true, tracked: false }).label).toBe('—');
+  });
+  it('isNew undefined -> today label', () => {
+    expect(cacheBadgeFor({ ...base, status: 'unknown' }).label).toBe('Unknown');
+    expect(cacheBadgeFor({ ...base, status: 'not_downloaded' }).label).toBe('Not cached');
+  });
+  it('isNewNotCached rule', () => {
+    expect(isNewNotCached({ status: 'unknown', blocked: false, isNew: true })).toBe(true);
+    expect(isNewNotCached({ status: 'not_downloaded', isNew: true })).toBe(true);
+    expect(isNewNotCached({ status: 'not_downloaded', blocked: true, isNew: true })).toBe(false);
+    expect(isNewNotCached({ status: 'up_to_date', isNew: true })).toBe(false);
+    expect(isNewNotCached({ status: 'unknown', isNew: 'true' })).toBe(false);
+    expect(isNewNotCached({ status: 'unknown' })).toBe(false);
+  });
+  it('cacheCounts puts new games only in new_not_cached', () => {
+    const c = cacheCounts([
+      { status: 'not_downloaded', is_new: true },
+      { status: 'unknown', is_new: true },
+      { status: 'not_downloaded' },
+      { status: 'not_downloaded', is_new: true, blocked: true },
+      { status: 'up_to_date', is_new: true },
+    ]);
+    expect(c.new_not_cached).toBe(2);
+    expect(c.not_cached).toBe(2);
+    expect(c.blocked).toBe(1);
+    expect(c.cached).toBe(1);
+    expect(c.total).toBe(5);
   });
 });

@@ -16,6 +16,7 @@ const STATUS_LEGEND = [
   { kind: 'cached', label: 'Cached' },
   { kind: 'update_ready', label: 'Update ready' },
   { kind: 'partial', label: 'Partly cached' },
+  { kind: 'new_not_cached', label: 'New - Not Cached' },
   { kind: 'not_cached', label: 'Not cached' },
   { kind: 'blocked', label: 'Blocked' },
   { kind: 'unknown', label: 'Unknown' },
@@ -228,7 +229,7 @@ export default function Library() {
           ))}
           {searchParams.get('cache_status') && searchParams.get('cache_status').split(',').map(s => (
             <span key={`c-${s}`} data-testid="filter-chip" className="flex items-center gap-1 bg-blue-600/20 text-blue-400 px-2 py-1 rounded-full text-xs">
-              {({ up_to_date: 'Cached', pending_update: 'Update ready', not_downloaded: 'Not cached', validation_failed: 'Partly cached', blocked: 'Blocked', unknown: 'Unknown' })[s] || s}
+              {({ up_to_date: 'Cached', pending_update: 'Update ready', not_downloaded: 'Not cached', validation_failed: 'Partly cached', blocked: 'Blocked', unknown: 'Unknown', new: 'New - Not Cached' })[s] || s}
               <button onClick={() => {
                 const next = searchParams.get('cache_status').split(',').filter(v => v !== s);
                 const p = new URLSearchParams(searchParams);

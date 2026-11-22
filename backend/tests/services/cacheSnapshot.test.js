@@ -30,6 +30,25 @@ describe('cacheSnapshot', () => {
     assert.equal(map.get('steam:50'), 'failed'); // not blocked -> real status
   });
 
+  it('a new unknown / not_downloaded game maps to "new"; new partial stays validation_failed', async () => {
+    const client = stubClient(() => [
+      { platform: 'steam', app_id: '1', status: 'unknown', is_new: true },
+      { platform: 'steam', app_id: '2', status: 'not_downloaded', is_new: true },
+      { platform: 'steam', app_id: '3', status: 'validation_failed', is_new: true },
+      { platform: 'steam', app_id: '4', status: 'not_downloaded', is_new: false },
+      { platform: 'steam', app_id: '5', status: 'not_downloaded' },
+      { platform: 'steam', app_id: '6', status: 'not_downloaded', is_new: true, blocked: true },
+    ]);
+    const snap = makeCacheSnapshot({ client, ttlMs: 1000, now: () => 0 });
+    const { map } = await snap.get();
+    assert.equal(map.get('steam:1'), 'new');
+    assert.equal(map.get('steam:2'), 'new');
+    assert.equal(map.get('steam:3'), 'validation_failed');
+    assert.equal(map.get('steam:4'), 'not_downloaded');
+    assert.equal(map.get('steam:5'), 'not_downloaded');
+    assert.equal(map.get('steam:6'), 'blocked');
+  });
+
   it('serves cached within TTL without refetching', async () => {
     let t = 0;
     const client = stubClient(() => [{ platform: 'steam', app_id: '1', status: 'up_to_date' }]);

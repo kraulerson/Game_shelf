@@ -176,6 +176,7 @@ export default function CachePanel({ editions = [], downloadStatus }) {
                 offline={isOffline}
                 chunksCached={cache?.chunks_cached}
                 chunksTotal={cache?.chunks_total}
+                isNew={cache?.is_new}
               />
               <div className="ml-auto flex gap-2">
                 {cache?.blocked ? (

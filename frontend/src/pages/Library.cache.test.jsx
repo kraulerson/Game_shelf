@@ -42,4 +42,10 @@ describe('Library cache-status integration', () => {
     const chips = await screen.findAllByTestId('filter-chip');
     expect(chips.map(c => c.textContent)).toContain('Partly cached');
   });
+
+  it('labels an active new filter chip "New - Not Cached"', async () => {
+    wrap('/library?cache_status=new');
+    const chips = await screen.findAllByTestId('filter-chip');
+    expect(chips.map(c => c.textContent)).toContain('New - Not Cached');
+  });
 });

@@ -326,4 +326,18 @@ describe('CachePanel', () => {
     wrap(<CachePanel editions={gogEditions} downloadStatus="not_downloaded" />);
     expect(await screen.findByText('Not downloaded')).toBeInTheDocument();
   });
+
+  it('renders "New - Not Cached" for a new edition', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          games: [{ id: 9, platform: 'steam', app_id: '730', status: 'not_downloaded', blocked: false, is_new: true }],
+        }),
+      })
+    );
+    wrap(<CachePanel editions={editions} />);
+    expect(await screen.findByText('New - Not Cached')).toBeInTheDocument();
+  });
 });

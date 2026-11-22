@@ -35,6 +35,12 @@ describe('FilterPanel cache status', () => {
     expect(screen.getByTestId('cs').textContent).toBe('not_downloaded');
   });
 
+  it('toggling "New - Not Cached" sets cache_status=new', async () => {
+    wrap();
+    await userEvent.click(await screen.findByLabelText('New - Not Cached'));
+    expect(screen.getByTestId('cs').textContent).toBe('new');
+  });
+
   it('selecting two statuses comma-joins them', async () => {
     wrap();
     await userEvent.click(await screen.findByLabelText('Cached'));

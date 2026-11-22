@@ -109,6 +109,7 @@ export default function GameCard({ game }) {
           badge={{
             status: cache?.status,
             blocked: cache?.blocked,
+            isNew: cache?.is_new,
             tracked: Boolean(platform),
             offline: isOffline,
             badge: manualBadge,
